@@ -1,0 +1,272 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import PublicLayout from '@/components/PublicLayout';
+import { useLocale } from '@/context/LocaleContext';
+import CSRFTokenInput from '@/components/CSRFTokenInput';
+import { useCsrfToken } from '@/hooks/useCsrfToken';
+
+const translations = {
+  en: {
+    title: "Create your Cabo account",
+    infoTitle: "Ready to earn with Cabo?",
+    infoDesc: "Join our network of affiliate promoters — get your unique links, share them, and earn when people make purchases.",
+    infoStrong: "Claim products, promote your links, and get paid!",
+    li1: "No upfront cost or approval needed",
+    li2: "Each product has a unique referral link",
+    li3: "Real-time dashboard with clicks, earnings, payouts",
+    li4: "Withdraw anytime — direct to your bank",
+    faq: "Curious how it works?",
+    faqLink: "Read the FAQ",
+    username: "Username",
+    usernamePH: "Enter your username",
+    email: "Email",
+    emailPH: "you@example.com",
+    password: "Password",
+    passwordPH: "Create a password",
+    terms: "I accept the Terms and Privacy Policy",
+    registerBtn: "Register",
+    already: "Already have an account?",
+    loginLink: "Log in",
+    required: "Please fill in all fields.",
+    termsReq: "You must accept the terms.",
+    success: "Registration successful! Please check your email to activate your account.",
+    failed: "Registration failed.",
+    server: "Server error. Please try again later."
+  },
+  tr: {
+    title: "Cabo hesabını oluştur",
+    infoTitle: "Cabo ile kazanmaya hazır mısın?",
+    infoDesc: "Büyüyen affiliate ağımıza katıl — kendine özel linklerini al, paylaş ve alışverişlerden kazan!",
+    infoStrong: "Ürünleri seç, linklerini paylaş, ödülünü anında al!",
+    li1: "Onay veya ücret gerekmez",
+    li2: "Her ürünün sana özel referans linki var",
+    li3: "Anlık dashboard: tık, kazanç, çekim",
+    li4: "Kazancını istediğin zaman çek, doğrudan banka hesabına",
+    faq: "Nasıl çalışıyor merak ettin mi?",
+    faqLink: "SSS'yi oku",
+    username: "Kullanıcı adı",
+    usernamePH: "Kullanıcı adını gir",
+    email: "E-posta",
+    emailPH: "sen@example.com",
+    password: "Şifre",
+    passwordPH: "Şifre oluştur",
+    terms: "Kullanım ve Gizlilik Şartlarını kabul ediyorum",
+    registerBtn: "Kaydol",
+    already: "Zaten hesabın var mı?",
+    loginLink: "Giriş yap",
+    required: "Lütfen tüm alanları doldurun.",
+    termsReq: "Şartları kabul etmelisin.",
+    success: "Kayıt başarılı! Hesabını aktifleştirmek için e-postanı kontrol et.",
+    failed: "Kayıt başarısız.",
+    server: "Sunucu hatası. Lütfen tekrar deneyin."
+  }
+};
+
+export default function RegisterPage() {
+  const csrfToken = useCsrfToken();
+  const router = useRouter();
+  const { locale, ready } = useLocale();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [terms, setTerms] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  if (!ready) return null;
+  const t = (key) => translations[locale][key] || key;
+
+  const handleSuccessRedirect = () => {
+    setTimeout(() => router.push('/login'), 1800);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!name || !email || !password) {
+      setError(t('required'));
+      return;
+    }
+    if (!terms) {
+      setError(t('termsReq'));
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-csrf-token': csrfToken || '',
+          'accept-language': locale || 'en',
+        },
+        body: JSON.stringify({ name, email, password, termsAccepted: terms }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess(t('success'));
+        handleSuccessRedirect();
+      } else {
+        setError(data.message || t('failed'));
+      }
+    } catch {
+      setError(t('server'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <PublicLayout>
+      <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
+        {/* LEFT INFO */}
+        <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
+          <div className="mb-6">
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
+              {t('infoTitle')}
+            </h2>
+            <p className="text-gray-300 text-lg mb-4">
+              {t('infoDesc')}
+            </p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">
+              {t('infoStrong')}
+            </p>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
+              <li>{t('li1')}</li>
+              <li>{t('li2')}</li>
+              <li>{t('li3')}</li>
+              <li>{t('li4')}</li>
+            </ul>
+            <div className="text-gray-400 text-sm">
+              {t('faq')}{' '}
+              <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                {t('faqLink')}
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* REGISTER FORM */}
+        <form
+          onSubmit={handleSubmit}
+          className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
+          autoComplete="off"
+        >
+          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">
+            {t('title')}
+          </h3>
+
+          <div className="w-full">
+            <label htmlFor="name" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
+              {t('username')}
+            </label>
+            <input
+              id="name"
+              type="text"
+              spellCheck={false}
+              autoComplete="username"
+              autoCorrect="off"
+              value={name}
+              onChange={e => setName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+              placeholder={t('usernamePH')}
+              minLength={3}
+              maxLength={32}
+              required
+              className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            />
+          </div>
+
+          <div className="w-full">
+            <label htmlFor="email" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
+              {t('email')}
+            </label>
+            <input
+              id="email"
+              type="email"
+              spellCheck={false}
+              autoComplete="email"
+              autoCorrect="off"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder={t('emailPH')}
+              required
+              className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            />
+          </div>
+
+          <div className="w-full">
+            <label htmlFor="password" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
+              {t('password')}
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder={t('passwordPH')}
+              minLength={8}
+              required
+              className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 w-full">
+            <input
+              id="terms"
+              type="checkbox"
+              checked={terms}
+              onChange={e => setTerms(e.target.checked)}
+              required
+              className="accent-[#81d742] h-5 w-5"
+            />
+            <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none">
+              {t('terms')}
+            </label>
+          </div>
+
+          <CSRFTokenInput />
+
+          {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
+          {success && <div className="text-green-400 text-base md:text-lg text-center">{success}</div>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition"
+          >
+            {loading ? (locale === 'tr' ? 'Kaydediliyor...' : 'Registering...') : t('registerBtn')}
+          </button>
+
+          <div className="text-sm md:text-base text-gray-400 text-center">
+            {t('already')}{' '}
+            <Link href="/login" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+              {t('loginLink')}
+            </Link>
+          </div>
+        </form>
+      </div>
+
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          .cabo-mobile-top-space {
+            margin-top: 6.5rem;
+          }
+          .cabo-mobile-bottom-space {
+            margin-bottom: 10rem;
+          }
+        }
+      `}</style>
+    </PublicLayout>
+  );
+}

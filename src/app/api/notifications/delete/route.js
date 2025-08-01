@@ -1,0 +1,32 @@
+import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
+import { cookies } from 'next/headers';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY';
+
+export async function POST(req) {
+  const cookieStore = cookies();
+  const token = cookieStore.get('cabo_token')?.value;
+  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let decoded;
+  try { decoded = jwt.verify(token, JWT_SECRET); }
+  catch { return NextResponse.json({ error: "Invalid token" }, { status: 401 }); }
+
+  const user_id = decoded.user_id;
+  if (!user_id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { ids } = await req.json();
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return NextResponse.json({ error: "No ids" }, { status: 400 });
+  }
+
+  // Sadece bu kullanıcıya ait olan bildirimleri sil
+  await prisma.notifications.updateMany({
+    where: { id: { in: ids }, user_id },
+    data: { is_deleted: true },
+  });
+
+  return NextResponse.json({ success: true });
+}

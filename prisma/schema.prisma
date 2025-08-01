@@ -1,0 +1,311 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  merchant
+  affiliate
+}
+
+enum UserStatus {
+  pending
+  active
+  rejected
+}
+
+enum affiliate_user_sales_status {
+  pending
+  confirmed
+  rejected
+}
+
+enum PayoutStatus {
+  pending
+  approved
+  paid
+  rejected
+}
+
+enum payout_request_items_status {
+  pending
+  merchant_paid
+  platform_confirmed
+  rejected
+}
+
+enum NotificationType {
+  info
+  support_reply
+  important
+}
+
+model User {
+  user_id               Int               @id @default(autoincrement())
+  name                  String            @db.VarChar(100)
+  email                 String            @unique @db.VarChar(255)
+  password_hash         String            @db.VarChar(255)
+  role                  Role              @default(affiliate)
+  language_preference   String            @default("en") @db.VarChar(10)
+  currency_code         String            @default("EUR") @db.Char(3)
+  reset_token           String?           @db.VarChar(255)
+  reset_token_expiry    DateTime?         @db.DateTime(0)
+  created_at            DateTime          @default(now()) @db.DateTime(0)
+  bankName              String?           @db.VarChar(100)
+  iban                  String?           @db.VarChar(34)
+  phone_number          String?           @db.VarChar(25)
+  status                UserStatus        @default(pending)
+  is_flagged            Boolean           @default(false)
+  flag_reason           String?           @db.VarChar(255)
+  real_user_fullname    String?           @db.VarChar(100)
+  termsAccepted         Boolean           @default(false)
+
+  affiliate_links       AffiliateLink[]
+  merchant_products     MerchantProduct[] @relation("MerchantProducts")
+  affiliate_user_sales_affiliate_user_sales_merchant_idTousers affiliate_user_sales[] @relation("affiliate_user_sales_merchant_idTousers")
+  affiliate_user_sales_affiliate_user_sales_user_idTousers affiliate_user_sales[] @relation("affiliate_user_sales_user_idTousers")
+  contact_messages      ContactMessage[]
+  notifications         notifications[]
+  payout_requests       PayoutRequest[]
+  payout_request_items  payout_request_items[]
+
+  @@map("users")
+}
+
+model AffiliateLink {
+  link_id      Int       @id @default(autoincrement())
+  user_id      Int
+  product_id   Int
+  token        String    @unique @db.VarChar(64)
+  created_at   DateTime  @default(now()) @db.DateTime(0)
+  is_visible   Boolean   @default(true)
+  expires_at   DateTime?
+
+  user         User      @relation(fields: [user_id], references: [user_id])
+  product      MerchantProduct @relation(fields: [product_id], references: [product_id])
+  clicks       Click[]
+  affiliate_user_sales   affiliate_user_sales[]
+
+  @@index([user_id])
+  @@index([product_id])
+  @@map("affiliate_links")
+}
+
+model affiliate_user_sales {
+  sale_id              Int                         @id @default(autoincrement())
+  order_id             String                      @db.VarChar(100)
+  user_id              Int
+  merchant_id          Int
+  product_id           Int
+  amount               Decimal                     @db.Decimal(19, 4)
+  quantity             Int                         @default(1)
+  commission_affiliate Decimal                     @db.Decimal(19, 4)
+  commission_platform  Decimal                     @db.Decimal(19, 4)
+  status               affiliate_user_sales_status @default(pending)
+  converted_at         DateTime                    @default(now()) @db.DateTime(0)
+  payout_item_id       Int?
+  updated_at           DateTime?                   @default(now()) @db.DateTime(0)
+  link_id              Int?
+  affiliate_link_id    Int?
+
+  merchant_products    MerchantProduct             @relation(fields: [product_id], references: [product_id], map: "affiliate_user_sales_ibfk_2")
+  users_affiliate_user_sales_merchant_idTousers User @relation("affiliate_user_sales_merchant_idTousers", fields: [merchant_id], references: [user_id], map: "affiliate_user_sales_ibfk_merchant")
+  users_affiliate_user_sales_user_idTousers     User @relation("affiliate_user_sales_user_idTousers", fields: [user_id], references: [user_id], map: "affiliate_user_sales_ibfk_user")
+  platform_earnings     platform_earnings[]
+
+  @@unique([order_id, product_id], map: "order_product_unique")
+  @@index([user_id])
+  @@index([merchant_id])
+  @@index([product_id])
+  @@index([payout_item_id])
+  @@index([link_id], map: "idx_link_id")
+  @@map("affiliate_user_sales")
+}
+
+model Click {
+  click_id       Int             @id @default(autoincrement())
+  link_id        Int
+  ip_address     String?         @db.VarChar(45)
+  user_agent     String?         @db.Text
+  referrer       String?         @db.Text
+  clicked_at     DateTime        @default(now()) @db.DateTime(0)
+  affiliate_link AffiliateLink   @relation(fields: [link_id], references: [link_id], map: "clicks_ibfk_1")
+
+  @@index([link_id])
+  @@map("clicks")
+}
+
+model ContactMessage {
+  message_id   Int      @id @default(autoincrement())
+  user_id      Int?
+  name         String?  @db.VarChar(100)
+  email        String?  @db.VarChar(255)
+  message      String   @db.Text
+  submitted_at DateTime @default(now()) @db.DateTime(0)
+  user         User?    @relation(fields: [user_id], references: [user_id], map: "contact_messages_ibfk_1")
+
+  @@index([user_id])
+  @@map("contact_messages")
+}
+
+model MerchantProduct {
+  product_id           Int                    @id @default(autoincrement())
+  merchant_id          Int
+  name                 String                 @db.VarChar(255)
+  description          String?                @db.Text
+  image_url            String                 @db.Text
+  merchant_url         String                 @db.Text
+  commission_rate      Decimal                @db.Decimal(5, 2)
+  is_active            Boolean                @default(true)
+  total_clicks         Int                    @default(0)
+  total_purchases      Int                    @default(0)
+  created_at           DateTime               @default(now()) @db.DateTime(0)
+  price                Decimal?               @default(20.00) @db.Decimal(10, 2)
+  activated_by_admin   Boolean                @default(false)
+  max_sales_limit      Int?                   @default(100)
+  product_code         String                 @unique @db.VarChar(64)
+
+  merchant             User                   @relation("MerchantProducts", fields: [merchant_id], references: [user_id], map: "merchant_products_ibfk_1")
+  affiliate_links      AffiliateLink[]
+  affiliate_user_sales affiliate_user_sales[]
+  payout_request_items payout_request_items[]
+
+  @@index([merchant_id])
+  @@map("merchant_products")
+}
+
+model notifications {
+  id         Int              @id @default(autoincrement())
+  user_id    Int
+  type       NotificationType @default(info)
+  message    String           @db.Text
+  link       String?          @db.VarChar(255)
+  created_at DateTime         @default(now()) @db.DateTime(0)
+  read       Boolean          @default(false)
+  is_deleted Boolean          @default(false)
+  users      User             @relation(fields: [user_id], references: [user_id], map: "fk_notification_user")
+
+  @@index([user_id])
+  @@map("notifications")
+}
+
+model PayoutRequest {
+  request_id           Int                    @id @default(autoincrement())
+  user_id              Int
+  amount_total         Decimal                @db.Decimal(19, 4)
+  status               PayoutStatus           @default(pending)
+  requested_at         DateTime?              @default(now()) @db.DateTime(0)
+  paid_at              DateTime?              @db.DateTime(0)
+  rejected_reason      String?                @db.VarChar(255)
+  updated_at           DateTime?              @default(now()) @db.DateTime(0)
+  iban                 String?                @db.VarChar(34)
+  bank_name            String?                @db.VarChar(100)
+  real_user_fullname   String?                @db.VarChar(100)
+  platform_paid        Boolean                @default(false)
+  platform_paid_at     DateTime?              @db.DateTime(0)
+
+  payout_request_items payout_request_items[]
+  user                User                   @relation(fields: [user_id], references: [user_id], map: "payout_requests_ibfk_1")
+
+  @@index([user_id])
+  @@map("payout_requests")
+}
+
+model payout_request_items {
+  item_id               Int                          @id @default(autoincrement())
+  request_id            Int
+  merchant_id           Int
+  product_id            Int?
+  amount                Decimal                      @db.Decimal(19, 4)
+  source_sale_ids       String?                      @db.Text
+  status                payout_request_items_status?  @default(pending)
+  paid_at               DateTime?                    @db.DateTime(0)
+  platform_confirmed_at DateTime?                    @db.DateTime(0)
+  rejected_reason       String?                      @db.VarChar(255)
+  paid_by               Int?
+  transaction_id        String?                      @db.VarChar(100)
+  created_at            DateTime?                    @default(now()) @db.DateTime(0)
+  updated_at            DateTime?                    @default(now()) @db.DateTime(0)
+
+  payout_requests       PayoutRequest                @relation(fields: [request_id], references: [request_id], map: "payout_request_items_ibfk_1")
+  users                 User                         @relation(fields: [merchant_id], references: [user_id], map: "payout_request_items_ibfk_2")
+  merchant_products     MerchantProduct?             @relation(fields: [product_id], references: [product_id], onDelete: Restrict, map: "payout_request_items_ibfk_product")
+
+  @@index([merchant_id])
+  @@index([request_id])
+  @@index([product_id])
+}
+
+model payout_request_logs {
+  log_id     Int       @id @default(autoincrement())
+  request_id Int?
+  item_id    Int?
+  action     String?   @db.VarChar(50)
+  old_status String?   @db.VarChar(20)
+  new_status String?   @db.VarChar(20)
+  user_id    Int?
+  note       String?   @db.Text
+  created_at DateTime? @default(now()) @db.DateTime(0)
+}
+
+model Currency {
+  code              String              @id @db.Char(3)
+  symbol            String              @db.VarChar(5)
+  minor_unit        Int
+  updated_at        DateTime            @default(now()) @db.DateTime(0)
+  base_rates        ExchangeRate[]      @relation("base_currency")
+  target_rates      ExchangeRate[]      @relation("target_currency")
+  platform_earnings platform_earnings[]
+
+  @@map("currencies")
+}
+
+model ExchangeRate {
+  base_currency       String   @db.Char(3)
+  target_currency     String   @db.Char(3)
+  rate                Decimal  @db.Decimal(18, 8)
+  valid_from          DateTime @db.DateTime(0)
+  valid_to            DateTime @db.DateTime(0)
+  base_currency_rel   Currency @relation("base_currency", fields: [base_currency], references: [code], map: "exchange_rates_ibfk_1")
+  target_currency_rel Currency @relation("target_currency", fields: [target_currency], references: [code], map: "exchange_rates_ibfk_2")
+
+  @@id([base_currency, target_currency, valid_from])
+  @@index([target_currency])
+  @@map("exchange_rates")
+}
+
+model platform_earnings {
+  earning_id           Int                  @id @default(autoincrement())
+  sale_id              Int
+  amount               Decimal              @db.Decimal(19, 4)
+  currency_code        String               @default("EUR") @db.Char(3)
+  logged_at            DateTime             @default(now()) @db.DateTime(0)
+  affiliate_user_sales affiliate_user_sales @relation(fields: [sale_id], references: [sale_id], map: "platform_earnings_ibfk_1")
+  currencies           Currency             @relation(fields: [currency_code], references: [code], map: "platform_earnings_ibfk_2")
+
+  @@index([currency_code])
+  @@index([sale_id])
+}
+
+model platform_config {
+  key_name   String    @id @db.VarChar(100)
+  value      String    @db.Text
+  updated_at DateTime? @default(now()) @db.DateTime(0)
+}
+
+model _prisma_migrations {
+  id                 String   @id @db.VarChar(36)
+  checksum           String   @db.VarChar(64)
+  finished_at        DateTime? @db.DateTime(3)
+  migration_name     String   @db.VarChar(255)
+  logs               String?  @db.Text
+  rolled_back_at     DateTime? @db.DateTime(3)
+  started_at         DateTime @db.DateTime(3) @default(now())
+  applied_steps_count Int     @default(0)
+}
+
