@@ -298,14 +298,3 @@ model platform_config {
   updated_at DateTime? @default(now()) @db.DateTime(0)
 }
 
-model _prisma_migrations {
-  id                 String   @id @db.VarChar(36)
-  checksum           String   @db.VarChar(64)
-  finished_at        DateTime? @db.DateTime(3)
-  migration_name     String   @db.VarChar(255)
-  logs               String?  @db.Text
-  rolled_back_at     DateTime? @db.DateTime(3)
-  started_at         DateTime @db.DateTime(3) @default(now())
-  applied_steps_count Int     @default(0)
-}
-
