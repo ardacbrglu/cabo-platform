@@ -45,30 +45,35 @@ enum NotificationType {
   important
 }
 
+
+
 model User {
-  user_id               Int               @id @default(autoincrement())
-  name                  String            @db.VarChar(100)
-  email                 String            @unique @db.VarChar(255)
-  password_hash         String            @db.VarChar(255)
-  role                  Role              @default(affiliate)
-  language_preference   String            @default("en") @db.VarChar(10)
-  currency_code         String            @default("EUR") @db.Char(3)
-  reset_token           String?           @db.VarChar(255)
-  reset_token_expiry    DateTime?         @db.DateTime(0)
-  created_at            DateTime          @default(now()) @db.DateTime(0)
-  bankName              String?           @db.VarChar(100)
-  iban                  String?           @db.VarChar(34)
-  phone_number          String?           @db.VarChar(25)
-  status                UserStatus        @default(pending)
-  is_flagged            Boolean           @default(false)
-  flag_reason           String?           @db.VarChar(255)
-  real_user_fullname    String?           @db.VarChar(100)
-  termsAccepted         Boolean           @default(false)
+  user_id               Int                     @id @default(autoincrement())
+  name                  String                  @db.VarChar(100)
+  email                 String                  @unique @db.VarChar(255)
+  password_hash         String                  @db.VarChar(255)
+  role                  Role                    @default(affiliate)
+  language_preference   String                  @default("en") @db.VarChar(10)
+  currency_code         String                  @default("EUR") @db.Char(3)
+  reset_token           String?                 @db.VarChar(255)
+  reset_token_expiry    DateTime?               @db.DateTime(0)
+  created_at            DateTime                @default(now()) @db.DateTime(0)
+  bankName              String?                 @db.VarChar(100)
+  iban                  String?                 @db.VarChar(34)
+  phone_number          String?                 @db.VarChar(25)
+  status                UserStatus              @default(pending)
+  is_flagged            Boolean                 @default(false)
+  flag_reason           String?                 @db.VarChar(255)
+  real_user_fullname    String?                 @db.VarChar(100)
+  termsAccepted         Boolean                 @default(false)
 
   affiliate_links       AffiliateLink[]
-  merchant_products     MerchantProduct[] @relation("MerchantProducts")
-  AffiliateUserSale_AffiliateUserSale_merchant_idTousers  @relation("AffiliateUserSale_merchant_idTousers")
-  AffiliateUserSale_AffiliateUserSale_user_idTousers  @relation("AffiliateUserSale_user_idTousers")
+  merchant_products     MerchantProduct[]       @relation("MerchantProducts")
+
+  /// Aşağıdaki iki satır, hem alan adı hem de tipi içeriyor:
+  salesAsMerchant       AffiliateUserSale[]     @relation("AffiliateUserSale_merchant_idTousers")
+  salesAsAffiliate      AffiliateUserSale[]     @relation("AffiliateUserSale_user_idTousers")
+
   contact_messages      ContactMessage[]
   notifications         notifications[]
   payout_requests       PayoutRequest[]
@@ -76,6 +81,8 @@ model User {
 
   @@map("users")
 }
+
+
 
 model AffiliateLink {
   link_id               Int                  @id @default(autoincrement())
