@@ -4,10 +4,35 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { cookies } from 'next/headers';
 
+// Güvenlik: CSRF & Rate-limit middleware (örnek, senin altyapına göre)
+// Bunları proje altyapına eklemeyi unutma!
+import { csrf } from '@/lib/csrf';      // POST, PATCH için zorunlu
+import { checkRateLimit } from '@/lib/ratelimit'; // IP tabanlı
+
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
-export async function GET() {
+// Basit XSS koruma + string trim (sadece saf metin için)
+function sanitizeString(str) {
+  return String(str || '')
+    .replace(/[<>&"'`]/g, "")    // < > & " ' ` karakterlerini sil
+    .replace(/[\u0000-\u001F]+/g, "") // ASCII kontrol karakterlerini sil
+    .trim();
+}
+
+// URL formatı kontrolü (http(s) ile başlama zorunlu)
+function isValidUrl(url) {
+  return /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url);
+}
+
+// --------- GET: Merchant dashboard verileri ---------
+export const GET = async (req) => {
   try {
+    // RATE LIMIT: GET istekleri için (IP başı 30/dk)
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || 'unknown';
+    if (!checkRateLimit(`merchant_dashboard_get_${ip}`, 30, 60_000)) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const cookieStore = await cookies();
     const tokenValue = cookieStore.get('cabo_token')?.value;
 
@@ -21,15 +46,16 @@ export async function GET() {
     } catch {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
-
     if (!token || token.role !== 'merchant') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const config = await prisma.platform_config.findUnique({
-      where: { key_name: 'min_commission' }
-    });
-    const minCommission = config ? parseFloat(config.value) : 5;
+    // min_commission platform_config'tan çek
+    let minCommission = 5;
+    try {
+      const config = await prisma.platform_config.findUnique({ where: { key_name: 'min_commission' } });
+      minCommission = config ? parseFloat(config.value) : 5;
+    } catch { minCommission = 5; }
 
     const products = await prisma.merchantProduct.findMany({
       where: { merchant_id: token.user_id },
@@ -67,10 +93,17 @@ export async function GET() {
     console.error('Dashboard Fetch Error:', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
-}
+};
 
-export async function POST(req) {
+// --------- POST: Yeni ürün ekleme ---------
+export const POST = csrf(async (req) => {
   try {
+    // RATE LIMIT: POST istekleri için (IP başı 10/dk)
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || 'unknown';
+    if (!checkRateLimit(`merchant_dashboard_post_${ip}`, 10, 60_000)) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const cookieStore = await cookies();
     const tokenValue = cookieStore.get('cabo_token')?.value;
 
@@ -84,7 +117,6 @@ export async function POST(req) {
     } catch {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
-
     if (!token || token.role !== 'merchant') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -100,31 +132,65 @@ export async function POST(req) {
       max_sales_limit
     } = body;
 
-    if (!name || !image_url || !merchant_url || !price || !commission_rate || !max_sales_limit) {
+    // --- Field kontrolü ve sanitize ---
+    if (
+      !name ||
+      !image_url ||
+      !merchant_url ||
+      !price ||
+      !commission_rate ||
+      !max_sales_limit
+    ) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const config = await prisma.platform_config.findUnique({
-      where: { key_name: 'min_commission' }
-    });
-    const minCommission = config ? parseFloat(config.value) : 5;
+    // XSS/boşluk/simge temizliği
+    const safeName = sanitizeString(name);
+    const safeDesc = sanitizeString(description || '');
+    const safeImg = sanitizeString(image_url);
+    const safeUrl = sanitizeString(merchant_url);
 
-    if (parseFloat(commission_rate) < minCommission) {
+    // URL validasyonu
+    if (!isValidUrl(safeImg) || !isValidUrl(safeUrl)) {
+      return NextResponse.json({ error: 'Invalid image or merchant URL.' }, { status: 400 });
+    }
+    // Fiyat, komisyon, limit kontrol
+    const priceValue = parseFloat(price);
+    const commissionValue = parseFloat(commission_rate);
+    const limitValue = parseInt(max_sales_limit);
+
+    if (
+      Number.isNaN(priceValue) || priceValue <= 0 ||
+      Number.isNaN(commissionValue) || commissionValue <= 0 ||
+      Number.isNaN(limitValue) || limitValue < 0
+    ) {
+      return NextResponse.json({ error: 'Invalid price, commission rate or sales limit.' }, { status: 400 });
+    }
+
+    // Minimum komisyon enforce
+    let minCommission = 5;
+    try {
+      const config = await prisma.platform_config.findUnique({ where: { key_name: 'min_commission' } });
+      minCommission = config ? parseFloat(config.value) : 5;
+    } catch { minCommission = 5; }
+
+    if (commissionValue < minCommission) {
       return NextResponse.json({ error: `Commission rate must be at least ${minCommission}%` }, { status: 400 });
     }
 
+    // Product code benzersiz üret
     const product_code = crypto.randomBytes(16).toString('hex');
 
     const newProduct = await prisma.merchantProduct.create({
       data: {
         merchant_id: token.user_id,
-        name,
-        description: description || '',
-        image_url,
-        price: parseFloat(price),
-        commission_rate: parseFloat(commission_rate),
-        merchant_url,
-        max_sales_limit: parseInt(max_sales_limit),
+        name: safeName,
+        description: safeDesc,
+        image_url: safeImg,
+        price: priceValue,
+        commission_rate: commissionValue,
+        merchant_url: safeUrl,
+        max_sales_limit: limitValue,
         product_code
       }
     });
@@ -134,16 +200,19 @@ export async function POST(req) {
     console.error('Product Create Error:', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(req) {
+// --------- PATCH: Ürün güncelleme (edit, activate, deactivate) ---------
+export const PATCH = csrf(async (req) => {
   try {
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || 'unknown';
+    if (!checkRateLimit(`merchant_dashboard_patch_${ip}`, 10, 60_000)) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const cookieStore = await cookies();
     const tokenValue = cookieStore.get('cabo_token')?.value;
-
-    if (!tokenValue) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!tokenValue) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     let token;
     try {
@@ -151,7 +220,6 @@ export async function PATCH(req) {
     } catch {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
-
     if (!token || token.role !== 'merchant') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -163,34 +231,35 @@ export async function PATCH(req) {
       return NextResponse.json({ error: 'Missing product_id' }, { status: 400 });
     }
 
-    const config = await prisma.platform_config.findUnique({
-      where: { key_name: 'min_commission' }
-    });
-    const minCommission = config ? parseFloat(config.value) : 5;
+    // min_commission çek
+    let minCommission = 5;
+    try {
+      const config = await prisma.platform_config.findUnique({ where: { key_name: 'min_commission' } });
+      minCommission = config ? parseFloat(config.value) : 5;
+    } catch { minCommission = 5; }
 
     const dataToUpdate = {};
-
     let editTriggered = false;
     if (commission_rate !== undefined) {
-      if (typeof commission_rate !== 'number') {
-        return NextResponse.json({ error: 'commission_rate must be a number' }, { status: 400 });
-      }
-      if (commission_rate < minCommission) {
+      const crNum = Number(commission_rate);
+      if (Number.isNaN(crNum)) return NextResponse.json({ error: 'commission_rate must be a number' }, { status: 400 });
+      if (crNum < minCommission) {
         return NextResponse.json({ error: `Commission rate must be at least ${minCommission}%` }, { status: 400 });
       }
-      dataToUpdate.commission_rate = commission_rate;
+      dataToUpdate.commission_rate = crNum;
       editTriggered = true;
     }
 
     if (max_sales_limit !== undefined) {
-      if (!Number.isInteger(max_sales_limit) || max_sales_limit < 0) {
+      const mslNum = Number(max_sales_limit);
+      if (!Number.isInteger(mslNum) || mslNum < 0) {
         return NextResponse.json({ error: 'max_sales_limit must be a non-negative integer' }, { status: 400 });
       }
-      dataToUpdate.max_sales_limit = max_sales_limit;
+      dataToUpdate.max_sales_limit = mslNum;
       editTriggered = true;
     }
 
-    // EDIT SONRASI admin approval’a düşür!
+    // Her edit sonrası admin onayını kaldır, ürünü pasife çek
     if (editTriggered) {
       dataToUpdate.activated_by_admin = false;
       dataToUpdate.is_active = false;
@@ -199,19 +268,16 @@ export async function PATCH(req) {
     if (action === 'deactivate') {
       dataToUpdate.is_active = false;
     } else if (action === 'activate') {
-      // Not: activate request’iyle ürünü aktif et ama activated_by_admin true olmadıkça marketplace'te gösterme!
       dataToUpdate.is_active = true;
     }
 
-    // Ürünün merchant'a aitliği kontrolü
+    // Ownership check
     const product = await prisma.merchantProduct.findUnique({
       where: { product_id: Number(product_id) }
     });
-
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
-
     if (product.merchant_id !== token.user_id) {
       return NextResponse.json({ error: 'Unauthorized to update this product' }, { status: 403 });
     }
@@ -226,4 +292,4 @@ export async function PATCH(req) {
     console.error('Product Patch Error:', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
-}
+});
