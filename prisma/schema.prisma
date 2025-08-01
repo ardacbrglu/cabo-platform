@@ -19,7 +19,7 @@ enum UserStatus {
   rejected
 }
 
-enum affiliate_user_sales_status {
+enum AffiliateUserSale_status {
   pending
   confirmed
   rejected
@@ -67,8 +67,8 @@ model User {
 
   affiliate_links       AffiliateLink[]
   merchant_products     MerchantProduct[] @relation("MerchantProducts")
-  affiliate_user_sales_affiliate_user_sales_merchant_idTousers affiliate_user_sales[] @relation("affiliate_user_sales_merchant_idTousers")
-  affiliate_user_sales_affiliate_user_sales_user_idTousers affiliate_user_sales[] @relation("affiliate_user_sales_user_idTousers")
+  AffiliateUserSale_AffiliateUserSale_merchant_idTousers  @relation("AffiliateUserSale_merchant_idTousers")
+  AffiliateUserSale_AffiliateUserSale_user_idTousers  @relation("AffiliateUserSale_user_idTousers")
   contact_messages      ContactMessage[]
   notifications         notifications[]
   payout_requests       PayoutRequest[]
@@ -78,44 +78,48 @@ model User {
 }
 
 model AffiliateLink {
-  link_id      Int       @id @default(autoincrement())
-  user_id      Int
-  product_id   Int
-  token        String    @unique @db.VarChar(64)
-  created_at   DateTime  @default(now()) @db.DateTime(0)
-  is_visible   Boolean   @default(true)
-  expires_at   DateTime?
+  link_id               Int                  @id @default(autoincrement())
+  user_id               Int
+  product_id            Int
+  token                 String    @unique @db.VarChar(64)
+  created_at            DateTime  @default(now()) @db.DateTime(0)
+  is_visible            Boolean   @default(true)
+  expires_at            DateTime?
 
-  user         User      @relation(fields: [user_id], references: [user_id])
-  product      MerchantProduct @relation(fields: [product_id], references: [product_id])
-  clicks       Click[]
-  affiliate_user_sales   affiliate_user_sales[]
+  user                  User      @relation(fields: [user_id], references: [user_id])
+  product               MerchantProduct @relation(fields: [product_id], references: [product_id])
+  clicks                Click[]
+
+  // RELATION DÜZELTİLDİ!
+  AffiliateUserSale   AffiliateUserSale[]  @relation("LinkSales")
 
   @@index([user_id])
   @@index([product_id])
   @@map("affiliate_links")
 }
 
-model affiliate_user_sales {
-  sale_id              Int                         @id @default(autoincrement())
-  order_id             String                      @db.VarChar(100)
-  user_id              Int
-  merchant_id          Int
-  product_id           Int
-  amount               Decimal                     @db.Decimal(19, 4)
-  quantity             Int                         @default(1)
-  commission_affiliate Decimal                     @db.Decimal(19, 4)
-  commission_platform  Decimal                     @db.Decimal(19, 4)
-  status               affiliate_user_sales_status @default(pending)
-  converted_at         DateTime                    @default(now()) @db.DateTime(0)
-  payout_item_id       Int?
-  updated_at           DateTime?                   @default(now()) @db.DateTime(0)
-  link_id              Int?
-  affiliate_link_id    Int?
+model AffiliateUserSale {
+  sale_id               Int           @id @default(autoincrement())
+  order_id              String        @db.VarChar(100)
+  user_id               Int
+  merchant_id           Int
+  product_id            Int
+  amount                Decimal       @db.Decimal(19, 4)
+  quantity              Int           @default(1)
+  commission_affiliate  Decimal       @db.Decimal(19, 4)
+  commission_platform   Decimal       @db.Decimal(19, 4)
+  status                AffiliateUserSale_status @default(pending)
+  converted_at          DateTime      @default(now()) @db.DateTime(0)
+  payout_item_id        Int?
+  updated_at            DateTime?     @default(now()) @db.DateTime(0)
 
-  merchant_products    MerchantProduct             @relation(fields: [product_id], references: [product_id], map: "affiliate_user_sales_ibfk_2")
-  users_affiliate_user_sales_merchant_idTousers User @relation("affiliate_user_sales_merchant_idTousers", fields: [merchant_id], references: [user_id], map: "affiliate_user_sales_ibfk_merchant")
-  users_affiliate_user_sales_user_idTousers     User @relation("affiliate_user_sales_user_idTousers", fields: [user_id], references: [user_id], map: "affiliate_user_sales_ibfk_user")
+  // --- DİKKAT! Bu satır relation'ın karşılığıdır ---
+  affiliate_link_id     Int?
+  affiliate_link        AffiliateLink? @relation("LinkSales", fields: [affiliate_link_id], references: [link_id])
+
+  merchant_products     MerchantProduct @relation(fields: [product_id], references: [product_id], map: "AffiliateUserSale_ibfk_2")
+  users_AffiliateUserSale_merchant_idTousers User @relation("AffiliateUserSale_merchant_idTousers", fields: [merchant_id], references: [user_id], map: "AffiliateUserSale_ibfk_merchant")
+  users_AffiliateUserSale_user_idTousers     User @relation("AffiliateUserSale_user_idTousers", fields: [user_id], references: [user_id], map: "AffiliateUserSale_ibfk_user")
   platform_earnings     platform_earnings[]
 
   @@unique([order_id, product_id], map: "order_product_unique")
@@ -123,9 +127,10 @@ model affiliate_user_sales {
   @@index([merchant_id])
   @@index([product_id])
   @@index([payout_item_id])
-  @@index([link_id], map: "idx_link_id")
-  @@map("affiliate_user_sales")
+  @@index([affiliate_link_id], map: "idx_affiliate_link_id")
+  @@map("AffiliateUserSale")
 }
+
 
 model Click {
   click_id       Int             @id @default(autoincrement())
@@ -172,7 +177,7 @@ model MerchantProduct {
 
   merchant             User                   @relation("MerchantProducts", fields: [merchant_id], references: [user_id], map: "merchant_products_ibfk_1")
   affiliate_links      AffiliateLink[]
-  affiliate_user_sales affiliate_user_sales[]
+  AffiliateUserSale AffiliateUserSale[]
   payout_request_items payout_request_items[]
 
   @@index([merchant_id])
@@ -285,7 +290,7 @@ model platform_earnings {
   amount               Decimal              @db.Decimal(19, 4)
   currency_code        String               @default("EUR") @db.Char(3)
   logged_at            DateTime             @default(now()) @db.DateTime(0)
-  affiliate_user_sales affiliate_user_sales @relation(fields: [sale_id], references: [sale_id], map: "platform_earnings_ibfk_1")
+  AffiliateUserSale AffiliateUserSale @relation(fields: [sale_id], references: [sale_id], map: "platform_earnings_ibfk_1")
   currencies           Currency             @relation(fields: [currency_code], references: [code], map: "platform_earnings_ibfk_2")
 
   @@index([currency_code])
