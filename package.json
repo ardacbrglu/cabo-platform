@@ -2,6 +2,7 @@
   "name": "cabo-platform",
   "version": "0.1.0",
   "private": true,
+  "postinstall": "prisma generate",  
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
