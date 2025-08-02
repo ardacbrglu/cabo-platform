@@ -59,7 +59,7 @@ export default function HamburgerMenu() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed top-[48px] right-3 z-[40001] bg-[#181818] border border-[#232323] p-2.5 rounded-full shadow-xl transition hover:bg-[#232323] active:scale-95"
+          className="fixed top-[48px] right-3 z-[50000] bg-[#181818] border border-[#232323] p-2.5 rounded-full shadow-xl transition hover:bg-[#232323] active:scale-95"
           style={{ width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" }}
           aria-label="Open Menu"
         >
