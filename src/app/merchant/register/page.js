@@ -6,6 +6,10 @@ import { Loader2 } from "lucide-react";
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
+import dynamic from "next/dynamic";
+
+// Captcha bileşenini dinamik import et (SSR için gerekliyse)
+const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const translations = {
   en: {
@@ -31,7 +35,9 @@ const translations = {
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
     invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
-    acceptTerms: <>I accept the <Link href="/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Terms</Link> and <Link href="/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Privacy Policy</Link></>,
+    acceptTerms: <>
+      I accept the <Link href="/merchant/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Terms</Link> and <Link href="/merchant/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Privacy Policy</Link>
+    </>,
     mustAccept: "You must accept the Terms and Privacy Policy.",
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details"
@@ -59,7 +65,12 @@ const translations = {
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
     invalidPassword: "Şifre en az 8 karakter olmalı, harf ve rakam içermeli.",
-    acceptTerms: <> <Link href="/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım</Link> ve <Link href="/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Gizlilik Şartlarını</Link> kabul ediyorum</>,
+    acceptTerms: <>
+      <Link href="/merchant/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım</Link>
+      {" ve "}
+      <Link href="/merchant/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Gizlilik Şartlarını</Link>
+      {" kabul ediyorum"}
+    </>,
     mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi"
@@ -78,6 +89,7 @@ export default function MerchantRegisterPage() {
     countryCode: "+90",
   });
   const [terms, setTerms] = useState(false);
+  const [captcha, setCaptcha] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
@@ -120,6 +132,11 @@ export default function MerchantRegisterPage() {
       setLoading(false);
       return;
     }
+    if (!captcha) {
+      setError(locale === "tr" ? "Lütfen robot olmadığınızı doğrulayın." : "Please complete the captcha.");
+      setLoading(false);
+      return;
+    }
 
     const fullPhone = `${form.countryCode}${form.phone}`.trim();
 
@@ -137,6 +154,7 @@ export default function MerchantRegisterPage() {
         phone_number: fullPhone,
         role: "merchant",
         termsAccepted: terms,
+        captcha
       }),
     });
 
@@ -275,6 +293,9 @@ export default function MerchantRegisterPage() {
                 {t("acceptTerms")}
               </label>
             </div>
+
+            {/* CAPTCHA */}
+            <Captcha onChange={setCaptcha} lang={locale} />
 
             {error && <p className="text-red-500 text-base">{error}</p>}
             {success && <p className="text-green-400 text-base">{t("success")}</p>}

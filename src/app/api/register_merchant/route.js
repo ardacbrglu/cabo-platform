@@ -1,11 +1,14 @@
-import { csrf } from '@/lib/csrf'; // Eğer kurulu değilse, kendi CSRF middleware'ini yazabilirim!
+import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit } from '@/lib/ratelimit';
+import axios from 'axios';
+
+const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const nameRegex = /^[a-zA-Z0-9_ ]{3,40}$/;
-const phoneRegex = /^\+?\d{10,15}$/; // basit, isteğe göre özelleştir
+const phoneRegex = /^\+?\d{10,15}$/;
 
 const messages = {
   en: {
@@ -18,6 +21,7 @@ const messages = {
     phone: "Invalid phone number.",
     uniq: "A merchant account with this email already exists.",
     terms: "You must accept the Terms and Privacy Policy.",
+    captcha: "Captcha verification failed. Please try again.",
     success: "Merchant registration successful. Your account is pending approval.",
     fail: "Registration failed. Please try again."
   },
@@ -31,6 +35,7 @@ const messages = {
     phone: "Geçersiz telefon numarası.",
     uniq: "Bu e-posta ile daha önce satıcı kaydı yapılmış.",
     terms: "Kullanım ve gizlilik şartlarını kabul etmelisiniz.",
+    captcha: "Doğrulama başarısız oldu. Lütfen tekrar deneyin.",
     success: "Satıcı kaydınız başarılı. Hesabınız onay bekliyor.",
     fail: "Kayıt başarısız. Lütfen tekrar deneyin."
   }
@@ -38,28 +43,45 @@ const messages = {
 
 export const POST = csrf(async (req) => {
   try {
-    // Dil (locale) tespiti
+    // Locale
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
     const locale = (lang && lang.startsWith("tr")) ? "tr" : "en";
     const msg = messages[locale];
 
-    // Rate Limit (IP'ye göre)
+    // Rate limit
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
     if (!checkRateLimit(`merchant_register_${ip}`, 5, 60 * 1000)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
-    // Inputları al ve kontrol et
-    const { name, email, password, phone_number, role, termsAccepted } = await req.json();
+    // Input
+    const { name, email, password, phone_number, role, termsAccepted, captcha } = await req.json();
 
-    // --- TERMS KONTROLÜ EKLENDİ ---
+    // Terms check
     if (!termsAccepted) {
       return Response.json({ success: false, message: msg.terms }, { status: 400 });
     }
-    // Zorunlu alanlar + merchant rolü
     if (!name || !email || !password || !phone_number || role !== "merchant") {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
+
+    // --- CAPTCHA DOĞRULAMA ---
+    if (!captcha) {
+      return Response.json({ success: false, message: msg.captcha }, { status: 400 });
+    }
+    try {
+      const captchaRes = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
+      );
+      if (!captchaRes.data.success) {
+        return Response.json({ success: false, message: msg.captcha }, { status: 400 });
+      }
+    } catch (captchaError) {
+      console.error('Captcha verification failed:', captchaError);
+      return Response.json({ success: false, message: msg.captcha }, { status: 400 });
+    }
+    // ------------------------
+
     if (!emailRegex.test(email.trim().toLowerCase()))
       return Response.json({ success: false, message: msg.email }, { status: 400 });
     if (!nameRegex.test(name.trim()))
@@ -69,14 +91,14 @@ export const POST = csrf(async (req) => {
     if (!phoneRegex.test(phone_number.trim()))
       return Response.json({ success: false, message: msg.phone }, { status: 400 });
 
-    // Tekrar kayıt kontrolü
+    // Duplicate check
     const existing = await prisma.user.findFirst({
       where: { email: email.trim().toLowerCase(), role: "merchant" }
     });
     if (existing)
       return Response.json({ success: false, message: msg.uniq }, { status: 409 });
 
-    // Şifre hashle
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
     await prisma.user.create({
@@ -91,7 +113,7 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    // Log (isteğe bağlı)
+    // Log
     console.info(`[MERCHANT_REGISTER][${ip}] ${email.trim().toLowerCase()} (${name.trim()})`);
 
     return Response.json({
