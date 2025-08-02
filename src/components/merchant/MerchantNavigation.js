@@ -143,7 +143,7 @@ export default function MerchantNavigation() {
               onClick={handleLogout}
               className="text-red-500 hover:text-red-400 transition ml-3"
             >
-              {t("Logout")}
+              {t("Logout")}<header className="w-full bg-[#111]  shadow-sm"></header>
             </button>
           </div>
         </div>
