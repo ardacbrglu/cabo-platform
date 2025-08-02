@@ -262,6 +262,26 @@
   "minCommissionWarn": "Commission rate must be at least {minCommission}%",
   "maxSalesLimitWarn": "Max sales limit must be a non-negative integer",
   "failedProductUpdate": "Failed to update product.",
-  "failedCopy": "Failed to copy product code."
+  "failedCopy": "Failed to copy product code.",
+  "merchantPaymentsTitle": "Merchant Payments",
+  "merchantPaymentsSubtitle": "Manage and review all commission payouts to your affiliates. Track payments for each user, view payout statuses, and access detailed transaction history for every affiliate sale.",
+  "exportCSV": "Export to CSV",
+  "markAsPaid": "Mark as Paid",
+  "affiliate": "Affiliate",
+  "requestedAt": "Requested At",
+  "noPayouts": "No payouts found.",
+  "merchant_paid": "Paid (Waiting Confirm)",
+  "platform_confirmed": "Confirmed",
+  "rejected": "Rejected",
+  "makePayment": "Make Payment",
+  "platformBankInfo": "Platform Bank Info:",
+  "totalAmount": "Total Amount",
+  "iMadeThePayment": "I Made the Payment",
+  "requestDate": "Request Date",
+  "payoutToken": "Payout Token",
+  "merchantOrderId": "Merchant Order ID",
+  "saleDate": "Sale Date",
+  "saleStatus": "Sale Status",
+  "token": "Token",
+  "close": "Close"
 }
-

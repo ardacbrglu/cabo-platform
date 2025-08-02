@@ -269,9 +269,29 @@
   "minCommissionWarn": "Komisyon oranı en az {minCommission}% olmalı.",
   "maxSalesLimitWarn": "Satış limiti negatif olmayan bir tam sayı olmalı.",
   "failedProductUpdate": "Ürün güncellenemedi.",
-  "failedCopy": "Ürün kodu kopyalanamadı."
+  "failedCopy": "Ürün kodu kopyalanamadı.",
+  "merchantPaymentsTitle": "Satıcı Ödemeleri",
+  "merchantPaymentsSubtitle": "Tüm komisyon ödemelerini yönetin ve inceleyin. Her kullanıcı için ödemeleri takip edin, durumları görüntüleyin ve her satış için detaylı işlem geçmişine ulaşın.",
+  "exportCSV": "CSV'ye Aktar",
+  "markAsPaid": "Ödendi Olarak İşaretle",
+  "affiliate": "Satış Ortağı",
+  "requestedAt": "Talep Tarihi",
+  "noPayouts": "Hiç ödeme bulunamadı.",
+  "merchant_paid": "Ödendi (Onay Bekliyor)",
+  "platform_confirmed": "Onaylandı",
+  "rejected": "Reddedildi",
+  "makePayment": "Ödeme Yap",
+  "platformBankInfo": "Platform Banka Bilgisi:",
+  "totalAmount": "Toplam Tutar",
+  "iMadeThePayment": "Ödemeyi Yaptım",
+  "requestDate": "Talep Tarihi",
+  "payoutToken": "Ödeme Token'ı",
+  "merchantOrderId": "Sipariş No",
+  "saleDate": "Satış Tarihi",
+  "saleStatus": "Satış Durumu",
+  "token": "Token",
+  "close": "Kapat"
 }
-
 
 
 

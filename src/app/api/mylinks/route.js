@@ -20,7 +20,6 @@ async function getUserIdFromToken() {
 
 // Kalan komisyon hakkı otomatik kontrol ve ürün kapama
 async function checkAndDeactivateProduct(product) {
-  // Hem limit hem de toplam satış sayısı sayısal ve tanımlı olmalı
   if (
     product &&
     typeof product.max_sales_limit === "number" &&
@@ -33,13 +32,10 @@ async function checkAndDeactivateProduct(product) {
       where: { product_id: product.product_id },
       data: { is_active: false }
     });
-    // Güncel ürün objesini döndür
     return { ...product, is_active: false };
   }
   return product;
 }
-
-
 
 export async function GET() {
   const userId = await getUserIdFromToken();
@@ -72,7 +68,7 @@ export async function GET() {
       }
     });
 
-    // Her ürün için kalan komisyon hakkı hesapla ve gerekiyorsa kapat
+    // Her ürün için kalan satış hakkı hesapla ve gerekiyorsa kapat
     const linksWithQuota = await Promise.all(
       links.map(async link => {
         const p = link.product;
@@ -109,11 +105,11 @@ export async function GET() {
           where: { link_id: link.link_id }
         });
 
-        // Kullanıcıya özel toplam satış ve kazanç
-        const salesAgg = await prisma.affiliate_user_sales.aggregate({
+        // 🔴🔴🔴 DÜZELTİLEN KISIM: Model adı affiliateUserSale olmalı!
+        const salesAgg = await prisma.affiliateUserSale.aggregate({
           _sum: { commission_affiliate: true, quantity: true },
           where: {
-            link_id: link.link_id,
+            affiliate_link_id: link.link_id,   // doğru alan adı!
             user_id: userId
           }
         });
@@ -133,7 +129,6 @@ export async function GET() {
     return Response.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-
 
 // === POST: Linki MyLinks'ten kaldır (is_visible = false)
 export async function POST(req) {

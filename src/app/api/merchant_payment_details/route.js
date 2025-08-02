@@ -1,20 +1,32 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/ratelimit";
+import { z } from "zod";
+
+const requestSchema = z.object({
+  item_ids: z.array(z.number().int().positive()).min(1),
+});
 
 export async function POST(req) {
   try {
+    // CSRF koruması
+    await validateCsrfToken(req);
+
+    // Auth & Rate Limit
     const token = getTokenFromRequest(req);
     const user = token ? verifyToken(token) : null;
     if (!user || user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const { item_ids } = await req.json();
-    if (!Array.isArray(item_ids) || item_ids.length === 0) {
-      return NextResponse.json({ error: "No payout item IDs provided" }, { status: 400 });
-    }
+    await checkRateLimit(req, user.user_id, 10, 60_000, 'merchant-payout-details');
 
-    // Bu merchant’a ait payout item'larını çek
+    // Input validation (zod)
+    const body = await req.json();
+    const { item_ids } = requestSchema.parse(body);
+
+    // Sadece merchant’a ait payout item'larını çek
     const items = await prisma.payout_request_items.findMany({
       where: {
         item_id: { in: item_ids },
@@ -36,12 +48,15 @@ export async function POST(req) {
       }
     });
 
+    if (!items.length) {
+      return NextResponse.json({ error: "No payout items found" }, { status: 404 });
+    }
+
     // Her payout item için ilgili satışları topla
     let sales = [];
     for (const item of items) {
       if (item.source_sale_ids) {
         const saleIds = item.source_sale_ids.split(',').map(id => Number(id)).filter(Boolean);
-        // Her bir sale'ı affiliate_user_sales üzerinden bul
         const salesData = await prisma.affiliate_user_sales.findMany({
           where: { sale_id: { in: saleIds } },
           select: {
@@ -56,7 +71,7 @@ export async function POST(req) {
             affiliate_link_id: true,
           },
         });
-        // Her sale'ın affiliate_link_id'sinden token çek
+        // affiliate_link_id’den token çek
         for (const sale of salesData) {
           let saleToken = null;
           if (sale.affiliate_link_id) {
@@ -77,7 +92,7 @@ export async function POST(req) {
       }
     }
 
-    // Ürün isimlerini map'le
+    // Ürün isimlerini map’le
     const productIds = [...new Set(sales.map(s => s.product_id))];
     const products = productIds.length
       ? await prisma.merchantProduct.findMany({
@@ -95,7 +110,7 @@ export async function POST(req) {
       affiliate_name: items[0]?.payout_requests?.real_user_fullname || "",
     };
 
-    // Frontende dönecek sale detaylarını oluştur
+    // Sale detaylarını frontende hazırla
     const details = sales.map(s => ({
       order_id: s.order_id,
       product_name: productMap[s.product_id] || "",

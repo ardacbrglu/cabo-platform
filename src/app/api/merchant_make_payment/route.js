@@ -1,20 +1,31 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getTokenFromRequest } from "@/lib/auth";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 export async function POST(req) {
   try {
+    // 1. CSRF kontrolü
+    await validateCsrfToken(req);
+
+    // 2. Rate limit (ör: merchant başı 10/dk)
     const user = await getTokenFromRequest(req);
     if (!user || user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (!await checkRateLimit(req, user.user_id, 10, 60_000, 'merchant-mark-paid')) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
+    // 3. Body parse ve kontrol
     const body = await req.json();
     const itemIds = body.item_ids;
     if (!Array.isArray(itemIds) || itemIds.length === 0) {
       return NextResponse.json({ error: "No items selected" }, { status: 400 });
     }
 
-    // Sadece pending ve ilgili merchant'a ait olanları işaretle
+    // 4. Pending & ilgili merchant’a ait olanları bul
     const items = await prisma.payout_request_items.findMany({
       where: {
         item_id: { in: itemIds },
@@ -23,12 +34,11 @@ export async function POST(req) {
         payout_requests: { status: "pending" }
       }
     });
-
     if (!items.length) {
       return NextResponse.json({ error: "No valid items to mark as paid" }, { status: 400 });
     }
 
-    // Toplu olarak status: merchant_paid yap, paid_at doldur
+    // 5. Toplu olarak update et
     await prisma.payout_request_items.updateMany({
       where: {
         item_id: { in: items.map(i => i.item_id) }
@@ -39,7 +49,7 @@ export async function POST(req) {
       }
     });
 
-    // İlgili payout_request_logs tablosuna log ekle (isteğe bağlı)
+    // 6. Log kaydı (her item için)
     for (const item of items) {
       await prisma.payout_request_logs.create({
         data: {

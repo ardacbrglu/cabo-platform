@@ -45,7 +45,7 @@ export async function GET(req) {
     if (pendingRequest) pendingAmount = Number(pendingRequest.amount_total || 0);
 
     // payout'a bağlı olmayan (henüz çekilmemiş) confirmed satışlar
-    const confirmedSales = await prisma.affiliate_user_sales.findMany({
+    const confirmedSales = await prisma.affiliateUserSale.findMany({
       where: {
         user_id: userId,
         status: "confirmed",
@@ -56,7 +56,7 @@ export async function GET(req) {
     const confirmed = confirmedSales.reduce((sum, s) => sum + Number(s.commission_affiliate), 0);
 
     // payout'a bağlı olmayan pending satışlar
-    const pendingSales = await prisma.affiliate_user_sales.findMany({
+    const pendingSales = await prisma.affiliateUserSale.findMany({
       where: {
         user_id: userId,
         status: "pending",
@@ -195,7 +195,7 @@ export async function POST(req) {
       });
       const productIds = links.map(l => l.product_id);
 
-      const sales = await prisma.affiliate_user_sales.findMany({
+      const sales = await prisma.affiliateUserSale.findMany({
         where: {
           user_id: userId,
           status: "confirmed",
@@ -223,7 +223,7 @@ export async function POST(req) {
         });
 
         for (const sale of sales) {
-          const payoutItem = await tx.payout_request_items.create({
+          const payoutItem = await tx.payoutRequestItems.create({
             data: {
               request_id: payoutReq.request_id,
               merchant_id: sale.merchant_id,
@@ -232,7 +232,7 @@ export async function POST(req) {
               source_sale_ids: sale.sale_id.toString(),
             }
           });
-          await tx.affiliate_user_sales.update({
+          await tx.affiliateUserSale.update({
             where: { sale_id: sale.sale_id },
             data: { payout_item_id: payoutItem.item_id }
           });
@@ -262,7 +262,7 @@ export async function POST(req) {
           return NextResponse.json({ error: "Request not found or not cancellable." }, { status: 400 });
         }
         // Bağlı payout_request_items
-        const items = await tx.payout_request_items.findMany({
+        const items = await tx.payoutRequestItems.findMany({
           where: { request_id: body.request_id }
         });
 
@@ -286,13 +286,13 @@ export async function POST(req) {
         for (const item of items) {
           if (item.source_sale_ids) {
             const saleIds = item.source_sale_ids.split(',').map(id => Number(id)).filter(Boolean);
-            await tx.affiliate_user_sales.updateMany({
+            await tx.affiliateUserSale.updateMany({
               where: { sale_id: { in: saleIds }, user_id: userId },
               data: { payout_item_id: null }
             });
           }
         }
-        await tx.payout_request_items.deleteMany({
+        await tx.payoutRequestItems.deleteMany({
           where: { request_id: body.request_id }
         });
         await tx.payoutRequest.update({

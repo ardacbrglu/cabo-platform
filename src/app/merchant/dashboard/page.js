@@ -4,6 +4,7 @@ import { useUser } from "@/context/UserContext";
 import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) {
@@ -19,6 +20,7 @@ function getQuotaStatus(product) {
 export default function MerchantDashboardPage() {
   const t = useTranslation();
   const { user, setUser } = useUser();
+  const csrfToken = useCsrfToken(); // ← CSRF token hook
 
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
@@ -39,7 +41,7 @@ export default function MerchantDashboardPage() {
   const [editValues, setEditValues] = useState({ commission_rate: "", max_sales_limit: "" });
   const [loading, setLoading] = useState(false);
 
-  // FETCH PRODUCTS
+  // PRODUCTS FETCH
   const fetchProducts = async () => {
     try {
       const res = await fetch("/api/merchant_dashboard", { credentials: "include" });
@@ -62,7 +64,10 @@ export default function MerchantDashboardPage() {
     try {
       const res = await fetch("/api/merchant_dashboard", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken, // ← ← ← CSRF token ekleniyor!
+        },
         credentials: "include",
         body: JSON.stringify(form),
       });
@@ -88,7 +93,10 @@ export default function MerchantDashboardPage() {
       const res = await fetch("/api/merchant_dashboard", {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken, // ← ← ← PATCH'te de CSRF!
+        },
         body: JSON.stringify({ product_id, action }),
       });
       if (res.ok) fetchProducts();
@@ -135,7 +143,10 @@ export default function MerchantDashboardPage() {
     try {
       const res = await fetch("/api/merchant_dashboard", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken, // ← ← ← PATCH'te de CSRF!
+        },
         body: JSON.stringify({
           product_id: editingProductId,
           commission_rate: Number(editValues.commission_rate),
@@ -159,8 +170,8 @@ export default function MerchantDashboardPage() {
     setEditValues({ commission_rate: "", max_sales_limit: "" });
   };
 
-  // INPUT GÖRÜNÜRLÜK CLASS'I (tüm inputlara eklenmeli)
-  const inputClass = "bg-[#181818] text-[#e6ffe6] border border-[#363] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition";
+  // INPUT GÖRÜNÜRLÜK CLASS'I
+  const inputClass = "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
 
   return (
     <MerchantLayout>
@@ -175,8 +186,8 @@ export default function MerchantDashboardPage() {
       </section>
 
       {message && (
-        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-green-400 bg-green-900/20 border border-green-800 px-4 py-3 rounded-md">
-          <CheckCircle size={18} /> {message}
+        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow">
+          <CheckCircle size={18} className="text-green-400" /> {message}
         </div>
       )}
 
@@ -184,7 +195,7 @@ export default function MerchantDashboardPage() {
       {formVisible && (
         <form
           onSubmit={handleSubmit}
-          className="bg-[#171b17] border border-[#2a2a2a] p-6 rounded-2xl mb-10 space-y-4 shadow-xl max-w-2xl mx-auto"
+          className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input type="text" className={inputClass} placeholder={t("productTitle")} required onChange={e => setForm({ ...form, name: e.target.value })} />
@@ -195,8 +206,8 @@ export default function MerchantDashboardPage() {
             <input type="number" className={inputClass} placeholder={t("maxSalesLimit")} required onChange={e => setForm({ ...form, max_sales_limit: e.target.value })} />
           </div>
           <textarea className={inputClass + " w-full"} placeholder={t("productDesc")} rows={3} onChange={e => setForm({ ...form, description: e.target.value })}></textarea>
-          <p className="text-xs text-gray-400 font-mono -mt-2">{t("formHintCommission")}</p>
-          <button type="submit" disabled={loading} className="bg-[#81d742] text-[#101010] font-semibold py-2 px-6 rounded hover:bg-[#aaff6c] mt-3">
+          <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
+          <button type="submit" disabled={loading} className="bg-[#262f24] text-[#d1ffd0] font-semibold py-2 px-6 rounded hover:bg-[#293f21] mt-3 transition">
             {loading ? t("adding") : t("submitReview")}
           </button>
         </form>
@@ -335,7 +346,7 @@ export default function MerchantDashboardPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => startEditing(p)}
-                      className="bg-[#2f4f2f] hover:bg-[#3f6f3f] text-white py-2 rounded text-sm flex-1"
+                      className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition"
                     >
                       {t("edit")}
                     </button>

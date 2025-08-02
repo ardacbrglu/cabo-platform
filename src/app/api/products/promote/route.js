@@ -75,10 +75,10 @@ export async function POST(req) {
         });
 
         // Yeni token üret ve kaydet
-        let newToken, exists = true;
-        while (exists) {
+        let newToken, tokenExists = true;
+        while (tokenExists) {
           newToken = generateToken();
-          exists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
+          tokenExists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
         }
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
@@ -116,10 +116,10 @@ export async function POST(req) {
 
     // 3️⃣ İlk defa token üret
     let newToken;
-    let exists = true;
-    while (exists) {
+    let tokenExists = true;
+    while (tokenExists) {
       newToken = generateToken();
-      exists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
+      tokenExists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
     }
 
     const expiresAt = new Date();

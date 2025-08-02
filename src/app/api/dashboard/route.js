@@ -79,14 +79,14 @@ export async function GET(req) {
     });
 
     // 6. Toplam satış adedi
-    const totalSalesData = await prisma.affiliate_user_sales.aggregate({
+    const totalSalesData = await prisma.affiliateUserSale.aggregate({
       _sum: { quantity: true },
       where: { product_id: { in: productIds }, user_id:userId }
     });
     const totalSales = Number(totalSalesData._sum.quantity) || 0;
 
     // 7. Toplam confirmed kazanç
-    const totalEarningsData = await prisma.affiliate_user_sales.aggregate({
+    const totalEarningsData = await prisma.affiliateUserSale.aggregate({
       _sum: { commission_affiliate: true },
       where: { product_id: { in: productIds }, user_id: userId, status: 'confirmed' }
     });
@@ -94,7 +94,7 @@ export async function GET(req) {
     const balance = totalEarnings;
 
     // 8. Son 5 satış (confirmed)
-    const recentConversions = await prisma.affiliate_user_sales.findMany({
+    const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { product_id: { in: productIds }, status: 'confirmed' },
       orderBy: { converted_at: 'desc' },
       take: 5,
@@ -115,7 +115,7 @@ export async function GET(req) {
     const leaderboardRaw = await Promise.all(allAffiliates.map(async u => {
       const pids = u.affiliate_links.map(l => l.product_id);
       if (!pids.length) return { name: u.name, value: 0 };
-      const sum = await prisma.affiliate_user_sales.aggregate({
+      const sum = await prisma.affiliateUserSale.aggregate({
         _sum: { commission_affiliate: true },
         where: { product_id: { in: pids }, status: 'confirmed' }
       });
@@ -127,7 +127,7 @@ export async function GET(req) {
       .slice(0, 3);
 
     // 10. **CANLI** Son satış (son 24 saat)
-    const lastConversion = await prisma.affiliate_user_sales.findFirst({
+    const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: {
         user_id: userId,
         status: "confirmed",

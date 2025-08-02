@@ -13,6 +13,7 @@ body {
   color: #f6f6f6;
   font-family: 'Inter', 'ui-sans-serif', 'system-ui', sans-serif;
 }
+
 html, body, main, * {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
@@ -21,3 +22,13 @@ html, body, main, * {
   display: none !important;
 }
 
+/* ---- MOBİLDE arka plan fotoğrafını gizle, mat siyah kullan ---- */
+@media (max-width: 900px) {
+  body {
+    background: #121212 !important; /* veya daha mat için #181818 da olabilir */
+    background-size: initial !important;
+    background-repeat: initial !important;
+    background-position: initial !important;
+    background-attachment: initial !important;
+  }
+}

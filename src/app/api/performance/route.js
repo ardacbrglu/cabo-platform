@@ -94,7 +94,7 @@ export async function GET(req) {
     }));
 
     // 7. Satış kayıtları (quantity destekli!)
-    const saleRecordsRaw = await prisma.affiliate_user_sales.findMany({
+    const saleRecordsRaw = await prisma.affiliateUserSale.findMany({
       where: {
         user_id: userId,
         product_id: { in: filteredProductIds },
@@ -114,7 +114,7 @@ export async function GET(req) {
     }));
 
     // 8. Confirmed Sales listesi (quantity ile!)
-    const confirmedSalesRaw = await prisma.affiliate_user_sales.findMany({
+    const confirmedSalesRaw = await prisma.affiliateUserSale.findMany({
       where: {
         user_id: userId,
         product_id: { in: filteredProductIds },

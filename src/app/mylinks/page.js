@@ -150,7 +150,7 @@ export default function MyLinksPage() {
               // Aktif ürün kartı
               return (
                 <div
-                  key={link.product_id}
+                  key={link.link_id}
                   className={`bg-[#181818] border border-[#272727] rounded-xl shadow-md p-6 flex flex-col justify-between transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
                 >
                   <div className="flex items-center gap-4 mb-4">

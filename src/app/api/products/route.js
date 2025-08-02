@@ -7,7 +7,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
 export async function GET() {
   try {
-    // await ile cookies!
+    // Kullanıcı JWT'si ile kimlik belirleme (opsiyonel)
     const cookieStore = await cookies();
     const token = cookieStore.get('cabo_token')?.value;
     let userId = null;
@@ -51,7 +51,7 @@ export async function GET() {
         (p.total_purchases < p.max_sales_limit)
     );
 
-    // Kullanıcının affiliate_link'leri (aktif/pasif fark etmeksizin)
+    // Kullanıcının affiliateLink'leri (aktif/pasif fark etmeksizin)
     let userLinks = [];
     let visibleLinkIds = [];
     if (userId) {
