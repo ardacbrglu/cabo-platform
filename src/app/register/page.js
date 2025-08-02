@@ -31,7 +31,7 @@ const translations = {
     emailPH: "you@example.com",
     password: "Password",
     passwordPH: "Create a password",
-    terms: "I accept the Terms and Privacy Policy",
+    terms: <>I accept the <Link href="/terms_privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Terms and Privacy Policy</Link></>,
     registerBtn: "Register",
     already: "Already have an account?",
     loginLink: "Log in",
@@ -61,7 +61,7 @@ const translations = {
     emailPH: "sen@example.com",
     password: "Şifre",
     passwordPH: "Şifre oluştur",
-    terms: "Kullanım ve Gizlilik Şartlarını kabul ediyorum",
+    terms: <> <Link href="/terms_privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım ve Gizlilik Şartlarını</Link> kabul ediyorum</>,
     registerBtn: "Kaydol",
     already: "Zaten hesabın var mı?",
     loginLink: "Giriş yap",
@@ -103,7 +103,9 @@ export default function RegisterPage() {
     try {
       await signIn("google", { callbackUrl: "/dashboard" });
     } catch {
-      setError("Google ile giriş başarısız oldu.");
+      setError(locale === "tr"
+        ? "Google ile giriş başarısız oldu." 
+        : "Google sign-in failed.");
     }
     setLoading(false);
   };
@@ -258,7 +260,7 @@ export default function RegisterPage() {
               required
               className="accent-[#81d742] h-5 w-5"
             />
-            <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none">
+            <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
               {t('terms')}
             </label>
           </div>
