@@ -26,6 +26,7 @@ model User {
   flag_reason          String?                @db.VarChar(255)
   real_user_fullname   String?                @db.VarChar(100)
   termsAccepted        Boolean                @default(false)
+  activation_token     String?                @db.VarChar(255)
   salesAsMerchant      AffiliateUserSale[]    @relation("AffiliateUserSale_merchant_idTousers")
   salesAsAffiliate     AffiliateUserSale[]    @relation("AffiliateUserSale_user_idTousers")
   affiliate_links      AffiliateLink[]

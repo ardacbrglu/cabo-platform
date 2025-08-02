@@ -206,15 +206,29 @@ export default function LoginPage() {
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
 
+
             <button
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full"
             >
-              <img src="/google.svg" alt="Google" className="w-6 h-6 mr-1" />
+              {/* Google SVG LOGO */}
+              <span className="w-6 h-6 mr-1 inline-block align-middle">
+                <svg width="24" height="24" viewBox="0 0 48 48">
+                  <g>
+                    <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3.1l6-5.9C34.5 6.1 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c10.1 0 19.1-7.2 19.1-20 0-1.3-.1-2.7-.4-4z"/>
+                    <path fill="#34A853" d="M6.3 14.1l7 5.1C15.8 16 19.6 13.5 24 13.5c3.1 0 5.9 1.1 8 3.1l6-5.9C34.5 6.1 29.5 4 24 4c-6.2 0-11.6 2.2-15.7 6.1z"/>
+                    <path fill="#FBBC05" d="M24 44c5.3 0 10.1-1.8 13.8-5l-6.4-5.2c-2.1 1.4-4.8 2.2-7.4 2.2-6.3 0-11.6-4.2-13.6-10.2l-7 5.4C6.1 39.8 14.4 44 24 44z"/>
+                    <path fill="#EA4335" d="M44.5 20H24v8.5h11.7c-1.6 4.6-6.2 7.5-11.7 7.5-6.3 0-11.6-4.2-13.6-10.2l-7 5.4C6.1 39.8 14.4 44 24 44c10.1 0 19.1-7.2 19.1-20 0-1.3-.1-2.7-.4-4z"/>
+                  </g>
+                </svg>
+              </span>
               {t('googleBtn')}
             </button>
+
+
+
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
