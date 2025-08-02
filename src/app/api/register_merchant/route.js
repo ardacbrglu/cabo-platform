@@ -2,7 +2,6 @@ import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit } from '@/lib/ratelimit';
-import axios from 'axios';
 
 const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
 
@@ -65,15 +64,21 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
 
-    // --- CAPTCHA DOĞRULAMA ---
+    // --- CAPTCHA DOĞRULAMA (fetch ile) ---
     if (!captcha) {
       return Response.json({ success: false, message: msg.captcha }, { status: 400 });
     }
     try {
-      const captchaRes = await axios.post(
-        `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
+      const response = await fetch(
+        "https://www.google.com/recaptcha/api/siteverify",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `secret=${encodeURIComponent(RECAPTCHA_SECRET_KEY)}&response=${encodeURIComponent(captcha)}`
+        }
       );
-      if (!captchaRes.data.success) {
+      const captchaRes = await response.json();
+      if (!captchaRes.success) {
         return Response.json({ success: false, message: msg.captcha }, { status: 400 });
       }
     } catch (captchaError) {

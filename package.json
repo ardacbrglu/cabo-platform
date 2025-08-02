@@ -2,7 +2,7 @@
   "name": "cabo-platform",
   "version": "0.1.0",
   "private": true,
-  "postinstall": "prisma generate",  
+  "postinstall": "prisma generate",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.12.0",
+    "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "chart.js": "^4.5.0",
     "chartjs-plugin-datalabels": "^2.2.0",
