@@ -15,10 +15,10 @@ body {
   font-family: 'Inter', 'ui-sans-serif', 'system-ui', sans-serif;
 }
 
-/* MOBİLDE — 991px ve aşağısında arka plan resmi yok, saf siyah! */
-@media (max-width: 991px) {
+/* MOBİLDE — 768px ve aşağısında arka plan resmi yok, saf siyah! */
+@media (max-width: 768px) {
   body {
-    background: #101010 !important;  /* veya #111, #161616, neyi mat görüyorsan */
+    background: #101010 !important;
     background-image: none !important;
     background-size: initial !important;
     background-repeat: initial !important;
@@ -27,6 +27,7 @@ body {
   }
 }
 
+/* Scrollbar gizle */
 html, body, main, * {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;

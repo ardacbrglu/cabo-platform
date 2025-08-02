@@ -1,13 +1,19 @@
 import { useState, useEffect } from "react";
+
+// Kullanım: const isMobile = useIsMobile(); // 768px altında true döner
 export function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(false);
+
   useEffect(() => {
-    function handleResize() {
-      setIsMobile(window.innerWidth < breakpoint);
+    function checkMobile() {
+      // Hem width hem de user-agent kontrolü (Android/IOS için)
+      const isUserAgentMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+      setIsMobile(window.innerWidth <= breakpoint || isUserAgentMobile);
     }
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, [breakpoint]);
+
   return isMobile;
 }
