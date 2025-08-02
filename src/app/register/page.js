@@ -287,15 +287,16 @@ export default function RegisterPage() {
             <span className="px-2 text-gray-400 text-sm">{t('or')}</span>
             <span className="flex-1 h-px bg-[#232323]"></span>
           </div>
+
           <button
             type="button"
             onClick={handleGoogleSignIn}
             disabled={loading}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-white text-[#111] rounded-lg hover:bg-[#e0ffe0] border border-[#232323] transition flex items-center justify-center gap-2"
           >
-            <img src="/google.svg" alt="Google" className="w-6 h-6" />
             {t('googleBtn')}
           </button>
+
 
           <div className="text-sm md:text-base text-gray-400 text-center">
             {t('already')}{' '}
