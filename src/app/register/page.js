@@ -7,6 +7,11 @@ import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import CSRFTokenInput from '@/components/CSRFTokenInput';
 import { useCsrfToken } from '@/hooks/useCsrfToken';
+import dynamic from "next/dynamic";
+import { signIn } from "next-auth/react";
+
+// Captcha dinamik import (SSR fix)
+const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const translations = {
   en: {
@@ -32,9 +37,12 @@ const translations = {
     loginLink: "Log in",
     required: "Please fill in all fields.",
     termsReq: "You must accept the terms.",
+    captchaReq: "Please complete the captcha.",
     success: "Registration successful! Please check your email to activate your account.",
     failed: "Registration failed.",
-    server: "Server error. Please try again later."
+    server: "Server error. Please try again later.",
+    or: "or",
+    googleBtn: "Sign up with Google"
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -59,9 +67,12 @@ const translations = {
     loginLink: "Giriş yap",
     required: "Lütfen tüm alanları doldurun.",
     termsReq: "Şartları kabul etmelisin.",
+    captchaReq: "Lütfen robot olmadığınızı doğrulayın.",
     success: "Kayıt başarılı! Hesabını aktifleştirmek için e-postanı kontrol et.",
     failed: "Kayıt başarısız.",
-    server: "Sunucu hatası. Lütfen tekrar deneyin."
+    server: "Sunucu hatası. Lütfen tekrar deneyin.",
+    or: "veya",
+    googleBtn: "Google ile kayıt ol"
   }
 };
 
@@ -73,6 +84,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [terms, setTerms] = useState(false);
+  const [captcha, setCaptcha] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -82,6 +94,18 @@ export default function RegisterPage() {
 
   const handleSuccessRedirect = () => {
     setTimeout(() => router.push('/login'), 1800);
+  };
+
+  // Google ile kayıt/giriş
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await signIn("google", { callbackUrl: "/dashboard" });
+    } catch {
+      setError("Google ile giriş başarısız oldu.");
+    }
+    setLoading(false);
   };
 
   const handleSubmit = async (e) => {
@@ -97,6 +121,10 @@ export default function RegisterPage() {
       setError(t('termsReq'));
       return;
     }
+    if (!captcha) {
+      setError(t('captchaReq'));
+      return;
+    }
 
     setLoading(true);
     try {
@@ -107,7 +135,7 @@ export default function RegisterPage() {
           'x-csrf-token': csrfToken || '',
           'accept-language': locale || 'en',
         },
-        body: JSON.stringify({ name, email, password, termsAccepted: terms }),
+        body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -235,6 +263,9 @@ export default function RegisterPage() {
             </label>
           </div>
 
+          {/* reCAPTCHA */}
+          <Captcha onChange={setCaptcha} lang={locale} />
+
           <CSRFTokenInput />
 
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
@@ -246,6 +277,22 @@ export default function RegisterPage() {
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition"
           >
             {loading ? (locale === 'tr' ? 'Kaydediliyor...' : 'Registering...') : t('registerBtn')}
+          </button>
+
+          {/* Google ile kayıt/login */}
+          <div className="w-full flex items-center justify-between my-3">
+            <span className="flex-1 h-px bg-[#232323]"></span>
+            <span className="px-2 text-gray-400 text-sm">{t('or')}</span>
+            <span className="flex-1 h-px bg-[#232323]"></span>
+          </div>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-white text-[#111] rounded-lg hover:bg-[#e0ffe0] border border-[#232323] transition flex items-center justify-center gap-2"
+          >
+            <img src="/google.svg" alt="Google" className="w-6 h-6" />
+            {t('googleBtn')}
           </button>
 
           <div className="text-sm md:text-base text-gray-400 text-center">
