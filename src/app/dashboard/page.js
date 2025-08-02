@@ -34,7 +34,7 @@ function WalletProgress({ value, max }) {
 
 function StatCard({ value, label, icon }) {
   return (
-    <div className="flex-1 min-w-0 bg-[#181818] rounded-xl py-6 shadow flex flex-col items-center gap-1 hover:scale-105 transition">
+    <div className="flex-1 bg-[#181818] rounded-xl py-6 shadow flex flex-col items-center gap-1 min-w-[120px] hover:scale-105 transition">
       <span className="text-white">{icon}</span>
       <span className="text-lg font-extrabold font-mono text-white">{value}</span>
       <span className="text-xs font-mono text-gray-400">{label}</span>
@@ -53,23 +53,29 @@ function getDeviceType(userAgent = "") {
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
-    totalClicks: 0, totalSales: 0, totalEarnings: 0, balance: 0, minPayout: 100,
-    platformCommission: 5, username: "", email: "", user_id: null, iban: "", bankName: "",
-    ibanMissing: false, bankMissing: false, realNameMissing: false,
-    recentActions: [], leaderboard: [], lastConversion: null, lastClick: null
+    totalClicks: 0,
+    totalSales: 0,
+    totalEarnings: 0,
+    balance: 0,
+    minPayout: 100,
+    platformCommission: 5,
+    username: "",
+    email: "",
+    user_id: null,
+    iban: "",
+    bankName: "",
+    ibanMissing: false,
+    bankMissing: false,
+    realNameMissing: false,
+    recentActions: [],
+    leaderboard: [],
+    lastConversion: null,
+    lastClick: null
   });
   const [loading, setLoading] = useState(true);
   const [payoutStatus, setPayoutStatus] = useState("");
   const { setUser } = useUser();
   const t = useTranslation();
-
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 700);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
 
   useEffect(() => {
     let interval;
@@ -122,43 +128,53 @@ export default function Dashboard() {
     realNameMissing
   );
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 700);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // --- FİX: Banka warning mobilde nav ile çakışmasın, sticky yapsın ---
+  const BankWarningBar = (
+    !loading && (ibanMissing || bankMissing || realNameMissing) && (
+      <div
+        className={`
+          w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-6 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse z-40
+          ${isMobile ? "fixed left-0 right-0 top-14 mx-auto mt-0" : "relative mt-0"}
+        `}
+        style={isMobile ? { marginTop: "0px" } : {}}
+      >
+        <b>{t("bankInfoMissing")}</b> {t("mustAddBank")}<br />
+        <span className="text-xs">
+          {ibanMissing && <>{t("ibanMissing")}&nbsp;</>}
+          {bankMissing && <>{t("bankNameMissing")}&nbsp;</>}
+          {realNameMissing && <>{t("realNameMissing")}&nbsp;</>}
+        </span>
+        <br />
+        <span className="text-yellow-200">
+          {t("updateDetailsWallet")}
+        </span>
+      </div>
+    )
+  );
+
   return (
     <Layout>
-      <main className="flex flex-col items-center w-full max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-2 md:px-4">
-        {/* Sticky Banka uyarı barı */}
-        {!loading && (ibanMissing || bankMissing || realNameMissing) && (
-          <div className="z-[42000] w-full"
-            style={{
-              maxWidth: isMobile ? "100vw" : "38rem",
-              marginTop: isMobile ? "12px" : undefined,
-              position: isMobile ? "sticky" : undefined,
-              top: isMobile ? "62px" : undefined
-            }}>
-            <div className="bg-red-900/80 text-red-200 font-mono rounded-xl px-4 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse w-full">
-              <b>{t("bankInfoMissing")}</b> {t("mustAddBank")}<br />
-              <span className="text-xs">
-                {ibanMissing && <>{t("ibanMissing")}&nbsp;</>}
-                {bankMissing && <>{t("bankNameMissing")}&nbsp;</>}
-                {realNameMissing && <>{t("realNameMissing")}&nbsp;</>}
-              </span>
-              <br />
-              <span className="text-yellow-200">
-                {t("updateDetailsWallet")}
-              </span>
-            </div>
-          </div>
-        )}
+      <main className="flex flex-col items-center w-full max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-4 overflow-x-hidden">
+        {/* Banka uyarı barı (mobilde sticky, desktopta normal) */}
+        {BankWarningBar}
 
-        {/* Stat Cards */}
-        <section className={`w-full ${isMobile ? "grid grid-cols-3 gap-2" : "flex gap-5"}`} style={isMobile ? { marginBottom: 6 } : {}}>
-          <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={22} />} />
-          <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={22} />} />
-          <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={22} />} />
-        </section>
-
-        {/* Masaüstü/Mobil ayrım */}
         {!isMobile ? (
           <>
+            {/* Stat Cards */}
+            <section className="flex gap-5 w-full overflow-x-hidden">
+              <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={22} />} />
+              <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={22} />} />
+              <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={22} />} />
+            </section>
+
             {/* Center */}
             <section className="flex w-full gap-5">
               <div className="flex flex-col gap-5 flex-[2]">
@@ -189,6 +205,7 @@ export default function Dashboard() {
                     <span className="text-gray-500 mt-2">{t("noRecentActivity")}</span>
                   )}
                 </div>
+
                 {/* Wallet */}
                 <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-5 px-6">
                   <WalletProgress value={balance} max={minPayout} />
@@ -305,10 +322,16 @@ export default function Dashboard() {
             </section>
           </>
         ) : (
+          // === MOBİL (Tüm kutular %100 genişlik ve taşmasız) ===
           <>
-            {/* MOBİL GÖRÜNÜM */}
-            {/* Live Stats - Mobil */}
-            <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-1 mt-3 w-full">
+            <section className="flex flex-col gap-3 w-full items-center">
+              <div className="flex flex-row gap-3 w-full">
+                <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={22} />} />
+                <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={22} />} />
+                <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={22} />} />
+              </div>
+            </section>
+            <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-1 mt-1 w-full">
               <span className="flex items-center gap-2 font-mono font-bold text-base" style={{ color: COLOR_GREEN }}>
                 <BarChart2 className="text-white" size={17} /> {t("liveStats")}
               </span>
@@ -333,8 +356,6 @@ export default function Dashboard() {
                 <span className="text-gray-500 mt-2">{t("noRecentActivity")}</span>
               )}
             </div>
-
-            {/* Wallet - Mobil */}
             <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-5 px-4 mt-3 w-full">
               <WalletProgress value={balance} max={minPayout} />
               <div className="text-lg font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
@@ -378,8 +399,6 @@ export default function Dashboard() {
                 {t("minThresholdNote")}
               </div>
             </div>
-
-            {/* Leaderboard - Mobil */}
             <div className="bg-[#181818] rounded-xl shadow py-4 px-3 flex flex-col items-center mt-3 w-full">
               <div className="flex items-center gap-2 mb-2">
                 <Trophy className="text-[#81d742]" size={16} />
@@ -395,8 +414,6 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
-
-            {/* Recent Actions - Mobil */}
             <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full">
               <div className="font-extrabold mb-2 text-base font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
               <div className="flex flex-col gap-2">
@@ -411,8 +428,6 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-
-            {/* Onboarding - Mobil */}
             <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full flex flex-col items-center">
               <div className="font-extrabold mb-2 text-base font-mono" style={{ color: COLOR_CABO }}>
                 {t("welcomeDashboard")}
@@ -430,19 +445,18 @@ export default function Dashboard() {
             </div>
           </>
         )}
-
-        <style jsx global>{`
-          @media (max-width: 700px) {
-            .w-80 { width: 100% !important; min-width: 0 !important; }
-            .flex.gap-5 { flex-direction: column !important; gap: 18px !important; }
-            .grid.grid-cols-3 { grid-template-columns: 1fr 1fr 1fr !important; }
-          }
-          html, body, main {
-            max-width: 100vw !important;
-            overflow-x: hidden !important;
-          }
-        `}</style>
       </main>
+      <style jsx global>{`
+        html, body, #__next, main { overflow-x: hidden !important; }
+        @media (max-width: 700px) {
+          .w-80 { width: 100% !important; min-width: 0 !important; }
+          .flex.gap-5 { flex-direction: column !important; gap: 18px !important; }
+          .flex.flex-row.gap-3.w-full { flex-direction: row !important; }
+          main, section, .w-full { width: 100% !important; min-width: 0 !important; }
+          /* StatCard ve section overflow'ları mobilde tam olarak kırp */
+          .flex.gap-5.w-full, .flex.flex-row.gap-3.w-full { flex-wrap: wrap; }
+        }
+      `}</style>
     </Layout>
   );
 }
