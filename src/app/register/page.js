@@ -260,10 +260,10 @@ export default function RegisterPage() {
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {
-            margin-top: 6.5rem;
+            margin-top: 1rem;
           }
           .cabo-mobile-bottom-space {
-            margin-bottom: 10rem;
+            margin-bottom: 3rem;
           }
         }
       `}</style>

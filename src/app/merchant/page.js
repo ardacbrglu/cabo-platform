@@ -267,10 +267,10 @@ export default function MerchantLoginPage() {
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {
-            margin-top: 3em;
+            margin-top: 1em;
           }
           .cabo-mobile-bottom-space {
-            margin-bottom: 8rem;
+            margin-bottom: 1rem;
           }
         }
       `}</style>

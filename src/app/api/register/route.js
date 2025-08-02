@@ -1,11 +1,13 @@
-// src/app/api/register/route.js
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
+import axios from 'axios';
 
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PROD_!@#_Cabo";
+const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
+
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const nameRegex  = /^[a-zA-Z0-9_]{3,32}$/;
 
@@ -19,6 +21,7 @@ const messages = {
     username: "Username must be 3-32 chars, only letters, numbers, and _.",
     password: "Password must be at least 8 chars and contain both letters and numbers.",
     uniq:     "Username or email already in use.",
+    captcha:  "Captcha verification failed. Please try again.",
     success:  "Registration successful! Please check your email to activate your account.",
     fail:     "Registration failed. Please try again."
   },
@@ -31,6 +34,7 @@ const messages = {
     username:  "Kullanıcı adı 3-32 karakter, sadece harf, rakam ve _ içermeli.",
     password:  "Şifre en az 8 karakter ve harf/rakam içermeli.",
     uniq:      "Kullanıcı adı veya e-posta zaten kullanılıyor.",
+    captcha:   "Doğrulama başarısız oldu. Lütfen tekrar deneyin.",
     success:   "Kayıt başarılı! Hesabını aktifleştirmek için e-postanı kontrol et.",
     fail:      "Kayıt başarısız. Lütfen tekrar deneyin."
   }
@@ -52,8 +56,8 @@ export const POST = csrf(async (req) => {
       });
     }
 
-    // Gönderilen body
-    const { name, email, password, termsAccepted } = await req.json();
+    // Body’den captcha da alınacak
+    const { name, email, password, termsAccepted, captcha } = await req.json();
 
     if (!termsAccepted) {
       return new Response(JSON.stringify({ success: false, message: msg.terms }), {
@@ -67,6 +71,33 @@ export const POST = csrf(async (req) => {
         headers: { 'Content-Type': 'application/json' }
       });
     }
+
+    // --- CAPTCHA DOĞRULAMA ---
+    if (!captcha) {
+      return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    try {
+      const captchaRes = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
+      );
+      if (!captchaRes.data.success) {
+        return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } catch (captchaError) {
+      console.error('Captcha verification failed:', captchaError);
+      return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    // -----------------------
+
     const cleanEmail = email.trim().toLowerCase();
     if (!emailRegex.test(cleanEmail)) {
       return new Response(JSON.stringify({ success: false, message: msg.email }), {

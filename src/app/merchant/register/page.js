@@ -31,7 +31,7 @@ const translations = {
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
     invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
-    acceptTerms: "I accept the Terms and Privacy Policy",
+    acceptTerms: <>I accept the <Link href="/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Terms</Link> and <Link href="/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Privacy Policy</Link></>,
     mustAccept: "You must accept the Terms and Privacy Policy.",
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details"
@@ -59,7 +59,7 @@ const translations = {
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
     invalidPassword: "Şifre en az 8 karakter olmalı, harf ve rakam içermeli.",
-    acceptTerms: "Kullanım ve Gizlilik Şartlarını kabul ediyorum",
+    acceptTerms: <> <Link href="/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım</Link> ve <Link href="/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Gizlilik Şartlarını</Link> kabul ediyorum</>,
     mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi"
@@ -271,7 +271,7 @@ export default function MerchantRegisterPage() {
                 required
                 className="accent-[#81d742] h-4 w-4"
               />
-              <label htmlFor="terms" className="text-sm text-gray-400 select-none">
+              <label htmlFor="terms" className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
                 {t("acceptTerms")}
               </label>
             </div>
@@ -293,13 +293,13 @@ export default function MerchantRegisterPage() {
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {
-            margin-top: 5rem; /* Üst boşluk */
+            margin-top: 1rem;
           }
           .cabo-mobile-bottom-space {
-            margin-bottom: 10rem; /* Yazı ile form arası */
+            margin-bottom: 3rem;
           }
           .cabo-mobile-form-bottom {
-            margin-bottom: 10rem; /* Form ile footer arası */
+            margin-bottom: 3rem;
           }
         }
       `}</style>

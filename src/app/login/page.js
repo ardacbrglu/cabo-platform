@@ -252,13 +252,14 @@ export default function LoginPage() {
         </div>
       )}
 
+      {/* MOBİL BOŞLUKLARI KONTROL ETMEK İÇİN EKLİ CSS */}
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {
-            margin-top: 3rem;
+            margin-top: 1rem !important;
           }
           .cabo-mobile-bottom-space {
-            margin-bottom: 8rem;
+            margin-bottom: 1rem !important;
           }
         }
       `}</style>
