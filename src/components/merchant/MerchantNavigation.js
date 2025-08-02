@@ -39,7 +39,7 @@ export default function MerchantNavigation() {
   };
 
   return (
-    <header className="w-full bg-[#111] border-b border-[#1f1f1f] shadow-sm">
+    <header className="w-full bg-[#111]  shadow-sm">
       <div className="max-w-7xl mx-auto px-5 py-4 flex items-center justify-between">
         <h1 className="text-3xl font-extrabold tracking-tight text-[#d1ffd0] select-none">
           Cabo

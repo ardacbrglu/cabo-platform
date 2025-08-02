@@ -134,7 +134,7 @@ export default function MerchantLayout({ children }) {
         </div>
         {/* Mobil Açılır Menü */}
         {isMobile && mobileOpen && (
-          <div className="px-5 pb-3 pt-2 bg-[#111] text-sm border-t border-[#1f1f1f]">
+          <div className="px-5 pb-3 pt-2 ">
             {links.map((link) => (
               <Link
                 key={link.href}

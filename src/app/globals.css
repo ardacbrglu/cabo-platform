@@ -3,25 +3,16 @@
 @tailwind utilities;
 
 body {
-  /* Varsayılan: masaüstü için resimli arka plan */
   background:
+    linear-gradient(0deg, rgba(17,17,17,0.8) 75%, rgba(17,17,17,1) 100%),
     url('/background.png');
   background-size: cover;
   background-repeat: no-repeat;
   background-position: center center;
   background-attachment: fixed;
-  background-color: #111; /* Resim yüklenmezse mat siyah */
   color: #f6f6f6;
   font-family: 'Inter', 'ui-sans-serif', 'system-ui', sans-serif;
 }
-
-/* Mobilde sadece mat siyah arka plan! */
-@media (max-width: 700px) {
-  body {
-    background: #111 !important; /* veya #161616 veya #181818 */
-  }
-}
-
 html, body, main, * {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
@@ -30,8 +21,3 @@ html, body, main, * {
   display: none !important;
 }
 
-html, body, #__next, main {
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
