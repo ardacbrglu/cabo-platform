@@ -1,9 +1,8 @@
 'use client';
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  Home, ShoppingCart, Link2, BarChart2, Wallet2,
-  Menu, X, Bell, Settings, Headset, LogOut, User2
+  Home, ShoppingCart, Link2, BarChart2, Wallet2, Menu, X, Bell, Settings, Headset, LogOut, User2
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -20,7 +19,7 @@ export default function HamburgerMenu() {
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
 
-  // Dışarı tıklama & ESC
+  // Dışarı tıklandığında ya da ESC ile kapama
   useEffect(() => {
     function handleClick(e) {
       if (open && !e.target.closest("#cabo-hamburger-panel")) setOpen(false);
@@ -44,6 +43,7 @@ export default function HamburgerMenu() {
     window.location.href = "/login";
   };
 
+  // Düz kullanıcı navigation
   const navs = [
     { href: "/dashboard",   icon: <Home size={22} />, label: t("home") },
     { href: "/products",    icon: <ShoppingCart size={22} />, label: t("productMarket") },
@@ -52,9 +52,10 @@ export default function HamburgerMenu() {
     { href: "/wallet",      icon: <Wallet2 size={22} />, label: t("wallet") },
   ];
 
+  // Mobil açılır panel (üstten tüm genişlikte)
   return (
     <>
-      {/* Hamburger Button */}
+      {/* Hamburger BUTTON */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
@@ -76,15 +77,16 @@ export default function HamburgerMenu() {
           <div
             id="cabo-hamburger-panel"
             className={`
-              absolute top-0 right-0 w-[92vw] max-w-[295px] min-h-[72px]
-              rounded-bl-2xl rounded-tl-2xl bg-[#191919] border-l border-[#232323] shadow-2xl flex flex-col
+              fixed top-0 left-0 w-full max-w-full min-h-[72px]
+              rounded-b-2xl bg-[#191919] border-b border-[#232323] shadow-2xl flex flex-col
               transition-transform duration-400 ease-in-out
-              ${open ? "translate-x-0" : "translate-x-full"}
+              ${open ? "translate-y-0" : "-translate-y-full"}
             `}
             style={{
               boxShadow: "0 2px 42px 10px rgba(0,0,0,0.65)",
               minHeight: "0",
-              maxHeight: "98vh"
+              maxHeight: "96vh",
+              zIndex: 41000
             }}
           >
             {/* HEADER */}
@@ -103,7 +105,7 @@ export default function HamburgerMenu() {
               </button>
             </div>
 
-            {/* NAV */}
+            {/* NAVIGATION */}
             <nav className="flex flex-col gap-1 px-5 pt-1 pb-2">
               {navs.map(({ href, icon, label }) => (
                 <Link
@@ -124,9 +126,9 @@ export default function HamburgerMenu() {
               ))}
             </nav>
 
-            {/* Profil ve alt menü */}
-            <div className="mt-auto px-5 pb-4" id="cabo-profile-section">
-              {/* Ana profil butonu */}
+            {/* PROFIL alanı */}
+            <div className="mt-2 px-5 pb-4" id="cabo-profile-section">
+              {/* Profil butonu */}
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded-lg font-mono font-bold text-[1.09rem] text-[#81d742] bg-[#181818] transition hover:bg-[#232323] focus:outline-none"
                 style={{ minHeight: 44 }}
@@ -143,7 +145,7 @@ export default function HamburgerMenu() {
                 </svg>
                 <span className="relative"><NotificationBadge show={unreadCount > 0} size={12} /></span>
               </button>
-              {/* Profil iç menü */}
+              {/* Profil alt menü */}
               {profileOpen && (
                 <div
                   className="w-full mt-2 rounded-xl bg-[#212921] border border-[#232323] shadow-2xl animate-fadeIn"
