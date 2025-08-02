@@ -11,8 +11,8 @@ const translations = {
     loginBtn: "Start Earning Now",
   },
   tr: {
-    heroTitleA: "Linkini bırak.",
-    heroTitleB: "Kazanç akmaya başlasın.",
+    heroTitleA: "Drop your link. ",
+    heroTitleB: "Let the money flow.",
     heroDesc: "Cabo, sadece ürün linki paylaşarak para kazanmanı sağlar. Birileri satın aldığında para hesabına yatar.",
     loginBtn: "Hemen Kazanmaya Başla",
   }
