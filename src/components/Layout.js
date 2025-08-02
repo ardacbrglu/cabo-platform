@@ -37,7 +37,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen flex flex-col bg-transparent">
-      <header className="flex justify-between items-center px-5 py-4 md:px-10 md:py-6 bg-[#111] border-b border-[#1f1f1f] shadow-sm">
+      <header className="flex justify-between items-center px-5 py-4 md:px-10 md:py-6 bg-[#111] shadow-sm">
         <h1
           className="text-3xl md:text-5xl font-extrabold tracking-tight select-none"
           style={{
@@ -93,7 +93,7 @@ export default function Layout({ children }) {
 
       <main className="flex-1 flex flex-col">{children}</main>
 
-      <footer className="w-full text-center py-5 bg-[#111] text-gray-500 text-xs border-t border-[#1f1f1f] font-mono mt-auto">
+      <footer className="w-full text-center py-5 bg-[#111] text-gray-500 text-xs font-mono mt-auto">
         &copy; 2025 Cabo Affiliate | Built by Arda Cabaroğlu
       </footer>
     </div>

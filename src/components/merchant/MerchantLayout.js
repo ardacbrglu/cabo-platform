@@ -4,43 +4,38 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { LogOut, Menu } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
-import { useIsMobile } from "@/hooks/useIsMobile"; // Mobil tespiti
+import { useIsMobile } from "@/hooks/useIsMobile";
 
-const NAV_LINKS = [
-  { href: "/merchant/dashboard", label: "Manage Products" },
-  { href: "/merchant/merchant_payments", label: "Payments" },
-  { href: "/merchant/merchant_info", label: "How to Integrate" },
-  { href: "/merchant/merchant_support", label: "Support" },
-  { href: "/merchant/merchant_settings", label: "Settings" },
-];
+// SSR uyumlu locale seçici
+const useLocaleSSR = () => {
+  const [locale, setLocale] = useState("en");
+  useEffect(() => {
+    const stored = localStorage.getItem("locale");
+    if (stored) setLocale(stored);
+  }, []);
+  const handleLangChange = (lng) => {
+    setLocale(lng);
+    localStorage.setItem("locale", lng);
+    window.location.reload();
+  };
+  return [locale, handleLangChange];
+};
 
 export default function MerchantLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
   const t = useTranslation();
   const isMobile = useIsMobile();
+  const [locale, handleLangChange] = useLocaleSSR();
 
-  // Dil seçimi (localStorage ile)
-  const [locale, setLocale] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("locale") || "en" : "en"
-  );
-  const handleLangChange = (lng) => {
-    setLocale(lng);
-    if (typeof window !== "undefined") localStorage.setItem("locale", lng);
-    window.location.reload(); // hook/context ile dinamik değiştiriyorsan kaldır
-  };
-
-  // Hamburger menu (mobil)
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
-  // Güvenli logout
   const handleLogout = () => {
     document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     router.push("/");
   };
 
-  // Menü linklerini locale ile çevir
   const links = [
     { href: "/merchant/dashboard", label: t("Manage Products") },
     { href: "/merchant/merchant_payments", label: t("Payments") },
@@ -51,42 +46,39 @@ export default function MerchantLayout({ children }) {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#101010] text-white font-sans tracking-tight">
-      {/* NAVBAR */}
-      <header className="w-full bg-[#111]  shadow-sm">
-        <div className="max-w-7xl mx-auto px-5 py-4 flex items-center justify-between">
+      <header className="w-full bg-[#111] shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-4 flex items-center justify-between">
           {/* LOGO */}
-          <h1 className="text-3xl font-extrabold tracking-tight text-[#d1ffd0] select-none">
+          <h1
+            className="text-4xl md:text-5xl font-extrabold tracking-tight select-none"
+            style={{
+              color: "#d1ffd0",
+              letterSpacing: "-0.02em",
+              textShadow: "0 2px 12px rgba(129,215,66,0.08)",
+            }}
+          >
             Cabo
           </h1>
-          {/* MENÜ */}
           {isMobile ? (
-            <>
-              <div className="flex gap-1 items-center">
-                {/* Dil seçici mobilde */}
-                <button
-                  onClick={() => handleLangChange("en")}
-                  className={`p-1 rounded text-xs font-bold ${locale === "en" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
-                  title="English"
-                >
-                  EN
-                </button>
-                <button
-                  onClick={() => handleLangChange("tr")}
-                  className={`p-1 rounded text-xs font-bold ${locale === "tr" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
-                  title="Türkçe"
-                >
-                  TR
-                </button>
-                {/* Hamburger */}
-                <button
-                  onClick={() => setMobileOpen(!mobileOpen)}
-                  className="text-white ml-1"
-                  title="Menu"
-                >
-                  <Menu size={24} />
-                </button>
-              </div>
-            </>
+            <div className="flex gap-1 items-center">
+              <button
+                onClick={() => handleLangChange("en")}
+                className={`p-1 rounded text-xs font-bold ${locale === "en" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
+                title="English"
+              >EN</button>
+              <button
+                onClick={() => handleLangChange("tr")}
+                className={`p-1 rounded text-xs font-bold ${locale === "tr" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
+                title="Türkçe"
+              >TR</button>
+              <button
+                onClick={() => setMobileOpen(!mobileOpen)}
+                className="text-white ml-1"
+                title="Menu"
+              >
+                <Menu size={24} />
+              </button>
+            </div>
           ) : (
             <div className="flex items-center gap-2 md:gap-8">
               <nav className="flex gap-2 md:gap-8 items-center text-sm font-medium">
@@ -95,33 +87,25 @@ export default function MerchantLayout({ children }) {
                     key={link.href}
                     href={link.href}
                     className={`transition hover:text-[#81d742] hover:scale-[1.015] ${
-                      pathname === link.href
-                        ? "text-[#81d742] font-semibold"
-                        : "text-gray-200"
+                      pathname === link.href ? "text-[#81d742] font-semibold" : "text-gray-200"
                     }`}
                   >
                     {link.label}
                   </Link>
                 ))}
               </nav>
-              {/* Dil seçici desktopta */}
               <div className="flex items-center gap-1 ml-2">
                 <button
                   onClick={() => handleLangChange("en")}
                   className={`p-1 rounded ${locale === "en" ? "bg-[#81d742] text-[#101010] font-bold" : "text-gray-300"}`}
                   title="English"
-                >
-                  EN
-                </button>
+                >EN</button>
                 <button
                   onClick={() => handleLangChange("tr")}
                   className={`p-1 rounded ${locale === "tr" ? "bg-[#81d742] text-[#101010] font-bold" : "text-gray-300"}`}
                   title="Türkçe"
-                >
-                  TR
-                </button>
+                >TR</button>
               </div>
-              {/* Logout */}
               <button
                 onClick={handleLogout}
                 className="text-red-500 hover:text-red-400 transition ml-3"
@@ -132,17 +116,14 @@ export default function MerchantLayout({ children }) {
             </div>
           )}
         </div>
-        {/* Mobil Açılır Menü */}
         {isMobile && mobileOpen && (
-          <div className="px-5 pb-3 pt-2 ">
+          <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 className={`block py-2 transition ${
-                  pathname === link.href
-                    ? "text-[#81d742] font-semibold"
-                    : "text-gray-300"
+                  pathname === link.href ? "text-[#81d742] font-semibold" : "text-gray-300"
                 }`}
               >
                 {link.label}
@@ -152,15 +133,11 @@ export default function MerchantLayout({ children }) {
               <button
                 onClick={() => handleLangChange("en")}
                 className={`p-1 rounded text-xs font-bold ${locale === "en" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
-              >
-                EN
-              </button>
+              >EN</button>
               <button
                 onClick={() => handleLangChange("tr")}
                 className={`p-1 rounded text-xs font-bold ${locale === "tr" ? "bg-[#81d742] text-[#101010]" : "text-gray-300"}`}
-              >
-                TR
-              </button>
+              >TR</button>
               <button
                 onClick={handleLogout}
                 className="text-red-500 hover:text-red-400 transition ml-3"
@@ -172,11 +149,10 @@ export default function MerchantLayout({ children }) {
           </div>
         )}
       </header>
-      {/* GOVDE */}
       <main className="max-w-5xl w-full mx-auto mt-8 px-2 pb-24 flex-grow flex flex-col">
         {children}
       </main>
-      <footer className="text-center py-5 bg-[#111] text-gray-500 text-xs border-t border-[#1f1f1f] mt-auto">
+      <footer className="text-center py-5 bg-[#111] text-gray-500 text-xs mt-auto">
         &copy; 2025 Cabo Affiliate | Built by Arda Cabaroğlu
       </footer>
     </div>

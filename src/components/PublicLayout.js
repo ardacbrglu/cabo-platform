@@ -56,7 +56,7 @@ export default function PublicLayout({ children }) {
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0b0b] text-white font-sans tracking-tight">
       {/* === NAVIGATION === */}
-      <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] border-b border-[#1f1f1f] shadow-sm relative">
+      <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm relative">
         {/* Logo */}
         <h1
           className={`text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight select-none transition-all duration-200
