@@ -7,6 +7,7 @@ import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
+import { signIn } from "next-auth/react";
 
 // Captcha bileşenini dinamik import et (SSR için gerekliyse)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
@@ -40,7 +41,9 @@ const translations = {
     </>,
     mustAccept: "You must accept the Terms and Privacy Policy.",
     howWorksQ: "How does our system work?",
-    howWorksLink: "See Details"
+    howWorksLink: "See Details",
+    or: "or",
+    google: "Register / Login with Google"
   },
   tr: {
     title: "İşletmeni Kaydet",
@@ -73,7 +76,9 @@ const translations = {
     </>,
     mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
-    howWorksLink: "Detaylı Bilgi"
+    howWorksLink: "Detaylı Bilgi",
+    or: "veya",
+    google: "Google ile Kaydol / Giriş Yap"
   }
 };
 
@@ -168,6 +173,13 @@ export default function MerchantRegisterPage() {
       }, 2500);
     }
     setLoading(false);
+  };
+
+  // Google ile giriş/kayıt (NextAuth)
+  const handleGoogleAuth = () => {
+    signIn("google", {
+      callbackUrl: "/merchant" // İster burayı "/dashboard" yapabilirsin
+    });
   };
 
   return (
@@ -306,6 +318,27 @@ export default function MerchantRegisterPage() {
               className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
             >
               {loading ? <Loader2 className="animate-spin mx-auto" size={18} /> : t("submit")}
+            </button>
+
+            <div className="flex items-center my-3">
+              <span className="flex-1 h-px bg-[#232323]" />
+              <span className="px-3 text-gray-400 text-sm font-semibold">{t("or")}</span>
+              <span className="flex-1 h-px bg-[#232323]" />
+            </div>
+
+            {/* Google ile Giriş/Kayıt */}
+            <button
+              type="button"
+              onClick={handleGoogleAuth}
+              className="flex items-center justify-center gap-2 bg-white hover:bg-[#f5f5f5] text-[#0b0b0b] font-bold py-3 rounded-lg border border-[#eee] shadow transition"
+              style={{ width: "100%" }}
+            >
+              <svg width="20" height="20" viewBox="0 0 48 48" className="mr-1">
+                <g>
+                  <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..." />
+                </g>
+              </svg>
+              {t("google")}
             </button>
           </form>
         </div>
