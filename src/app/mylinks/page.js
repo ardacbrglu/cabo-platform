@@ -151,7 +151,8 @@ export default function MyLinksPage() {
               return (
                 <div
                   key={link.link_id}
-                  className={`bg-[#181818] border border-[#272727] rounded-xl shadow-md p-6 flex flex-col justify-between transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
+                  className={`bg-[#181818] border border-[#272727] rounded-xl shadow-md px-4 py-5 sm:p-6 flex flex-col justify-between transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
+                  style={{ maxWidth: "420px", width: "100%", margin: "0 auto" }}
                 >
                   <div className="flex items-center gap-4 mb-4">
                     <div className="w-16 h-16 bg-[#22262a] rounded-lg overflow-hidden border border-[#2a2e31] flex items-center justify-center">
