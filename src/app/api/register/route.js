@@ -122,7 +122,6 @@ export const POST = csrf(async (req) => {
     }
 
     // Google ile kayıtlı kullanıcı kontrolü
-    // Eğer "accounts" tablosunda bu e-posta var ve provider "google" ise => Google ile giriş yapmalısın uyarısı
     const googleAccount = await prisma.account.findFirst({
       where: {
         provider: "google",
@@ -139,9 +138,7 @@ export const POST = csrf(async (req) => {
     // Uniq kontrol (users tablosu için)
     const existing = await prisma.user.findFirst({
       where: {
-        OR: [
-          { email: cleanEmail }
-        ]
+        email: cleanEmail
       }
     });
     if (existing) {
@@ -164,7 +161,7 @@ export const POST = csrf(async (req) => {
         role: 'affiliate',
         status: 'pending',
         termsAccepted: true,
-        activationToken: activationToken // user tablosunda bu alan olmalı!
+        activationToken: activationToken // user tablosunda bu alan var!
       }
     });
 

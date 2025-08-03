@@ -6,7 +6,7 @@ import { checkRateLimit } from '@/lib/ratelimit';
 
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 const RATE_LIMIT_WINDOW = 60 * 1000;
-const RATE_LIMIT_COUNT = 8; // Dilerseniz azaltın
+const RATE_LIMIT_COUNT = 8;
 
 const messages = {
   en: {
@@ -81,9 +81,9 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.notActive }, { status: 403 });
     }
 
-    // 7. Başarılı login, JWT üret
+    // 7. Başarılı login, JWT üret (id ile!)
     const payload = {
-      userId: user.userId,
+      userId: user.id,            // << Burası DÜZGÜN
       name: user.name,
       email: user.email,
       role: user.role,
@@ -106,7 +106,6 @@ export const POST = csrf(async (req) => {
       headers
     });
 
-    // ➡️ İLERİDE: "Google ile giriş" veya "Şifre sıfırlama" gibi endpoint’ler de buraya eklenir (ayrı dosya/endpoint).
   } catch (err) {
     console.error("MERCHANT LOGIN ERROR:", err);
     const msg = messages.tr.fail;

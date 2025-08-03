@@ -1,4 +1,3 @@
-// src/app/api/login/route.js
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
@@ -43,8 +42,9 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
+    // DÜZELTME: JWT'de id kullan!
     const token = jwt.sign({
-      userId: user.userId,
+      userId: user.id,
       name: user.name,
       email: user.email,
       role: user.role
