@@ -1,3 +1,5 @@
+
+
 export default function Page() {
-  return "Coming soon.";
+  return <div>Coming soon.</div>;
 }
