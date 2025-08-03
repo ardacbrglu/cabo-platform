@@ -1,5 +1,3 @@
-// /src/lib/authOptions.js
-
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -8,7 +6,6 @@ import bcrypt from "bcryptjs";
 
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
-
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
@@ -28,9 +25,8 @@ export const authOptions = {
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!isValid) return null;
         if (user.status !== "active") return null;
-
         return {
-          id: user.userId,
+          id: user.id, // DİKKAT! BURADA user.id (prisma int auto-increment) olmalı
           name: user.name,
           email: user.email,
           role: user.role,
@@ -39,20 +35,18 @@ export const authOptions = {
       },
     }),
   ],
-
   pages: {
     signIn: "/login",
   },
-
   session: {
     strategy: "jwt",
     maxAge: 60 * 60 * 24,
   },
-
   callbacks: {
     async jwt({ token, user }) {
+      // Sadece user varsa atama yap!
       if (user) {
-        token.sub = user.id;
+        token.sub = user.id;   // INT olmalı!
         token.email = user.email;
         token.role = user.role;
         token.status = user.status;
@@ -68,7 +62,6 @@ export const authOptions = {
       return session;
     },
   },
-
   events: {
     async createUser({ user }) {
       if (user.email) {
@@ -79,7 +72,5 @@ export const authOptions = {
       }
     }
   },
-
   secret: process.env.NEXTAUTH_SECRET,
-  // debug: true, // Geliştirme aşamasında açabilirsin
 };

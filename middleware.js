@@ -1,12 +1,10 @@
-// middleware.js
-
 import { NextResponse } from 'next/server'
 
 export function middleware(req) {
   const token = req.cookies.get('cabo_token')?.value
   const { pathname } = req.nextUrl
 
-  // which top-level app routes to protect
+  // Korumalı route listesi
   const protectedRoutes = [
     '/dashboard',
     '/wallet',
@@ -15,7 +13,7 @@ export function middleware(req) {
     '/settings',
   ]
 
-  // if the request path starts with one of those, but no token → /login
+  // Korumalı route'a erişim ve token yoksa login'e at
   if (
     protectedRoutes.some((p) => pathname.startsWith(p)) &&
     !token
