@@ -60,7 +60,7 @@ export async function GET(req) {
     // Tüm aktif ürünlerin bilgilerini al
     const activeProducts = await prisma.merchantProduct.findMany({
       where: { productId: { in: allProductIds }, isActive: true },
-      select: { productId: true, name: true, image_url: true }
+      select: { productId: true, name: true, imageUrl: true }
     });
 
     // Seçili ürün filtrelemesi
@@ -77,20 +77,20 @@ export async function GET(req) {
     // 6. Click kayıtları (her gün için)
     const clickRecordsRaw = await prisma.click.findMany({
       where: {
-        affiliate_link: {
+        affiliateLink: {
           userId: userId,
           productId: { in: filteredProductIds }
         },
-        ...(startDate || endDate ? { clicked_at: dateFilter } : {})
+        ...(startDate || endDate ? { clickedAt: dateFilter } : {})
       },
       select: {
-        clicked_at: true,
-        affiliate_link: { select: { productId: true } }
+        clickedAt: true,
+        affiliateLink: { select: { productId: true } }
       }
     });
     const clickRecords = clickRecordsRaw.map(r => ({
-      date: r.clicked_at.toISOString().slice(0, 10),
-      productId: r.affiliate_link.productId
+      date: r.clickedAt.toISOString().slice(0, 10),
+      productId: r.affiliateLink.productId
     }));
 
     // 7. Satış kayıtları (quantity destekli!)
@@ -103,10 +103,9 @@ export async function GET(req) {
       select: {
         convertedAt: true,
         productId: true,
-        quantity: true // <--- quantity çekiliyor!
+        quantity: true
       }
     });
-    // quantity null ise 1 alınır (default)
     const saleRecords = saleRecordsRaw.map(r => ({
       date: r.convertedAt.toISOString().slice(0, 10),
       productId: r.productId,
@@ -130,12 +129,11 @@ export async function GET(req) {
         convertedAt: true,
         productId: true,
         quantity: true,
-        merchantProducts: { select: { name: true, image_url: true } }
+        merchantProduct: { select: { name: true, imageUrl: true } }
       }
     });
 
     // ---- AGGREGATE ----
-    // Toplam satış quantity’ye göre!
     const totalClicks = clickRecords.length;
     const totalSales = saleRecords.reduce((sum, s) => sum + (s.quantity ?? 1), 0);
     const totalEarnings = confirmedSalesRaw.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
@@ -146,12 +144,11 @@ export async function GET(req) {
       ...activeProducts.map(p => ({ productId: p.productId, name: p.name }))
     ];
 
-    // Confirmed sales quantity ile maplenir
     const allConfirmedSales = confirmedSalesRaw.map(s => ({
       saleId: s.saleId,
       productId: s.productId,
-      productName: s.merchantProducts?.name ?? 'Product',
-      productImage: s.merchantProducts?.image_url ?? null,
+      productName: s.merchantProduct?.name ?? 'Product',
+      productImage: s.merchantProduct?.imageUrl ?? null,
       date: s.convertedAt.toISOString().slice(0, 10),
       amount: Number(s.amount),
       commission: Number(s.commissionAffiliate),
@@ -162,10 +159,10 @@ export async function GET(req) {
     return NextResponse.json({
       products: productOptions,
       totalClicks,
-      totalSales,         // <-- Toplam satış (quantity ile)
+      totalSales,
       totalEarnings,
       clickRecords,
-      saleRecords,        // <-- Her satışta quantity var
+      saleRecords,
       confirmedSales: allConfirmedSales,
       allConfirmedSales
     });

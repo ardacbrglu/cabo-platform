@@ -28,8 +28,8 @@ export async function GET(req) {
   if (unreadOnly) where.read = false;
 
   // 4) DB’den çek
-  const total = await prisma.notifications.count({ where });
-  const notifications = await prisma.notifications.findMany({
+  const total = await prisma.notification.count({ where });
+  const notifications = await prisma.notification.findMany({
     where,
     orderBy: { createdAt: 'desc' }
   });

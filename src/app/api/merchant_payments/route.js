@@ -19,8 +19,8 @@ export async function GET(req) {
     const limit = Math.max(1, Math.min(100, Number(searchParams.get("limit") || 100)));
     const offset = (page - 1) * limit;
 
-    // Yalnızca merchant'ın payoutRequestItems'larını çek
-    const rawItems = await prisma.payoutRequestItems.findMany({
+    // payoutRequestItem ve relation mapping doğru olmalı
+    const rawItems = await prisma.payoutRequestItem.findMany({
       where: {
         merchantId: user.userId,
         status: { in: ["pending", "merchant_paid", "platform_confirmed", "rejected"] }
@@ -31,11 +31,11 @@ export async function GET(req) {
         amount: true,
         status: true,
         createdAt: true,
-        payoutRequests: {
+        payoutRequest: {
           select: {
             userId: true,
             realUserFullname: true,
-            requested_at: true,
+            requestedAt: true,
           }
         }
       },
@@ -52,16 +52,16 @@ export async function GET(req) {
 
     const grouped = {};
     for (const item of rawItems) {
-      const key = `${item.payoutRequests.userId}_${item.requestId}`;
+      const key = `${item.payoutRequest.userId}_${item.requestId}`;
       if (!grouped[key]) {
         grouped[key] = {
           itemIds: [],
           requestId: item.requestId,
-          affiliate_id: item.payoutRequests.userId,
-          affiliate_name: item.payoutRequests.realUserFullname || "",
+          affiliate_id: item.payoutRequest.userId,
+          affiliate_name: item.payoutRequest.realUserFullname || "",
           amount: 0,
           status: item.status,
-          requested_at: item.payoutRequests.requested_at,
+          requested_at: item.payoutRequest.requestedAt,
         };
       }
       grouped[key].itemIds.push(item.itemId);

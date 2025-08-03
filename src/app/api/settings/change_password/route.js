@@ -12,9 +12,9 @@ import { checkRateLimit } from '@/lib/ratelimit';
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("Missing JWT_SECRET");
 
-// Şema: her iki şifre de en az 8 karakter
+// Şema: yeni şifre zorunlu, current opsiyonel (Google ile ilk defa şifre belirleyenler için)
 const passwordSchema = z.object({
-  current_password: z.string().min(8, "Too short"),
+  current_password: z.string().optional(),
   new_password:     z.string().min(8, "Too short")
 });
 
@@ -41,13 +41,32 @@ export async function POST(req) {
     // 4) Body doğrulama
     const { current_password, new_password } = passwordSchema.parse(await req.json());
 
-    // 5) Mevcut hash’i çek, doğrula
+    // 5) Kullanıcı ve account info çek
     const user = await prisma.user.findUnique({
-      where: { userId },
-      select: { passwordHash: true }
+      where: { id: userId },
+      select: { passwordHash: true, email: true }
     });
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Kullanıcı sadece Google ile kayıt olduysa ve şifre hiç yoksa: ilk kez belirleme
+    if (!user.passwordHash) {
+      // Eğer ilk defa şifre belirliyorsa, current_password boş olmalı!
+      if (current_password && current_password.length > 0) {
+        return NextResponse.json({ error: "You don't have a password yet, just set a new one." }, { status: 400 });
+      }
+      const newHash = await bcrypt.hash(new_password, 12);
+      await prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash: newHash }
+      });
+      return NextResponse.json({ success: true, firstTimeSet: true });
+    }
+
+    // Normal kullanıcı veya daha önce şifre belirlemiş Google kullanıcısı
+    if (!current_password) {
+      return NextResponse.json({ error: "Current password required." }, { status: 400 });
     }
     const ok = await bcrypt.compare(current_password, user.passwordHash);
     if (!ok) {
@@ -57,7 +76,7 @@ export async function POST(req) {
     // 6) Yeni hash’i kaydet
     const newHash = await bcrypt.hash(new_password, 12);
     await prisma.user.update({
-      where: { userId },
+      where: { id: userId },
       data: { passwordHash: newHash }
     });
 

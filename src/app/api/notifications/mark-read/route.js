@@ -22,7 +22,7 @@ export async function POST(req) {
     return NextResponse.json({ error: "No ids" }, { status: 400 });
   }
 
-  await prisma.notifications.updateMany({
+  await prisma.notification.updateMany({
     where: { id: { in: ids }, userId },
     data: { read: true },
   });

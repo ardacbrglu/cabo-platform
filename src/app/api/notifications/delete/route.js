@@ -23,7 +23,7 @@ export async function POST(req) {
   }
 
   // Sadece bu kullanıcıya ait olan bildirimleri sil
-  await prisma.notifications.updateMany({
+  await prisma.notification.updateMany({
     where: { id: { in: ids }, userId },
     data: { isDeleted: true },
   });

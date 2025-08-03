@@ -9,8 +9,24 @@ const RATE_LIMIT_WINDOW = 60 * 1000;
 const RATE_LIMIT_COUNT = 10;
 
 const messages = {
-  en: { /* ... */ },
-  tr: { /* ... */ }
+  en: {
+    fill: "Please enter your email and password.",
+    invalid: "Incorrect email or password.",
+    merchant: "This login page is for affiliate users only.",
+    inactive: "Please activate your account from the link sent to your email address.",
+    ratelimit: "Too many requests. Please wait.",
+    success: "Login successful!",
+    fail: "Login failed. Please try again."
+  },
+  tr: {
+    fill: "Lütfen e-posta ve şifrenizi girin.",
+    invalid: "E-posta veya şifre yanlış.",
+    merchant: "Bu giriş sayfası sadece kullanıcılar içindir.",
+    inactive: "Lütfen hesabınızı e-postanıza gelen linkten aktifleştirin.",
+    ratelimit: "Çok fazla istek. Lütfen bekleyin.",
+    success: "Giriş başarılı!",
+    fail: "Giriş başarısız. Lütfen tekrar deneyin."
+  }
 };
 
 export const POST = csrf(async (req) => {
@@ -42,7 +58,11 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // DÜZELTME: JWT'de id kullan!
+    // AKTİVASYON KONTROLÜ: Sadece 'active' kullanıcılar giriş yapabilir!
+    if (user.status !== 'active') {
+      return Response.json({ success: false, message: msg.inactive }, { status: 403 });
+    }
+
     const token = jwt.sign({
       userId: user.id,
       name: user.name,

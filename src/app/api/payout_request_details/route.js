@@ -33,16 +33,16 @@ export async function POST(req) {
       where: { requestId },
       select: {
         userId: true,
-        requested_at: true,
+        requestedAt: true,
         amountTotal: true,
         status: true,
-        paid_at: true,
+        paidAt: true,
         rejectedReason: true,
         updatedAt: true,
         iban: true,
         bankName: true,
         realUserFullname: true,
-        platform_paid: true,
+        platformPaid: true,
         platformPaidAt: true,
       }
     });
@@ -51,19 +51,19 @@ export async function POST(req) {
     }
 
     // 6) İlgili item’ların sales ID’lerini oku
-    const items = await prisma.payoutRequestItems.findMany({
+    const items = await prisma.payoutRequestItem.findMany({
       where: { requestId },
-      select: { source_saleIds: true }
+      select: { sourceSaleIds: true }
     });
     const saleIds = items
-      .flatMap(i => (i.source_saleIds || "").split(',').map(n => Number(n).valueOf()))
+      .flatMap(i => (i.sourceSaleIds || "").split(',').map(n => Number(n).valueOf()))
       .filter(n => Number.isInteger(n) && n > 0);
 
-    // 7) Satışları çek (sayfa/page gerekirse eklenebilir)
+    // 7) Satışları çek
     const sales = saleIds.length
-      ? await prisma.affiliate_user_sales.findMany({
+      ? await prisma.affiliateUserSale.findMany({
           where: { saleId: { in: saleIds }, userId: userId },
-          include: { merchantProducts: { select: { name: true } } }
+          include: { merchantProduct: { select: { name: true } } }
         })
       : [];
 
@@ -72,23 +72,23 @@ export async function POST(req) {
       sales: sales.map(sale => ({
         saleId:       sale.saleId,
         orderId:      sale.orderId,
-        product:       sale.merchantProducts?.name || "",
-        amount:        Number(sale.amount),
-        commission:    Number(sale.commissionAffiliate),
-        quantity:      sale.quantity,
+        product:      sale.merchantProduct?.name || "",
+        amount:       Number(sale.amount),
+        commission:   Number(sale.commissionAffiliate),
+        quantity:     sale.quantity,
         convertedAt:  sale.convertedAt.toISOString().slice(0, 19).replace('T',' ')
       })),
-      status:           payoutReq.status,
-      request_date:     payoutReq.requested_at?.toISOString() || "",
-      paid_at:          payoutReq.paid_at,
-      rejectedReason:  payoutReq.rejectedReason,
-      updatedAt:       payoutReq.updatedAt,
-      total:            Number(payoutReq.amountTotal),
-      iban:             payoutReq.iban || "",
-      bankName:        payoutReq.bankName || "",
-      realUserFullname: payoutReq.realUserFullname || "",
-      platform_paid:      payoutReq.platform_paid,
-      platformPaidAt:   payoutReq.platformPaidAt
+      status:            payoutReq.status,
+      request_date:      payoutReq.requestedAt?.toISOString() || "",
+      paid_at:           payoutReq.paidAt,
+      rejectedReason:    payoutReq.rejectedReason,
+      updatedAt:         payoutReq.updatedAt,
+      total:             Number(payoutReq.amountTotal),
+      iban:              payoutReq.iban || "",
+      bankName:          payoutReq.bankName || "",
+      realUserFullname:  payoutReq.realUserFullname || "",
+      platformPaid:      payoutReq.platformPaid,
+      platformPaidAt:    payoutReq.platformPaidAt
     });
 
   } catch (err) {

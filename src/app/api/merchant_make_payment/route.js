@@ -26,12 +26,12 @@ export async function POST(req) {
     }
 
     // 4. Pending & ilgili merchant’a ait olanları bul
-    const items = await prisma.payoutRequestItems.findMany({
+    const items = await prisma.payoutRequestItem.findMany({
       where: {
         itemId: { in: itemIds },
         merchantId: user.userId,
         status: "pending",
-        payoutRequests: { status: "pending" }
+        payoutRequest: { status: "pending" }
       }
     });
     if (!items.length) {
@@ -39,26 +39,26 @@ export async function POST(req) {
     }
 
     // 5. Toplu olarak update et
-    await prisma.payoutRequestItems.updateMany({
+    await prisma.payoutRequestItem.updateMany({
       where: {
         itemId: { in: items.map(i => i.itemId) }
       },
       data: {
         status: "merchant_paid",
-        paid_at: new Date()
+        paidAt: new Date()
       }
     });
 
     // 6. Log kaydı (her item için)
     for (const item of items) {
-      await prisma.payout_request_logs.create({
+      await prisma.payoutRequestLog.create({
         data: {
           itemId: item.itemId,
           requestId: item.requestId,
           userId: user.userId,
           action: "merchant_paid",
-          old_status: "pending",
-          new_status: "merchant_paid",
+          oldStatus: "pending",
+          newStatus: "merchant_paid",
           note: "Merchant marked as paid"
         }
       });

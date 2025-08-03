@@ -15,7 +15,7 @@ if (!JWT_SECRET) throw new Error("Missing JWT_SECRET");
 // 1) Gelen body için Zod şeması
 const updateSchema = z.object({
   name:              z.string().min(2, "Name too short").max(100),
-  language_preference: z.enum(['en','tr']),
+  languagePreference: z.enum(['en','tr']),
   currencyCode:       z.enum(['EUR','TRY','USD'])
 });
 
@@ -45,10 +45,10 @@ export async function POST(req) {
 
     // 6) DB güncellemesi
     await prisma.user.update({
-      where: { userId },
+      where: { id: userId },
       data: {
         name: nameClean,
-        language_preference: parsed.language_preference,
+        languagePreference: parsed.languagePreference,
         currencyCode: parsed.currencyCode
       }
     });
@@ -56,7 +56,6 @@ export async function POST(req) {
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("POST /api/settings/update error:", err);
-    // 7) Error masking
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

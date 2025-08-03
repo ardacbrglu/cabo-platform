@@ -27,7 +27,7 @@ export async function POST(req) {
     const { itemIds } = requestSchema.parse(body);
 
     // Sadece merchant’a ait payout item'larını çek
-    const items = await prisma.payoutRequestItems.findMany({
+    const items = await prisma.payoutRequestItem.findMany({
       where: {
         itemId: { in: itemIds },
         merchantId: user.userId,
@@ -36,14 +36,13 @@ export async function POST(req) {
         itemId: true,
         amount: true,
         productId: true,
-        source_saleIds: true,
+        sourceSaleIds: true,
         status: true,
-        payoutRequests
-: {
+        payoutRequest: {
           select: {
             userId: true,
             realUserFullname: true,
-            requested_at: true,
+            requestedAt: true,
           }
         }
       }
@@ -56,9 +55,9 @@ export async function POST(req) {
     // Her payout item için ilgili satışları topla
     let sales = [];
     for (const item of items) {
-      if (item.source_saleIds) {
-        const saleIds = item.source_saleIds.split(',').map(id => Number(id)).filter(Boolean);
-        const salesData = await prisma.affiliate_user_sales.findMany({
+      if (item.sourceSaleIds) {
+        const saleIds = item.sourceSaleIds.split(',').map(id => Number(id)).filter(Boolean);
+        const salesData = await prisma.affiliateUserSale.findMany({
           where: { saleId: { in: saleIds } },
           select: {
             saleId: true,
@@ -69,15 +68,15 @@ export async function POST(req) {
             status: true,
             convertedAt: true,
             productId: true,
-            affiliate_linkId: true,
+            affiliateLinkId: true,
           },
         });
-        // affiliate_linkId’den token çek
+        // affiliateLinkId’den token çek
         for (const sale of salesData) {
           let saleToken = null;
-          if (sale.affiliate_linkId) {
-            const link = await prisma.affiliateLinks.findUnique({
-              where: { linkId: sale.affiliate_linkId },
+          if (sale.affiliateLinkId) {
+            const link = await prisma.affiliateLink.findUnique({
+              where: { linkId: sale.affiliateLinkId },
               select: { token: true }
             });
             saleToken = link?.token || "";
@@ -86,7 +85,7 @@ export async function POST(req) {
             ...sale,
             itemId: item.itemId,
             payout_status: item.status,
-            requested_at: item.payoutRequests?.requested_at,
+            requested_at: item.payoutRequest?.requestedAt,
             token: saleToken,
           });
         }
@@ -107,8 +106,8 @@ export async function POST(req) {
     const meta = {
       status: items[0]?.status || "",
       total: items.reduce((sum, i) => sum + Number(i.amount), 0),
-      requestDate: items[0]?.payoutRequests?.requested_at?.toISOString() || "",
-      affiliate_name: items[0]?.payoutRequests?.realUserFullname || "",
+      requestDate: items[0]?.payoutRequest?.requestedAt?.toISOString() || "",
+      affiliate_name: items[0]?.payoutRequest?.realUserFullname || "",
     };
 
     // Sale detaylarını frontende hazırla

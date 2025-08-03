@@ -8,10 +8,10 @@ export async function GET(req) {
     await checkRateLimit(req, "platform_info", 50, 60_000, "platform-info-get");
 
     // Tek sorguda çek
-    const configs = await prisma.platform_config.findMany({
-      where: { key_name: { in: ["platform_account_name", "platform_iban"] } }
+    const configs = await prisma.platformConfig.findMany({
+      where: { keyName: { in: ["platform_account_name", "platform_iban"] } }
     });
-    const map = Object.fromEntries(configs.map(c => [c.key_name, c.value]));
+    const map = Object.fromEntries(configs.map(c => [c.keyName, c.value]));
     return NextResponse.json({
       platform_account_name: map.platform_account_name || "-",
       platform_iban: map.platform_iban || "-"

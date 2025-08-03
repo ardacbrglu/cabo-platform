@@ -290,11 +290,14 @@
   "saleDate": "Satış Tarihi",
   "salestatus": "Satış Durumu",
   "token": "Token",
-  "close": "Kapat"
+  "close": "Kapat",
+  "passwordSetSuccess": "Şifreniz başarıyla oluşturuldu.",
+  "tooManyRequests": "Çok fazla deneme. Lütfen tekrar deneyin.",
+  "currentPasswordPlaceholder": "Mevcut şifre (Google ile ilk kez şifre belirliyorsan boş bırak)",
+  "newPasswordPlaceholder": "Yeni şifre (min 8 karakter)",
+  "repeatNewPasswordPlaceholder": "Yeni şifre (tekrar)",
+  "hybridPasswordHint": "Google ile kaydolduysan klasik giriş için şifre belirleyebilirsin. İlk kez şifre oluşturuyorsan mevcut şifreyi boş bırak."
 }
-
-
-
 
 
 

@@ -4,8 +4,6 @@ import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY';
-
-// Bildirim tipi için izin verilenler
 const VALID_TYPES = ['info', 'support_reply', 'important'];
 
 export async function POST(req) {
@@ -34,30 +32,30 @@ export async function POST(req) {
 
     // 3. Bildirimi ekle
     if (all) {
-      // Herkese (tüm userId'lere)
+      // Herkese (tüm user'lara)
       const users = await prisma.user.findMany({
         where: { status: 'active' }, // veya hepsi için: where: {}
-        select: { userId: true }
+        select: { id: true }
       });
       if (!users.length)
         return NextResponse.json({ error: "No users found" }, { status: 400 });
 
       const data = users.map(u => ({
-        userId: u.userId,
+        userId: u.id,
         message,
         type,
         link: link || null,
         read: false
       }));
 
-      await prisma.notifications.createMany({ data });
+      await prisma.notification.createMany({ data });
       return NextResponse.json({ ok: true, count: data.length });
     } else {
       // Sadece belirli userId'ye
       if (!userId)
         return NextResponse.json({ error: "userId required" }, { status: 400 });
 
-      await prisma.notifications.create({
+      await prisma.notification.create({
         data: {
           userId,
           message,

@@ -1,5 +1,3 @@
-// app/api/support/route.js
-
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { cookies } from 'next/headers';
@@ -11,7 +9,6 @@ import { sanitizeHtml } from '@/lib/validation';
 
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
-// Zod şeması: mesaj en az 1, en çok 900 karakter
 const supportSchema = z.object({
   message: z.string().min(1).max(900)
 });
@@ -47,9 +44,9 @@ export async function POST(req) {
     const parsed = supportSchema.parse(await req.json());
     const cleanMessage = sanitizeHtml(parsed.message.trim());
 
-    // 5) Kullanıcı bilgilerini çek
+    // 5) Kullanıcı bilgilerini çek (id!)
     const user = await prisma.user.findUnique({
-      where: { userId },
+      where: { id: userId },
       select: { name: true, email: true }
     });
     if (!user) {
@@ -59,7 +56,7 @@ export async function POST(req) {
     // 6) Mesajı DB'ye kaydet
     await prisma.contactMessage.create({
       data: {
-        userId,
+        userId,                 // int
         name: user.name,
         email: user.email,
         message: cleanMessage
@@ -69,7 +66,6 @@ export async function POST(req) {
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("Support API error:", err);
-    // Hata detaylarını sakla; kullanıcıya genel mesaj döndür
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

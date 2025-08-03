@@ -25,21 +25,21 @@ export async function GET() {
     let allProducts = await prisma.merchantProduct.findMany({
       where: {
         isActive: true,
-        activated_by_admin: true,
+        activatedByAdmin: true,
       },
       orderBy: { createdAt: 'desc' },
       select: {
         productId: true,
         name: true,
         description: true,
-        image_url: true,
-        merchant_url: true,
+        imageUrl: true,
+        merchantUrl: true,
         commissionRate: true,
         merchantId: true,
         totalClicks: true,
-        total_purchases: true,
-        max_sales_limit: true,
-        activated_by_admin: true,
+        totalPurchases: true,
+        maxSalesLimit: true,
+        activatedByAdmin: true,
         isActive: true,
       },
     });
@@ -47,8 +47,8 @@ export async function GET() {
     // Kota aşılmış ürünleri filtrele
     const products = allProducts.filter(
       p =>
-        (p.max_sales_limit == null) ||
-        (p.total_purchases < p.max_sales_limit)
+        (p.maxSalesLimit == null) ||
+        (p.totalPurchases < p.maxSalesLimit)
     );
 
     // Kullanıcının affiliateLink'leri (aktif/pasif fark etmeksizin)

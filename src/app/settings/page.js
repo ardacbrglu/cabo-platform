@@ -24,7 +24,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState({
     name: "",
     email: "",
-    language_preference: "en",
+    languagePreference: "en",
     currencyCode: "EUR",
     current_password: "",
     new_password: "",
@@ -38,10 +38,7 @@ export default function SettingsPage() {
   const isMobile = useIsMobile();
   const csrfToken = useCsrfToken();
 
-  // Kartların spacing ayarı
   const cardGap = isMobile ? "gap-6" : "gap-7";
-
-  // Kart classlarını tek değişkende topladık, iki kart da aynı görünecek
   const cardClass = `
     flex-1 min-w-[220px] max-w-[380px]
     bg-[#191919] rounded-2xl shadow-md border border-[#232323]
@@ -57,16 +54,15 @@ export default function SettingsPage() {
           ...prev,
           name: data.name || "",
           email: data.email || "",
-          language_preference: data.language_preference || "en",
+          languagePreference: data.languagePreference || "en",
           currencyCode: data.currencyCode || "EUR",
         }));
-        setLocale(data.language_preference || "en");
+        setLocale(data.languagePreference || "en");
         setLoading(false);
       });
     // eslint-disable-next-line
   }, []);
 
-  // Message kartlara yakın gözüksün ve otomatik kaybolsun
   useEffect(() => {
     if (message && msgRef.current) {
       msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -80,7 +76,7 @@ export default function SettingsPage() {
       ...prev,
       [e.target.name]: e.target.value
     }));
-    if (e.target.name === "language_preference") {
+    if (e.target.name === "languagePreference") {
       setLocale(e.target.value);
     }
   }
@@ -98,7 +94,7 @@ export default function SettingsPage() {
       },
       body: JSON.stringify({
         name: profile.name,
-        language_preference: profile.language_preference,
+        languagePreference: profile.languagePreference,
         currencyCode: profile.currencyCode,
       }),
     });
@@ -106,7 +102,8 @@ export default function SettingsPage() {
 
     // Şifre alanı doluysa şifre güncelleme
     let passwordMsg = "";
-    if (profile.current_password && profile.new_password && profile.new_password_repeat) {
+    // Hibrit/Gmail ile gelenler current_password boş bırakabilir!
+    if (profile.new_password && profile.new_password_repeat) {
       if (profile.new_password !== profile.new_password_repeat) {
         setMessage(t("passwordNoMatch"));
         return;
@@ -125,6 +122,8 @@ export default function SettingsPage() {
       const passwordData = await passwordRes.json();
       if (passwordRes.status === 429) {
         passwordMsg = t("tooManyRequests") || "Too many attempts";
+      } else if (passwordData.firstTimeSet) {
+        passwordMsg = t("passwordSetSuccess") || "Password set!";
       } else {
         passwordMsg = passwordData.success
           ? t("passwordChanged")
@@ -132,7 +131,6 @@ export default function SettingsPage() {
       }
     }
 
-    // Profil mesajı
     if (profileRes.status === 429) {
       setMessage(t("tooManyRequests") || "Too many requests");
     } else {
@@ -142,7 +140,6 @@ export default function SettingsPage() {
       );
     }
 
-    // Şifre alanlarını temizle
     setProfile(prev => ({
       ...prev,
       current_password: "",
@@ -182,8 +179,8 @@ export default function SettingsPage() {
             />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
             <select
-              name="language_preference"
-              value={profile.language_preference}
+              name="languagePreference"
+              value={profile.languagePreference}
               onChange={handleChange}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
             >
@@ -202,7 +199,6 @@ export default function SettingsPage() {
                 <option key={cur.code} value={cur.code}>{cur.name} ({cur.symbol})</option>
               ))}
             </select>
-            {/* Profil güncelleme mesajı */}
             {message && (
               <div ref={msgRef} className="text-[#81d742] font-semibold mt-3 text-center max-w-2xl transition-opacity duration-500">
                 {message}
@@ -219,6 +215,8 @@ export default function SettingsPage() {
               value={profile.current_password}
               onChange={handleChange}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
+              autoComplete="current-password"
+              placeholder={t("currentPasswordPlaceholder") || ""}
             />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("newPassword")}</label>
             <input
@@ -227,6 +225,8 @@ export default function SettingsPage() {
               value={profile.new_password}
               onChange={handleChange}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
+              autoComplete="new-password"
+              placeholder={t("newPasswordPlaceholder") || ""}
             />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("repeatNewPassword")}</label>
             <input
@@ -235,10 +235,15 @@ export default function SettingsPage() {
               value={profile.new_password_repeat}
               onChange={handleChange}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
+              autoComplete="new-password"
+              placeholder={t("repeatNewPasswordPlaceholder") || ""}
             />
+            <div className="text-xs text-gray-400 mt-1 mb-2">
+              {t("hybridPasswordHint") ||
+                "If you registered with Google, you can set your password for classic login. Leave current password empty for the first time."}
+            </div>
           </div>
         </form>
-        {/* Save Button */}
         <button
           type="submit"
           onClick={handleSave}

@@ -12,11 +12,11 @@ export const GET = async (req) => {
     return Response.json({ success: false, message: "Token invalid or already used." }, { status: 400 });
   }
 
+  // DÜZELTME: id ile update et!
   await prisma.user.update({
-    where: { userId: user.userId },
+    where: { id: user.id },
     data: { status: "active", activationToken: null }
   });
 
-  // İsteğe bağlı: frontendde bir sayfaya yönlendirme yapabilirsin.
   return Response.json({ success: true, message: "Your account has been activated! You can now log in." });
 };

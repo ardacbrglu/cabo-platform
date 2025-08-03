@@ -40,18 +40,18 @@ export async function POST(req) {
       where: { productId: Number(productId) },
       select: {
         isActive: true,
-        activated_by_admin: true,
-        total_purchases: true,
-        max_sales_limit: true
+        activatedByAdmin: true,
+        totalPurchases: true,
+        maxSalesLimit: true
       }
     });
     if (!product || !product.isActive) {
       return NextResponse.json({ error: "This product is not active." }, { status: 403 });
     }
-    if (!product.activated_by_admin) {
+    if (!product.activatedByAdmin) {
       return NextResponse.json({ error: "This product is not yet approved by admin." }, { status: 403 });
     }
-    if (product.max_sales_limit != null && product.total_purchases >= product.max_sales_limit) {
+    if (product.maxSalesLimit != null && product.totalPurchases >= product.maxSalesLimit) {
       return NextResponse.json({ error: "This product has reached its sales quota." }, { status: 403 });
     }
 
