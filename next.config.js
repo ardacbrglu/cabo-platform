@@ -2,8 +2,6 @@
 const nextConfig = {
   reactStrictMode: true,
 
-  // Development ortamında local uyarı bastırma (opsiyonel, zorunlu değil)
-  allowedDevOrigins: ['http://192.168.1.106:3000'],
 
   // Security headers for all routes
   async headers() {
