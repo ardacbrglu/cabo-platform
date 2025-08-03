@@ -7,9 +7,8 @@ import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
-import { signIn } from "next-auth/react";
+// import { signIn } from "next-auth/react"; // Google ile giriş tamamen devre dışı
 
-// Captcha bileşenini dinamik import et (SSR için gerekliyse)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const translations = {
@@ -175,13 +174,6 @@ export default function MerchantRegisterPage() {
     setLoading(false);
   };
 
-  // Google ile giriş/kayıt (NextAuth)
-  const handleGoogleAuth = () => {
-    signIn("google", {
-      callbackUrl: "/merchant" // İster burayı "/dashboard" yapabilirsin
-    });
-  };
-
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
@@ -320,26 +312,8 @@ export default function MerchantRegisterPage() {
               {loading ? <Loader2 className="animate-spin mx-auto" size={18} /> : t("submit")}
             </button>
 
-            <div className="flex items-center my-3">
-              <span className="flex-1 h-px bg-[#232323]" />
-              <span className="px-3 text-gray-400 text-sm font-semibold">{t("or")}</span>
-              <span className="flex-1 h-px bg-[#232323]" />
-            </div>
+            {/* Google ile giriş/kayıt ve "or" separatoru tamamen kaldırıldı */}
 
-            {/* Google ile Giriş/Kayıt */}
-            <button
-              type="button"
-              onClick={handleGoogleAuth}
-              className="flex items-center justify-center gap-2 bg-white hover:bg-[#f5f5f5] text-[#0b0b0b] font-bold py-3 rounded-lg border border-[#eee] shadow transition"
-              style={{ width: "100%" }}
-            >
-              <svg width="20" height="20" viewBox="0 0 48 48" className="mr-1">
-                <g>
-                  <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..." />
-                </g>
-              </svg>
-              {t("google")}
-            </button>
           </form>
         </div>
       </div>

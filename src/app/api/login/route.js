@@ -10,82 +10,45 @@ const RATE_LIMIT_WINDOW = 60 * 1000;
 const RATE_LIMIT_COUNT = 10;
 
 const messages = {
-  en: {
-    fill: "Please fill in all fields.",
-    invalid: "Email or password is incorrect.",
-    merchant: "Merchants must log in from the Merchant Login page.",
-    success: "Login successful!",
-    fail: "Login failed. Please try again.",
-    ratelimit: "Too many requests. Please wait and try again.",
-    csrf: "Invalid CSRF token."
-  },
-  tr: {
-    fill: "Lütfen tüm alanları doldurun.",
-    invalid: "E-posta veya şifre yanlış.",
-    merchant: "Satıcılar Merchant Giriş ekranından giriş yapmalı.",
-    success: "Giriş başarılı!",
-    fail: "Giriş başarısız. Lütfen tekrar deneyin.",
-    ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
-    csrf: "Geçersiz CSRF anahtarı."
-  }
+  en: { /* ... */ },
+  tr: { /* ... */ }
 };
 
 export const POST = csrf(async (req) => {
   try {
-    // Locale seçim
-    const langHeader = req.headers.get('accept-language') || '';
-    const locale = langHeader.startsWith('tr') ? 'tr' : 'en';
+    const lang = req.headers.get('accept-language') || '';
+    const locale = lang.startsWith('tr') ? 'tr' : 'en';
     const msg = messages[locale];
 
     // Rate limit kontrolü
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
-    const ok = checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW);
-    if (!ok) {
-      return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/json' }
-      });
+    if (!checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW)) {
+      return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
     const { email, password } = await req.json();
     if (!email || !password) {
-      return new Response(JSON.stringify({ success: false, message: msg.fill }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
-    // Kullanıcıyı bul & doğrula
-    const cleanEmail = email.trim().toLowerCase();
-    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
     if (!user) {
-      return new Response(JSON.stringify({ success: false, message: msg.invalid }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
     if (user.role === 'merchant') {
-      return new Response(JSON.stringify({ success: false, message: msg.merchant }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
-      return new Response(JSON.stringify({ success: false, message: msg.invalid }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // JWT oluştur ve cookie’ye yaz
-    const payload = {
+    const token = jwt.sign({
       user_id: user.user_id,
       name: user.name,
       email: user.email,
       role: user.role
-    };
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    }, JWT_SECRET, { expiresIn: '7d' });
 
     const headers = new Headers();
     headers.append('Content-Type', 'application/json');

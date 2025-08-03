@@ -202,13 +202,16 @@ export default function MerchantLoginPage() {
               {loading ? t('loggingIn') : t('loginBtn')}
             </button>
 
-            <div className="flex items-center my-4">
+             {/* burasi duz giris ile google ile giris arasindaki OR yazisi */}
+            {/* <div className="flex items-center my-4">
               <span className="flex-1 h-px bg-[#232323]" />
               <span className="px-3 text-gray-400 text-sm font-semibold">{t('or')}</span>
               <span className="flex-1 h-px bg-[#232323]" />
-            </div>
+            </div> */} 
 
-            <button
+
+
+            {/* <button
               type="button"
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#f5f5f5] text-[#0b0b0b] font-bold py-3 rounded-lg border border-[#eee] shadow transition"
               onClick={() => setShowGoogle(true)}
@@ -220,7 +223,10 @@ export default function MerchantLoginPage() {
                 </g>
               </svg>
               {t('googleBtn')}
-            </button>
+            </button> */}
+
+
+
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
@@ -248,7 +254,8 @@ export default function MerchantLoginPage() {
         </div>
       )}
 
-      {/* Google ile giriş yakında modal */}
+
+      {/* Google ile giriş yakında modal
       {showGoogle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
           <div className="bg-[#181818] rounded-xl shadow-xl p-8 max-w-sm w-full border border-[#232323] text-center">
@@ -262,7 +269,7 @@ export default function MerchantLoginPage() {
             </button>
           </div>
         </div>
-      )}
+      )} */}
 
       <style jsx global>{`
         @media (max-width: 768px) {
