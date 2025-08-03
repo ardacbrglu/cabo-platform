@@ -54,15 +54,13 @@ export const POST = csrf(async (req) => {
     }
 
     // Input
-    const { name, email, password, phoneNumber
-, role, termsAccepted, captcha } = await req.json();
+    const { name, email, password, phoneNumber, role, termsAccepted, captcha } = await req.json();
 
     // Terms check
     if (!termsAccepted) {
       return Response.json({ success: false, message: msg.terms }, { status: 400 });
     }
-    if (!name || !email || !password || !phoneNumber
- || role !== "merchant") {
+    if (!name || !email || !password || !phoneNumber|| role !== "merchant") {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
 
@@ -95,8 +93,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.username }, { status: 400 });
     if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password))
       return Response.json({ success: false, message: msg.password }, { status: 400 });
-    if (!phoneRegex.test(phoneNumber
-.trim()))
+    if (!phoneRegex.test(phoneNumber.trim()))
       return Response.json({ success: false, message: msg.phone }, { status: 400 });
 
     // Duplicate check
@@ -114,9 +111,7 @@ export const POST = csrf(async (req) => {
         name: name.trim(),
         email: email.trim().toLowerCase(),
         passwordHash: hashedPassword,
-        phoneNumber
-: phoneNumber
-.trim(),
+        phoneNumber: phoneNumber.trim(),
         role: "merchant",
         status: "pending",
         termsAccepted: !!termsAccepted

@@ -105,7 +105,7 @@ export async function GET() {
           where: { linkId: link.linkId }
         });
 
-        // 🔴🔴🔴 DÜZELTİLEN KISIM: Model adı affiliateUserSale olmalı!
+        
         const salesAgg = await prisma.affiliateUserSale.aggregate({
           _sum: { commissionAffiliate: true, quantity: true },
           where: {

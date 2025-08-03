@@ -36,7 +36,7 @@ function WalletProgress({ value, max }) {
 function exportToCSV(sales, date, t) {
   const header = `${t("orderId")},${t("product")},${t("amount")},${t("commission")},${t("quantity")},${t("date")}\n`;
   const rows = sales.map(s =>
-    [s.orderId, s.product, s.amount, s.commission, s.quantity, s.converted_at].join(',')
+    [s.orderId, s.product, s.amount, s.commission, s.quantity, s.convertedAt].join(',')
   ).join('\n');
   const csv = header + rows;
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -592,7 +592,7 @@ export default function WalletPage() {
                         <td>₺{sale.amount}</td>
                         <td style={{ color: COLOR_GREEN }}>₺{sale.commission}</td>
                         <td>{sale.quantity}</td>
-                        <td>{sale.converted_at}</td>
+                        <td>{sale.convertedAt}</td>
                       </tr>
                     ))}
                   </tbody>

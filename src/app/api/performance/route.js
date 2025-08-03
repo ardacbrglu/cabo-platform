@@ -98,17 +98,17 @@ export async function GET(req) {
       where: {
         userId: userId,
         productId: { in: filteredProductIds },
-        ...(startDate || endDate ? { converted_at: dateFilter } : {}),
+        ...(startDate || endDate ? { convertedAt: dateFilter } : {}),
       },
       select: {
-        converted_at: true,
+        convertedAt: true,
         productId: true,
         quantity: true // <--- quantity çekiliyor!
       }
     });
     // quantity null ise 1 alınır (default)
     const saleRecords = saleRecordsRaw.map(r => ({
-      date: r.converted_at.toISOString().slice(0, 10),
+      date: r.convertedAt.toISOString().slice(0, 10),
       productId: r.productId,
       quantity: typeof r.quantity === "number" && r.quantity > 0 ? r.quantity : 1
     }));
@@ -119,15 +119,15 @@ export async function GET(req) {
         userId: userId,
         productId: { in: filteredProductIds },
         status: "confirmed",
-        ...(startDate || endDate ? { converted_at: dateFilter } : {}),
+        ...(startDate || endDate ? { convertedAt: dateFilter } : {}),
       },
-      orderBy: { converted_at: "desc" },
+      orderBy: { convertedAt: "desc" },
       select: {
         saleId: true,
         amount: true,
         commissionAffiliate: true,
         status: true,
-        converted_at: true,
+        convertedAt: true,
         productId: true,
         quantity: true,
         merchantProducts: { select: { name: true, image_url: true } }
@@ -152,7 +152,7 @@ export async function GET(req) {
       productId: s.productId,
       productName: s.merchantProducts?.name ?? 'Product',
       productImage: s.merchantProducts?.image_url ?? null,
-      date: s.converted_at.toISOString().slice(0, 10),
+      date: s.convertedAt.toISOString().slice(0, 10),
       amount: Number(s.amount),
       commission: Number(s.commissionAffiliate),
       status: s.status,

@@ -164,11 +164,9 @@ export async function POST(req) {
         amount,
         quantity,
         commissionAffiliate: commissionAffiliate,
-        commissionPlatform
-
-:  commissionPlatform,
+        commissionPlatform:  commissionPlatform,
         status:               'confirmed',
-        converted_at:         new Date()
+        convertedAt:         new Date()
       }
     })
 

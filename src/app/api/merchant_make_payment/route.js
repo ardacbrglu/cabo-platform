@@ -31,8 +31,7 @@ export async function POST(req) {
         itemId: { in: itemIds },
         merchantId: user.userId,
         status: "pending",
-        payoutRequests
-: { status: "pending" }
+        payoutRequests: { status: "pending" }
       }
     });
     if (!items.length) {

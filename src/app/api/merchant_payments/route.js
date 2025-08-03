@@ -31,8 +31,7 @@ export async function GET(req) {
         amount: true,
         status: true,
         createdAt: true,
-        payoutRequests
-: {
+        payoutRequests: {
           select: {
             userId: true,
             realUserFullname: true,
@@ -53,20 +52,16 @@ export async function GET(req) {
 
     const grouped = {};
     for (const item of rawItems) {
-      const key = `${item.payoutRequests
-.userId}_${item.requestId}`;
+      const key = `${item.payoutRequests.userId}_${item.requestId}`;
       if (!grouped[key]) {
         grouped[key] = {
           itemIds: [],
           requestId: item.requestId,
-          affiliate_id: item.payoutRequests
-.userId,
-          affiliate_name: item.payoutRequests
-.realUserFullname || "",
+          affiliate_id: item.payoutRequests.userId,
+          affiliate_name: item.payoutRequests.realUserFullname || "",
           amount: 0,
           status: item.status,
-          requested_at: item.payoutRequests
-.requested_at,
+          requested_at: item.payoutRequests.requested_at,
         };
       }
       grouped[key].itemIds.push(item.itemId);

@@ -155,8 +155,7 @@ export default function MerchantRegisterPage() {
         name: form.name,
         email: form.email,
         password: form.password,
-        phoneNumber
-: fullPhone,
+        phoneNumber: fullPhone,
         role: "merchant",
         termsAccepted: terms,
         captcha

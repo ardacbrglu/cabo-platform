@@ -67,7 +67,7 @@ export async function POST(req) {
             commissionAffiliate: true,
             quantity: true,
             status: true,
-            converted_at: true,
+            convertedAt: true,
             productId: true,
             affiliate_linkId: true,
           },
@@ -86,8 +86,7 @@ export async function POST(req) {
             ...sale,
             itemId: item.itemId,
             payout_status: item.status,
-            requested_at: item.payoutRequests
-?.requested_at,
+            requested_at: item.payoutRequests?.requested_at,
             token: saleToken,
           });
         }
@@ -108,10 +107,8 @@ export async function POST(req) {
     const meta = {
       status: items[0]?.status || "",
       total: items.reduce((sum, i) => sum + Number(i.amount), 0),
-      requestDate: items[0]?.payoutRequests
-?.requested_at?.toISOString() || "",
-      affiliate_name: items[0]?.payoutRequests
-?.realUserFullname || "",
+      requestDate: items[0]?.payoutRequests?.requested_at?.toISOString() || "",
+      affiliate_name: items[0]?.payoutRequests?.realUserFullname || "",
     };
 
     // Sale detaylarını frontende hazırla
@@ -121,9 +118,7 @@ export async function POST(req) {
       amount: Number(s.amount),
       commission: Number(s.commissionAffiliate),
       quantity: s.quantity,
-      sale_date: s.converted_at
-        ? new Date(s.converted_at).toISOString().slice(0, 19).replace('T', ' ')
-        : "-",
+      sale_date: s.convertedAt? new Date(s.convertedAt).toISOString().slice(0, 19).replace('T', ' '): "-",
       status: s.status || "-",   // Sale status
       token: s.token || "",
     }));

@@ -76,7 +76,7 @@ export async function POST(req) {
         amount:        Number(sale.amount),
         commission:    Number(sale.commissionAffiliate),
         quantity:      sale.quantity,
-        converted_at:  sale.converted_at.toISOString().slice(0, 19).replace('T',' ')
+        convertedAt:  sale.convertedAt.toISOString().slice(0, 19).replace('T',' ')
       })),
       status:           payoutReq.status,
       request_date:     payoutReq.requested_at?.toISOString() || "",

@@ -96,7 +96,7 @@ export async function GET(req) {
     // 8. Son 5 satış (confirmed)
     const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { productId: { in: productIds }, status: 'confirmed' },
-      orderBy: { converted_at: 'desc' },
+      orderBy: { convertedAt: 'desc' },
       take: 5,
       include: { merchantProducts: { select: { name: true } } }
     });
@@ -132,9 +132,9 @@ export async function GET(req) {
         userId: userId,
         status: "confirmed",
         productId: { in: productIds },
-        converted_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        convertedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       },
-      orderBy: { converted_at: "desc" },
+      orderBy: { convertedAt: "desc" },
       include: { merchantProducts: { select: { name: true } } }
     });
 
@@ -142,7 +142,7 @@ export async function GET(req) {
     if (lastConversion) {
       lastConversionData = {
         type: "conversion",
-        time: lastConversion.converted_at,
+        time: lastConversion.convertedAt,
         productName: lastConversion.merchantProducts?.name || "Unknown Product",
         commission: Number(lastConversion.commissionAffiliate || 0),
         quantity: lastConversion.quantity || 1
@@ -188,7 +188,7 @@ export async function GET(req) {
       recentActions: (recentConversions || []).map(conv => ({
         amount: `+${Number(conv.commissionAffiliate).toFixed(2)}₺`,
         desc: `Sale: ${conv.merchantProducts?.name || 'Product'} (${conv.quantity || 1} adet)`,
-        date: conv.converted_at.toISOString().slice(0, 10)
+        date: conv.convertedAt.toISOString().slice(0, 10)
       })),
       leaderboard: (leaderboard || []).map(l => ({
         name: l.name,

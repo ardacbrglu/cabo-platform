@@ -65,7 +65,7 @@
 //         const payoutReq = await tx.payoutRequest.create({
 //           data: {
 //             userId: userId,
-//             amountTotal: amount,
+//             amount_total: amount,
 //             status: "pending",
 //             bankName: user.bankName,
 //             iban: user.iban,
@@ -182,7 +182,7 @@ export async function POST(req) {
         const payoutReq = await tx.payoutRequest.create({
           data: {
             userId: userId,
-            amountTotal: amount,
+            amount_total: amount,
             status: "pending",
             bankName: user.bankName,
             iban: user.iban,
