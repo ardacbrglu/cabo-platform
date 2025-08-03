@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 
+
 export const GET = async (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get('token');
