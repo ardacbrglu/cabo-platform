@@ -36,8 +36,63 @@ model User {
   payout_request_items payout_request_items[]
   payout_requests      PayoutRequest[]
 
+  // NextAuth ilişkileri
+  accounts             Account[]
+  sessions             Session[]
+
   @@map("users")
 }
+
+
+
+
+model Account {
+  id                 Int      @id @default(autoincrement())
+  userId             Int
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+  oauth_token_secret String?  @db.Text
+  oauth_token        String?  @db.Text
+
+  user               User     @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  sessionToken String   @unique @db.VarChar(255)
+  userId       Int
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+
+model VerificationToken {
+  identifier String @db.VarChar(255)
+  token      String @db.VarChar(255)
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+
+
 
 model AffiliateLink {
   link_id           Int                 @id @default(autoincrement())
@@ -292,3 +347,8 @@ enum NotificationType {
   support_reply
   important
 }
+
+
+
+
+
