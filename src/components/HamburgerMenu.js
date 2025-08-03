@@ -7,7 +7,7 @@ import {
 import { useUser } from "@/context/UserContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { usePathname } from "next/navigation";
-import { usenotifications } from "@/hooks/usenotifications";
+import { useNotifications} from "@/hooks/useNotifications";
 import NotificationBadge from "@/components/NotificationBadge";
 import Portal from "@/components/Portal";
 
@@ -17,7 +17,7 @@ export default function HamburgerMenu() {
   const { user } = useUser();
   const t = useTranslation(user?.language_preference || "en");
   const pathname = usePathname();
-  const { unreadCount } = usenotifications();
+  const { unreadCount } = useNotifications();
 
   // Dışarı tıklandığında ya da ESC ile kapama
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Layout from '@/components/Layout';
-import { usenotifications } from '@/hooks/usenotifications';
+import { useNotifications} from '@/hooks/useNotifications';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Bell, CheckCircle, Trash2 } from "lucide-react";
 
@@ -31,7 +31,7 @@ function NotificationTypeDot({ type }) {
 }
 
 export default function notificationsPage() {
-  const { notifications, markSelectedAsRead, deletenotifications, unreadCount } = usenotifications();
+  const { notifications, markSelectedAsRead, deletenotifications, unreadCount } = useNotifications();
   const t = useTranslation();
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);

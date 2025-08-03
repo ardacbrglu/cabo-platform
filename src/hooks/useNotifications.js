@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 
 // Bildirim hook'u
-export function usenotifications() {
+export function useNotifications() {
   const [notifications, setnotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 

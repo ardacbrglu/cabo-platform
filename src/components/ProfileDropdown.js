@@ -8,7 +8,7 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
-import { usenotifications } from '@/hooks/usenotifications';
+import { useNotifications} from '@/hooks/useNotifications';
 import NotificationBadge from './NotificationBadge';
 
 export default function ProfileDropdown({ alwaysVisible = false }) {
@@ -19,7 +19,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
   const dropdownRef = useRef();
   const t = useTranslation();
   const { ready } = useLocale();
-  const { unreadCount } = usenotifications();
+  const { unreadCount } = useNotifications();
 
   useEffect(() => {
     if (!open) return;

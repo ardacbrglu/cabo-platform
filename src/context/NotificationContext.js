@@ -1,9 +1,9 @@
 'use client';
 import { Bell } from 'lucide-react';
-import { usenotifications } from '@/hooks/usenotifications';
+import { useNotifications} from '@/hooks/useNotifications';
 
 export default function NotificationBell() {
-  const { unreadCount } = usenotifications();
+  const { unreadCount } = useNotifications();
   return (
     <div className="relative">
       <Bell size={24} className={unreadCount>0 ? 'text-[#81d742]' : 'text-white'} />
