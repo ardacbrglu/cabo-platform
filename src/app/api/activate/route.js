@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-
+export const dynamic = "force-dynamic";
 
 export const GET = async (req) => {
   const url = new URL(req.url);

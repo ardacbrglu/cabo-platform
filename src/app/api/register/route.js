@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';

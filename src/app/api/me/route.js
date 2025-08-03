@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { NextResponse } from 'next/server';

@@ -1,5 +1,6 @@
 // app/api/settings/change_password/route.js
 
+export const dynamic = "force-dynamic";
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';

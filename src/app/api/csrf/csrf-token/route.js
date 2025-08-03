@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 export async function GET() {
   const csrfToken = process.env.CSRF_SECRET || "CSRF_SECRET_DEFAULT";
 

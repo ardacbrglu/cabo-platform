@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 // app/api/logout/route.js
 import { csrf } from '@/lib/csrf';
 
