@@ -1,3 +1,0 @@
--- AlterTable
-ALTER TABLE `users` ADD COLUMN `bankName` VARCHAR(100) NULL,
-    ADD COLUMN `iban` VARCHAR(34) NULL;

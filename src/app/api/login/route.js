@@ -38,13 +38,13 @@ export const POST = csrf(async (req) => {
     if (user.role === 'merchant') {
       return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
-    const isValid = await bcrypt.compare(password, user.password_hash);
+    const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
     const token = jwt.sign({
-      user_id: user.user_id,
+      userId: user.userId,
       name: user.name,
       email: user.email,
       role: user.role

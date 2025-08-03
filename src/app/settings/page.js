@@ -25,7 +25,7 @@ export default function SettingsPage() {
     name: "",
     email: "",
     language_preference: "en",
-    currency_code: "EUR",
+    currencyCode: "EUR",
     current_password: "",
     new_password: "",
     new_password_repeat: ""
@@ -58,7 +58,7 @@ export default function SettingsPage() {
           name: data.name || "",
           email: data.email || "",
           language_preference: data.language_preference || "en",
-          currency_code: data.currency_code || "EUR",
+          currencyCode: data.currencyCode || "EUR",
         }));
         setLocale(data.language_preference || "en");
         setLoading(false);
@@ -99,7 +99,7 @@ export default function SettingsPage() {
       body: JSON.stringify({
         name: profile.name,
         language_preference: profile.language_preference,
-        currency_code: profile.currency_code,
+        currencyCode: profile.currencyCode,
       }),
     });
     const profileData = await profileRes.json();
@@ -193,8 +193,8 @@ export default function SettingsPage() {
             </select>
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currency")}</label>
             <select
-              name="currency_code"
-              value={profile.currency_code}
+              name="currencyCode"
+              value={profile.currencyCode}
               onChange={handleChange}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
             >

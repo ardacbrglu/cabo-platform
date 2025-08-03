@@ -18,10 +18,10 @@ export async function GET(req) {
     // 1. Kullanıcı doğrulama (JWT)
     const token = getTokenFromRequest(req);
     const payload = token ? verifyToken(token) : null;
-    if (!payload?.user_id) {
+    if (!payload?.userId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const userId = payload.user_id;
+    const userId = payload.userId;
 
     // 2. Platform config'ten min payout
     let minPayout = 100;
@@ -34,23 +34,23 @@ export async function GET(req) {
 
     // 3. Kullanıcı banka & iban & ad bilgisi
     const user = await prisma.user.findUnique({
-      where: { user_id: userId },
-      select: { name: true, email: true, iban: true, bankName: true, real_user_fullname: true }
+      where: { userId: userId },
+      select: { name: true, email: true, iban: true, bankName: true, realUserFullname: true }
     });
     const iban = user?.iban || "";
     const bankName = user?.bankName || "";
-    const realName = user?.real_user_fullname || "";
+    const realName = user?.realUserFullname || "";
     const ibanMissing = !iban || iban.length !== 26 || !iban.startsWith("TR");
     const bankMissing = !bankName || !bankName.trim();
     const realNameMissing = !realName || realName.trim().split(" ").length < 2;
 
-    // 4. Kullanıcının sahip olduğu product_id'ler
+    // 4. Kullanıcının sahip olduğu productId'ler
     const userLinks = await prisma.affiliateLink.findMany({
-      where: { user_id: userId },
-      select: { product_id: true, link_id: true }
+      where: { userId: userId },
+      select: { productId: true, linkId: true }
     });
-    const productIds = userLinks.map(l => l.product_id);
-    const linkIds = userLinks.map(l => l.link_id);
+    const productIds = userLinks.map(l => l.productId);
+    const linkIds = userLinks.map(l => l.linkId);
 
     // Eğer hiç ürünü yoksa boş veri dön
     if (!productIds.length) {
@@ -75,51 +75,51 @@ export async function GET(req) {
 
     // 5. Toplam tıklama
     const totalClicks = await prisma.click.count({
-      where: { link_id: { in: linkIds } }
+      where: { linkId: { in: linkIds } }
     });
 
     // 6. Toplam satış adedi
     const totalSalesData = await prisma.affiliateUserSale.aggregate({
       _sum: { quantity: true },
-      where: { product_id: { in: productIds }, user_id:userId }
+      where: { productId: { in: productIds }, userId:userId }
     });
     const totalSales = Number(totalSalesData._sum.quantity) || 0;
 
     // 7. Toplam confirmed kazanç
     const totalEarningsData = await prisma.affiliateUserSale.aggregate({
-      _sum: { commission_affiliate: true },
-      where: { product_id: { in: productIds }, user_id: userId, status: 'confirmed' }
+      _sum: { commissionAffiliate: true },
+      where: { productId: { in: productIds }, userId: userId, status: 'confirmed' }
     });
-    const totalEarnings = Number(totalEarningsData._sum.commission_affiliate) || 0;
+    const totalEarnings = Number(totalEarningsData._sum.commissionAffiliate) || 0;
     const balance = totalEarnings;
 
     // 8. Son 5 satış (confirmed)
     const recentConversions = await prisma.affiliateUserSale.findMany({
-      where: { product_id: { in: productIds }, status: 'confirmed' },
+      where: { productId: { in: productIds }, status: 'confirmed' },
       orderBy: { converted_at: 'desc' },
       take: 5,
-      include: { merchant_products: { select: { name: true } } }
+      include: { merchantProducts: { select: { name: true } } }
     });
 
     // 9. Leaderboard: En çok kazanan ilk 3 affiliate
     const allAffiliates = await prisma.user.findMany({
       where: { role: 'affiliate' },
       select: {
-        user_id: true,
+        userId: true,
         name: true,
-        affiliate_links: { select: { product_id: true } }
+        affiliateLinks: { select: { productId: true } }
       }
     });
 
     // Her affiliate için toplam confirmed kazanç
     const leaderboardRaw = await Promise.all(allAffiliates.map(async u => {
-      const pids = u.affiliate_links.map(l => l.product_id);
+      const pids = u.affiliateLinks.map(l => l.productId);
       if (!pids.length) return { name: u.name, value: 0 };
       const sum = await prisma.affiliateUserSale.aggregate({
-        _sum: { commission_affiliate: true },
-        where: { product_id: { in: pids }, status: 'confirmed' }
+        _sum: { commissionAffiliate: true },
+        where: { productId: { in: pids }, status: 'confirmed' }
       });
-      return { name: u.name, value: Number(sum._sum.commission_affiliate || 0) };
+      return { name: u.name, value: Number(sum._sum.commissionAffiliate || 0) };
     }));
 
     const leaderboard = (leaderboardRaw || [])
@@ -129,13 +129,13 @@ export async function GET(req) {
     // 10. **CANLI** Son satış (son 24 saat)
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: {
-        user_id: userId,
+        userId: userId,
         status: "confirmed",
-        product_id: { in: productIds },
+        productId: { in: productIds },
         converted_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       },
       orderBy: { converted_at: "desc" },
-      include: { merchant_products: { select: { name: true } } }
+      include: { merchantProducts: { select: { name: true } } }
     });
 
     let lastConversionData = null;
@@ -143,8 +143,8 @@ export async function GET(req) {
       lastConversionData = {
         type: "conversion",
         time: lastConversion.converted_at,
-        productName: lastConversion.merchant_products?.name || "Unknown Product",
-        commission: Number(lastConversion.commission_affiliate || 0),
+        productName: lastConversion.merchantProducts?.name || "Unknown Product",
+        commission: Number(lastConversion.commissionAffiliate || 0),
         quantity: lastConversion.quantity || 1
       };
     }
@@ -152,7 +152,7 @@ export async function GET(req) {
     // 11. **CANLI** Son click (son 24 saat)
     const lastClick = await prisma.click.findFirst({
       where: {
-        link_id: { in: linkIds },
+        linkId: { in: linkIds },
         clicked_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       },
       orderBy: { clicked_at: "desc" },
@@ -186,8 +186,8 @@ export async function GET(req) {
       bankMissing,
       realNameMissing,
       recentActions: (recentConversions || []).map(conv => ({
-        amount: `+${Number(conv.commission_affiliate).toFixed(2)}₺`,
-        desc: `Sale: ${conv.merchant_products?.name || 'Product'} (${conv.quantity || 1} adet)`,
+        amount: `+${Number(conv.commissionAffiliate).toFixed(2)}₺`,
+        desc: `Sale: ${conv.merchantProducts?.name || 'Product'} (${conv.quantity || 1} adet)`,
         date: conv.converted_at.toISOString().slice(0, 10)
       })),
       leaderboard: (leaderboard || []).map(l => ({

@@ -5,7 +5,7 @@ export function requireRole(user, role) {
 }
 
 export function requireSelfOrAdmin(user, resourceUserId) {
-  if (!user || (user.user_id !== resourceUserId && user.role !== 'admin')) {
+  if (!user || (user.userId !== resourceUserId && user.role !== 'admin')) {
     throw new Error("Forbidden");
   }
 }

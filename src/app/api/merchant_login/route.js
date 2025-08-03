@@ -65,7 +65,7 @@ export const POST = csrf(async (req) => {
     }
 
     // 5. Şifre kontrol
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
@@ -83,7 +83,7 @@ export const POST = csrf(async (req) => {
 
     // 7. Başarılı login, JWT üret
     const payload = {
-      user_id: user.user_id,
+      userId: user.userId,
       name: user.name,
       email: user.email,
       role: user.role,

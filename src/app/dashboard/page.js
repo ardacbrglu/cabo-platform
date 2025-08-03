@@ -61,7 +61,7 @@ export default function Dashboard() {
     platformCommission: 5,
     username: "",
     email: "",
-    user_id: null,
+    userId: null,
     iban: "",
     bankName: "",
     ibanMissing: false,
@@ -73,7 +73,7 @@ export default function Dashboard() {
     lastClick: null
   });
   const [loading, setLoading] = useState(true);
-  const [payoutStatus, setPayoutStatus] = useState("");
+  const [payoutstatus, setPayoutstatus] = useState("");
   const { setUser } = useUser();
   const t = useTranslation();
 
@@ -105,7 +105,7 @@ export default function Dashboard() {
         ...u,
         name: data.username || "",
         email: data.email || "",
-        user_id: data.user_id || null,
+        userId: data.userId || null,
       }));
       setLoading(false);
     };
@@ -252,15 +252,15 @@ export default function Dashboard() {
                   <div className="mt-1 text-xs font-mono text-gray-400 text-center">
                     <span className="text-gray-300">{t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span></span>
                   </div>
-                  {/* Status */}
-                  {payoutStatus === "success" && (
+                  {/* status */}
+                  {payoutstatus === "success" && (
                     <div className="mt-2 text-green-400 text-xs text-center font-mono">
                       {t("requestCreated")}
                     </div>
                   )}
-                  {payoutStatus && payoutStatus !== "success" && (
+                  {payoutstatus && payoutstatus !== "success" && (
                     <div className="mt-2 text-red-400 text-xs text-center font-mono">
-                      {payoutStatus}
+                      {payoutstatus}
                     </div>
                   )}
                   <div className="mt-2 text-xs text-gray-400 text-center font-mono">

@@ -12,7 +12,7 @@ async function getUserIdFromToken() {
   if (!token) return null;
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return payload.user_id || null;
+    return payload.userId || null;
   } catch {
     return null;
   }
@@ -24,15 +24,15 @@ async function checkAndDeactivateProduct(product) {
     product &&
     typeof product.max_sales_limit === "number" &&
     typeof product.total_purchases === "number" &&
-    product.is_active &&
+    product.isActive &&
     product.max_sales_limit !== null &&
     product.total_purchases >= product.max_sales_limit
   ) {
     await prisma.merchantProduct.update({
-      where: { product_id: product.product_id },
-      data: { is_active: false }
+      where: { productId: product.productId },
+      data: { isActive: false }
     });
-    return { ...product, is_active: false };
+    return { ...product, isActive: false };
   }
   return product;
 }
@@ -44,24 +44,24 @@ export async function GET() {
   try {
     const links = await prisma.affiliateLink.findMany({
       where: {
-        user_id: userId,
-        is_visible: true,
-        expires_at: { gt: new Date() }
+        userId: userId,
+        isVisible: true,
+        expiresAt: { gt: new Date() }
       },
       include: {
         product: {
           select: {
-            product_id: true,
-            is_active: true,
+            productId: true,
+            isActive: true,
             name: true,
             description: true,
             image_url: true,
             price: true,
-            commission_rate: true,
-            total_clicks: true,
+            commissionRate: true,
+            totalClicks: true,
             total_purchases: true,
             max_sales_limit: true,
-            product_code: true,
+            productCode: true,
             activated_by_admin: true
           }
         }
@@ -82,7 +82,7 @@ export async function GET() {
           p &&
           typeof p.max_sales_limit === "number" &&
           typeof p.total_purchases === "number" &&
-          p.is_active &&
+          p.isActive &&
           p.max_sales_limit !== null &&
           p.total_purchases >= p.max_sales_limit
         ) {
@@ -102,15 +102,15 @@ export async function GET() {
       linksWithQuota.map(async link => {
         // Kullanıcıya özel toplam click sayısı
         const userClickCount = await prisma.click.count({
-          where: { link_id: link.link_id }
+          where: { linkId: link.linkId }
         });
 
         // 🔴🔴🔴 DÜZELTİLEN KISIM: Model adı affiliateUserSale olmalı!
         const salesAgg = await prisma.affiliateUserSale.aggregate({
-          _sum: { commission_affiliate: true, quantity: true },
+          _sum: { commissionAffiliate: true, quantity: true },
           where: {
-            affiliate_link_id: link.link_id,   // doğru alan adı!
-            user_id: userId
+            affiliate_linkId: link.linkId,   // doğru alan adı!
+            userId: userId
           }
         });
 
@@ -118,7 +118,7 @@ export async function GET() {
           ...link,
           user_click_count: userClickCount,
           user_sales_count: Number(salesAgg._sum.quantity) || 0,
-          user_earnings: Number(salesAgg._sum.commission_affiliate) || 0
+          user_earnings: Number(salesAgg._sum.commissionAffiliate) || 0
         };
       })
     );
@@ -130,7 +130,7 @@ export async function GET() {
   }
 }
 
-// === POST: Linki MyLinks'ten kaldır (is_visible = false)
+// === POST: Linki MyLinks'ten kaldır (isVisible = false)
 export async function POST(req) {
   const userId = await getUserIdFromToken();
   if (!userId) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -145,10 +145,10 @@ export async function POST(req) {
     const updated = await prisma.affiliateLink.updateMany({
       where: {
         token: linkToken,
-        user_id: userId,
-        is_visible: true
+        userId: userId,
+        isVisible: true
       },
-      data: { is_visible: false }
+      data: { isVisible: false }
     });
 
     if (updated.count === 0) {

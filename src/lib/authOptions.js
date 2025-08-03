@@ -25,12 +25,12 @@ export const authOptions = {
           where: { email: credentials.email },
         });
         if (!user) return null;
-        const isValid = await bcrypt.compare(credentials.password, user.password_hash);
+        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!isValid) return null;
         if (user.status !== "active") return null;
 
         return {
-          id: user.user_id,
+          id: user.userId,
           name: user.name,
           email: user.email,
           role: user.role,

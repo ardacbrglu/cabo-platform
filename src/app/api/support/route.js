@@ -33,13 +33,13 @@ export async function POST(req) {
     } catch {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const user_id = payload.user_id;
-    if (!user_id) {
+    const userId = payload.userId;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // 3) Rate-limit / spam kontrolü: dakikada max 5 mesaj
-    if (!checkRateLimit(`support:${user_id}`, 5, 60 * 1000)) {
+    if (!checkRateLimit(`support:${userId}`, 5, 60 * 1000)) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
@@ -49,7 +49,7 @@ export async function POST(req) {
 
     // 5) Kullanıcı bilgilerini çek
     const user = await prisma.user.findUnique({
-      where: { user_id },
+      where: { userId },
       select: { name: true, email: true }
     });
     if (!user) {
@@ -59,7 +59,7 @@ export async function POST(req) {
     // 6) Mesajı DB'ye kaydet
     await prisma.contactMessage.create({
       data: {
-        user_id,
+        userId,
         name: user.name,
         email: user.email,
         message: cleanMessage

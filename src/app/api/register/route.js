@@ -160,11 +160,11 @@ export const POST = csrf(async (req) => {
       data: {
         name: cleanName,
         email: cleanEmail,
-        password_hash: hashed,
+        passwordHash: hashed,
         role: 'affiliate',
         status: 'pending',
         termsAccepted: true,
-        activation_token: activationToken // user tablosunda bu alan olmalı!
+        activationToken: activationToken // user tablosunda bu alan olmalı!
       }
     });
 

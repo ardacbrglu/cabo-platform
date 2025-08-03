@@ -14,13 +14,13 @@ function handleImgError(e) {
 function getCurrencySymbol() { return "₺"; }
 function calcEarnings(product) {
   const price = Number(product.price) || 20;
-  const pct = Number(product.commission_rate) || 0;
+  const pct = Number(product.commissionRate) || 0;
   return (price * pct / 100).toFixed(2);
 }
 function getExpiresBadge(product, userLinks, t) {
-  const userLink = userLinks.find(l => l.product_id === product.product_id && l.is_visible);
-  if (!userLink || !userLink.expires_at) return null;
-  const expires = new Date(userLink.expires_at);
+  const userLink = userLinks.find(l => l.productId === product.productId && l.isVisible);
+  if (!userLink || !userLink.expiresAt) return null;
+  const expires = new Date(userLink.expiresAt);
   const now = new Date();
   const diffMs = expires - now;
   const daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
@@ -57,8 +57,8 @@ export default function ProductsPage() {
         setVisibleLinkIds(
           new Set(
             (data.userLinks || [])
-              .filter(l => l.is_visible)
-              .map(l => l.product_id)
+              .filter(l => l.isVisible)
+              .map(l => l.productId)
           )
         );
       } catch (err) {
@@ -75,7 +75,7 @@ export default function ProductsPage() {
     fetch('/api/me')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data && data.user_id) {
+        if (data && data.userId) {
           setUser(data);
           localStorage.setItem("cabo_user", JSON.stringify(data));
         }
@@ -85,56 +85,56 @@ export default function ProductsPage() {
 
   const userHasVisibleLink = pid => visibleLinkIds.has(pid);
 
-  const promoteProduct = async (product_id) => {
-    if (userHasVisibleLink(product_id)) return;
-    setCardLoading(prev => ({ ...prev, [product_id]: true })); // Sadece bu kart loading!
-    setCardMessages(prev => ({ ...prev, [product_id]: "" }));
+  const promoteProduct = async (productId) => {
+    if (userHasVisibleLink(productId)) return;
+    setCardLoading(prev => ({ ...prev, [productId]: true })); // Sadece bu kart loading!
+    setCardMessages(prev => ({ ...prev, [productId]: "" }));
     try {
       const res = await fetch('/api/products/promote', {
         method: "POST",
-        body: JSON.stringify({ product_id }),
+        body: JSON.stringify({ productId }),
         headers: { 'Content-Type': 'application/json' }
       });
 
       if (res.ok) {
         setCardMessages(prev => ({
           ...prev,
-          [product_id]: t("productSuccess")
+          [productId]: t("productSuccess")
         }));
         const data = await res.json();
         setUserLinks(prev => {
-          const exists = prev.find(l => l.product_id === product_id);
+          const exists = prev.find(l => l.productId === productId);
           if (exists) {
             return prev.map(l =>
-              l.product_id === product_id ? { ...l, is_visible: true, expires_at: data.expires_at } : l
+              l.productId === productId ? { ...l, isVisible: true, expiresAt: data.expiresAt } : l
             );
           }
-          return [...prev, { product_id, token: data.token, is_visible: true, expires_at: data.expires_at }];
+          return [...prev, { productId, token: data.token, isVisible: true, expiresAt: data.expiresAt }];
         });
         setVisibleLinkIds(prev => {
           const copy = new Set(prev);
-          copy.add(product_id);
+          copy.add(productId);
           return copy;
         });
       } else {
         const data = await res.json();
         setCardMessages(prev => ({
           ...prev,
-          [product_id]: data.error || t("productError")
+          [productId]: data.error || t("productError")
         }));
       }
     } catch (err) {
       setCardMessages(prev => ({
         ...prev,
-        [product_id]: t("productError")
+        [productId]: t("productError")
       }));
     }
-    setCardLoading(prev => ({ ...prev, [product_id]: false })); // Loading kapat
-    setTimeout(() => setCardMessages(prev => ({ ...prev, [product_id]: "" })), 1800); // Hızlıca kapat
+    setCardLoading(prev => ({ ...prev, [productId]: false })); // Loading kapat
+    setTimeout(() => setCardMessages(prev => ({ ...prev, [productId]: "" })), 1800); // Hızlıca kapat
   };
 
   function isProductInactiveOrQuotaFull(product) {
-    if (!product.is_active) return "inactive";
+    if (!product.isActive) return "inactive";
     if (product.max_sales_limit != null && product.total_purchases >= product.max_sales_limit) return "quota";
     return null;
   }
@@ -213,12 +213,12 @@ export default function ProductsPage() {
               <div key={i} className="animate-pulse rounded-xl bg-[#191c1a] border border-[#232623] h-[360px]" />
             ))
           ) : filteredProducts.map(product => {
-            const claimed = userHasVisibleLink(product.product_id);
+            const claimed = userHasVisibleLink(product.productId);
             const status = isProductInactiveOrQuotaFull(product);
 
             return (
               <div
-                key={product.product_id}
+                key={product.productId}
                 className={`
                   relative flex flex-col items-center p-6 pt-8 pb-8
                   rounded-xl border border-[#232623]/70 shadow min-h-[340px]
@@ -228,7 +228,7 @@ export default function ProductsPage() {
                 style={{ minWidth: 240, maxWidth: 320 }}
               >
                 {/* FEEDBACK - ürün özel mesajı */}
-                {cardMessages[product.product_id] && (
+                {cardMessages[product.productId] && (
                   <div
                     className="absolute left-1/2 -translate-x-1/2 top-3 z-20"
                     style={{
@@ -245,11 +245,11 @@ export default function ProductsPage() {
                       boxShadow: "0 8px 16px #0a190a30"
                     }}
                   >
-                    {cardMessages[product.product_id]}
+                    {cardMessages[product.productId]}
                   </div>
                 )}
 
-                {/* Status badges */}
+                {/* status badges */}
                 {status === "inactive" && (
                   <span className="absolute left-4 top-4 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
                     <Ban size={13} /> {t("productInactive")}
@@ -265,7 +265,7 @@ export default function ProductsPage() {
 
                 <span className="flex flex-row items-center gap-1 bg-[#23262a] text-gray-200 font-bold rounded-lg px-3 py-1 mb-3 text-xs uppercase border border-[#282c2f] shadow-sm">
                   <BadgePercent size={14} className="inline mr-1 text-gray-400" />
-                  {Number(product.commission_rate).toFixed(2)}% {t("productCommission")}
+                  {Number(product.commissionRate).toFixed(2)}% {t("productCommission")}
                 </span>
 
                 <div className="w-28 h-28 rounded-xl bg-[#22262a] mb-4 flex items-center justify-center shadow-inner border border-[#282c2f]/50 overflow-hidden">
@@ -295,7 +295,7 @@ export default function ProductsPage() {
                 </div>
 
                 <div className="flex items-center justify-center gap-6 mb-4 w-full text-sm text-gray-300">
-                  <span>{t("totalClicks")}: {product.total_clicks}</span>
+                  <span>{t("totalClicks")}: {product.totalClicks}</span>
                   <span>{t("totalSales")}: {product.total_purchases}</span>
                 </div>
 
@@ -323,10 +323,10 @@ export default function ProductsPage() {
                 ) : (
                   <button
                     className="w-full bg-[#23262a] text-[#d1ffd0] font-black font-mono py-2.5 rounded-2xl mt-3 mb-1 shadow-lg hover:bg-[#81d742] hover:text-[#181818] hover:scale-[1.01] transition text-base tracking-tight border border-[#282c2f]/50"
-                    onClick={() => promoteProduct(product.product_id)}
-                    disabled={!!cardLoading[product.product_id]} // Sadece o kart loading!
+                    onClick={() => promoteProduct(product.productId)}
+                    disabled={!!cardLoading[product.productId]} // Sadece o kart loading!
                   >
-                    {cardLoading[product.product_id]
+                    {cardLoading[product.productId]
                       ? <span className="animate-pulse">{t("loading")}</span>
                       : t("productGetLink")}
                   </button>

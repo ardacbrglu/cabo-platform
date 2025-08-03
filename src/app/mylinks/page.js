@@ -20,8 +20,8 @@ function getCurrencySymbol(currency = "TRY") {
 }
 
 function getExpiresBadge(link, t) {
-  if (!link.expires_at) return null;
-  const expires = new Date(link.expires_at);
+  if (!link.expiresAt) return null;
+  const expires = new Date(link.expiresAt);
   const now = new Date();
   const diffMs = expires - now;
   const daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
@@ -50,7 +50,7 @@ export default function MyLinksPage() {
               ...u,
               name: data.name,
               email: data.email,
-              user_id: data.user_id,
+              userId: data.userId,
               role: data.role,
             }));
           }
@@ -132,7 +132,7 @@ export default function MyLinksPage() {
               }
 
               // Ürün aktif değilse veya kotası dolmuşsa
-              if (link.product.is_active === false) {
+              if (link.product.isActive === false) {
                 return (
                   <div key={link.token} className={`bg-[#232016] border border-[#876d0f] rounded-xl shadow-md p-6 flex flex-col justify-between opacity-70 transition-all duration-300 ease-in-out ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}>
                     <div className="font-bold text-yellow-400 mb-2">{t("productInactiveOrQuota") || "This product is now inactive or sales quota reached."}</div>
@@ -150,7 +150,7 @@ export default function MyLinksPage() {
               // Aktif ürün kartı
               return (
                 <div
-                  key={link.link_id}
+                  key={link.linkId}
                   className={`bg-[#181818] border border-[#272727] rounded-xl shadow-md px-4 py-5 sm:p-6 flex flex-col justify-between transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
                   style={{ maxWidth: "420px", width: "100%", margin: "0 auto" }}
                 >
@@ -174,8 +174,8 @@ export default function MyLinksPage() {
                   <div className="text-sm font-mono text-gray-300 mb-1">
                     <span className="text-gray-500">{t("productEarn") || "Earnings per sale"}:</span>{" "}
                     <span className="text-[#81d742] font-bold">
-                      {getCurrencySymbol(user?.currency_code || "TRY")}{
-                        ((link.product.price || 20) * (link.product.commission_rate || 0) / 100).toFixed(2)
+                      {getCurrencySymbol(user?.currencyCode || "TRY")}{
+                        ((link.product.price || 20) * (link.product.commissionRate || 0) / 100).toFixed(2)
                       }
                     </span>
                   </div>
@@ -186,7 +186,7 @@ export default function MyLinksPage() {
                   </div>
 
                   <div className="text-xs font-mono  text-gray-500 mb-2">
-                    {t("productYourTotalEarnings") || "Your earnings:"} <b> {getCurrencySymbol(user?.currency_code || "TRY")}{link.user_earnings.toFixed(2)}</b>
+                    {t("productYourTotalEarnings") || "Your earnings:"} <b> {getCurrencySymbol(user?.currencyCode || "TRY")}{link.user_earnings.toFixed(2)}</b>
                   </div>
 
                   {/* Kalan komisyon hakkı */}

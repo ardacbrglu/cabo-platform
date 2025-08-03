@@ -18,7 +18,7 @@ if (!CALLBACK_SECRET) {
   throw new Error('Missing required env var PURCHASE_CALLBACK_SECRET')
 }
 
-const ALLOWED_STATUSES = ['pending', 'confirmed', 'canceled']
+const ALLOWED_statusES = ['pending', 'confirmed', 'canceled']
 
 // Hex string → ArrayBuffer çevirir
 function hexToBuffer(hex) {
@@ -73,98 +73,100 @@ export async function POST(req) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { token, order_id, status } = body
+  const { token, orderId, status } = body
 
   // 5) Çoklu ürün desteği: ya body.products array’i, ya eski single-item format
   const items = Array.isArray(body.products)
     ? body.products
-    : [{ product_code: body.product_code, quantity: body.quantity, amount: body.amount }]
+    : [{ productCode: body.productCode, quantity: body.quantity, amount: body.amount }]
 
   // 6) Temel payload validasyonu
-  if (!token || !order_id || !status || !ALLOWED_STATUSES.includes(status)) {
+  if (!token || !orderId || !status || !ALLOWED_statusES.includes(status)) {
     return NextResponse.json({ error: 'Missing or invalid data' }, { status: 400 })
   }
 
   // 7) Sadece confirmed statüdeki siparişleri işleyelim
   if (status !== 'confirmed') {
-    console.info(`[purchase_callback] ignoring order ${order_id}, status=${status}`)
+    console.info(`[purchase_callback] ignoring order ${orderId}, status=${status}`)
     return NextResponse.json({
       ok: true,
-      message: `Order ${order_id} ignored (status=${status})`
+      message: `Order ${orderId} ignored (status=${status})`
     })
   }
 
-  // 8) Affiliate link + merchant_id bul
+  // 8) Affiliate link + merchantId bul
   const link = await prisma.affiliateLink.findFirst({
-    where: { token, is_visible: true },
-    include: { product: { select: { merchant_id: true } } }
+    where: { token, isVisible: true },
+    include: { product: { select: { merchantId: true } } }
   })
   if (!link) {
     return NextResponse.json({ error: 'Invalid or inactive token' }, { status: 404 })
   }
-  const merchantId = link.product.merchant_id
+  const merchantId = link.product.merchantId
 
   const results = []
 
   // 9) Her bir ürünü tek tek işle
   for (const item of items) {
-    const { product_code, quantity: qtyRaw, amount: amtRaw } = item
+    const { productCode, quantity: qtyRaw, amount: amtRaw } = item
     const quantity = Number(qtyRaw) || 1
     const amount   = parseFloat(amtRaw)
 
-    if (!product_code || isNaN(amount)) {
-      results.push({ product_code, error: 'Invalid item data' })
+    if (!productCode || isNaN(amount)) {
+      results.push({ productCode, error: 'Invalid item data' })
       continue
     }
 
-    // 10) Ürünü product_code ile bul
+    // 10) Ürünü productCode ile bul
     const product = await prisma.merchantProduct.findUnique({
-      where: { product_code }
+      where: { productCode }
     })
-    if (!product || product.merchant_id !== merchantId) {
-      results.push({ product_code, error: 'Product not found or merchant mismatch' })
+    if (!product || product.merchantId !== merchantId) {
+      results.push({ productCode, error: 'Product not found or merchant mismatch' })
       continue
     }
 
     // 11) Aktiflik & satış limiti kontrolü
-    if (!product.is_active || product.total_purchases + quantity > (product.max_sales_limit ?? Infinity)) {
+    if (!product.isActive || product.total_purchases + quantity > (product.max_sales_limit ?? Infinity)) {
       await prisma.merchantProduct.update({
-        where: { product_id: product.product_id },
-        data: { is_active: false }
+        where: { productId: product.productId },
+        data: { isActive: false }
       })
-      results.push({ product_code, error: 'Product inactive or limit reached' })
+      results.push({ productCode, error: 'Product inactive or limit reached' })
       continue
     }
 
-    // 12) Duplicate sipariş engelle (order_id+product_id)
+    // 12) Duplicate sipariş engelle (orderId+productId)
     const existing = await prisma.affiliate_user_sales.findUnique({
       where: {
-        order_id_product_id: {
-          order_id,
-          product_id: product.product_id
+        orderId_productId: {
+          orderId,
+          productId: product.productId
         }
       }
     })
     if (existing) {
-      results.push({ product_code, error: 'Duplicate order' })
+      results.push({ productCode, error: 'Duplicate order' })
       continue
     }
 
     // 13) Komisyon hesapla
-    const commissionAffiliate = Number((amount * (product.commission_rate ?? 0)        / 100).toFixed(4))
-    const commissionPlatform  = Number((amount * (product.platform_commission_rate ?? 0) / 100).toFixed(4))
+    const commissionAffiliate = Number((amount * (product.commissionRate ?? 0)        / 100).toFixed(4))
+    const commissionPlatform  = Number((amount * (product.platform_commissionRate ?? 0) / 100).toFixed(4))
 
     // 14) Satışı kaydet
     await prisma.affiliate_user_sales.create({
       data: {
-        order_id,
-        user_id:             link.user_id,
-        merchant_id:         merchantId,
-        product_id:          product.product_id,
+        orderId,
+        userId:             link.userId,
+        merchantId:         merchantId,
+        productId:          product.productId,
         amount,
         quantity,
-        commission_affiliate: commissionAffiliate,
-        commission_platform:  commissionPlatform,
+        commissionAffiliate: commissionAffiliate,
+        commissionPlatform
+
+:  commissionPlatform,
         status:               'confirmed',
         converted_at:         new Date()
       }
@@ -172,11 +174,11 @@ export async function POST(req) {
 
     // 15) Ürün bazında toplam satış sayısını güncelle
     await prisma.merchantProduct.update({
-      where: { product_id: product.product_id },
+      where: { productId: product.productId },
       data: { total_purchases: product.total_purchases + quantity }
     })
 
-    results.push({ product_code, success: true, commissionAffiliate, commissionPlatform })
+    results.push({ productCode, success: true, commissionAffiliate, commissionPlatform })
   }
 
   // 16) Sonucu dön

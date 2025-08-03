@@ -14,24 +14,25 @@ export async function POST(req) {
     if (!user || user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!await checkRateLimit(req, user.user_id, 10, 60_000, 'merchant-mark-paid')) {
+    if (!await checkRateLimit(req, user.userId, 10, 60_000, 'merchant-mark-paid')) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
     // 3. Body parse ve kontrol
     const body = await req.json();
-    const itemIds = body.item_ids;
+    const itemIds = body.itemIds;
     if (!Array.isArray(itemIds) || itemIds.length === 0) {
       return NextResponse.json({ error: "No items selected" }, { status: 400 });
     }
 
     // 4. Pending & ilgili merchant’a ait olanları bul
-    const items = await prisma.payout_request_items.findMany({
+    const items = await prisma.payoutRequestItems.findMany({
       where: {
-        item_id: { in: itemIds },
-        merchant_id: user.user_id,
+        itemId: { in: itemIds },
+        merchantId: user.userId,
         status: "pending",
-        payout_requests: { status: "pending" }
+        payoutRequests
+: { status: "pending" }
       }
     });
     if (!items.length) {
@@ -39,9 +40,9 @@ export async function POST(req) {
     }
 
     // 5. Toplu olarak update et
-    await prisma.payout_request_items.updateMany({
+    await prisma.payoutRequestItems.updateMany({
       where: {
-        item_id: { in: items.map(i => i.item_id) }
+        itemId: { in: items.map(i => i.itemId) }
       },
       data: {
         status: "merchant_paid",
@@ -53,9 +54,9 @@ export async function POST(req) {
     for (const item of items) {
       await prisma.payout_request_logs.create({
         data: {
-          item_id: item.item_id,
-          request_id: item.request_id,
-          user_id: user.user_id,
+          itemId: item.itemId,
+          requestId: item.requestId,
+          userId: user.userId,
           action: "merchant_paid",
           old_status: "pending",
           new_status: "merchant_paid",
@@ -64,7 +65,7 @@ export async function POST(req) {
       });
     }
 
-    return NextResponse.json({ success: true, updated: items.map(i => i.item_id) });
+    return NextResponse.json({ success: true, updated: items.map(i => i.itemId) });
   } catch (err) {
     console.error("Merchant Make Payment Error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

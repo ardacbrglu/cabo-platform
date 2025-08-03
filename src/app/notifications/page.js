@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import Layout from '@/components/Layout';
-import { useNotifications } from '@/hooks/useNotifications';
+import { usenotifications } from '@/hooks/usenotifications';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Bell, CheckCircle, Trash2 } from "lucide-react";
 
-const NOTIFICATIONS_PER_PAGE = 8;
+const notifications_PER_PAGE = 8;
 
 // Bildirim tipine göre küçük renkli nokta
 function NotificationTypeDot({ type }) {
@@ -30,16 +30,16 @@ function NotificationTypeDot({ type }) {
   );
 }
 
-export default function NotificationsPage() {
-  const { notifications, markSelectedAsRead, deleteNotifications, unreadCount } = useNotifications();
+export default function notificationsPage() {
+  const { notifications, markSelectedAsRead, deletenotifications, unreadCount } = usenotifications();
   const t = useTranslation();
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
 
   // Pagination
-  const totalPages = Math.max(1, Math.ceil((notifications?.length || 0) / NOTIFICATIONS_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil((notifications?.length || 0) / notifications_PER_PAGE));
   const pageNotifs = Array.isArray(notifications)
-    ? notifications.slice((page - 1) * NOTIFICATIONS_PER_PAGE, page * NOTIFICATIONS_PER_PAGE)
+    ? notifications.slice((page - 1) * notifications_PER_PAGE, page * notifications_PER_PAGE)
     : [];
 
   // Seçili toggle
@@ -62,7 +62,7 @@ export default function NotificationsPage() {
   // Seçiliyi sil
   const handleDeleteSelected = async () => {
     if (!selected.length) return;
-    await deleteNotifications(selected);
+    await deletenotifications(selected);
     setSelected([]);
   };
 
@@ -118,7 +118,7 @@ export default function NotificationsPage() {
           {/* Bildirimler */}
           <div className="flex flex-col gap-2 pb-1 min-h-[378px]">
             {pageNotifs.length === 0 && (
-              <div className="text-gray-400 font-mono text-sm py-10 text-center flex-1">{t("noNotifications")}</div>
+              <div className="text-gray-400 font-mono text-sm py-10 text-center flex-1">{t("nonotifications")}</div>
             )}
             {pageNotifs.map(n => (
               <div
@@ -149,7 +149,7 @@ export default function NotificationsPage() {
                   <span className="font-mono text-base font-bold text-white truncate" title={n.message}>
                     {n.message}
                   </span>
-                  <span className="font-mono text-xs text-gray-400">{new Date(n.created_at).toLocaleString()}</span>
+                  <span className="font-mono text-xs text-gray-400">{new Date(n.createdAt).toLocaleString()}</span>
                 </div>
 
                 {/* Okundu */}
@@ -158,7 +158,7 @@ export default function NotificationsPage() {
                 {/* Sil */}
                 <button
                   className="ml-2 p-1.5 rounded hover:bg-[#ff555520] transition"
-                  onClick={() => deleteNotifications([n.id])}
+                  onClick={() => deletenotifications([n.id])}
                   aria-label={t("delete")}
                 >
                   <Trash2 size={19} className="text-[#ff5555]" />

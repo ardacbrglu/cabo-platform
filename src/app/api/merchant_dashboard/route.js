@@ -58,33 +58,33 @@ export const GET = async (req) => {
     } catch { minCommission = 5; }
 
     const products = await prisma.merchantProduct.findMany({
-      where: { merchant_id: token.user_id },
-      orderBy: { created_at: 'desc' },
+      where: { merchantId: token.userId },
+      orderBy: { createdAt: 'desc' },
       select: {
-        product_id: true,
+        productId: true,
         name: true,
         description: true,
         image_url: true,
         merchant_url: true,
-        commission_rate: true,
-        is_active: true,
-        total_clicks: true,
+        commissionRate: true,
+        isActive: true,
+        totalClicks: true,
         total_purchases: true,
         max_sales_limit: true,
-        created_at: true,
+        createdAt: true,
         price: true,
         activated_by_admin: true,
-        product_code: true,
-        affiliate_links: {
-          select: { link_id: true },
-          where: { is_visible: true }
+        productCode: true,
+        affiliateLinks: {
+          select: { linkId: true },
+          where: { isVisible: true }
         }
       }
     });
 
     const formatted = products.map(p => ({
       ...p,
-      link_count: p.affiliate_links.length,
+      link_count: p.affiliateLinks.length,
       remaining_quota: Math.max(0, p.max_sales_limit - p.total_purchases)
     }));
 
@@ -127,7 +127,7 @@ export const POST = csrf(async (req) => {
       description,
       image_url,
       price,
-      commission_rate,
+      commissionRate,
       merchant_url,
       max_sales_limit
     } = body;
@@ -138,7 +138,7 @@ export const POST = csrf(async (req) => {
       !image_url ||
       !merchant_url ||
       !price ||
-      !commission_rate ||
+      !commissionRate ||
       !max_sales_limit
     ) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -156,7 +156,7 @@ export const POST = csrf(async (req) => {
     }
     // Fiyat, komisyon, limit kontrol
     const priceValue = parseFloat(price);
-    const commissionValue = parseFloat(commission_rate);
+    const commissionValue = parseFloat(commissionRate);
     const limitValue = parseInt(max_sales_limit);
 
     if (
@@ -179,23 +179,23 @@ export const POST = csrf(async (req) => {
     }
 
     // Product code benzersiz üret
-    const product_code = crypto.randomBytes(16).toString('hex');
+    const productCode = crypto.randomBytes(16).toString('hex');
 
     const newProduct = await prisma.merchantProduct.create({
       data: {
-        merchant_id: token.user_id,
+        merchantId: token.userId,
         name: safeName,
         description: safeDesc,
         image_url: safeImg,
         price: priceValue,
-        commission_rate: commissionValue,
+        commissionRate: commissionValue,
         merchant_url: safeUrl,
         max_sales_limit: limitValue,
-        product_code
+        productCode
       }
     });
 
-    return NextResponse.json({ success: true, product_id: newProduct.product_id });
+    return NextResponse.json({ success: true, productId: newProduct.productId });
   } catch (err) {
     console.error('Product Create Error:', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
@@ -225,10 +225,10 @@ export const PATCH = csrf(async (req) => {
     }
 
     const body = await req.json();
-    const { product_id, commission_rate, max_sales_limit, action } = body;
+    const { productId, commissionRate, max_sales_limit, action } = body;
 
-    if (!product_id) {
-      return NextResponse.json({ error: 'Missing product_id' }, { status: 400 });
+    if (!productId) {
+      return NextResponse.json({ error: 'Missing productId' }, { status: 400 });
     }
 
     // min_commission çek
@@ -240,13 +240,13 @@ export const PATCH = csrf(async (req) => {
 
     const dataToUpdate = {};
     let editTriggered = false;
-    if (commission_rate !== undefined) {
-      const crNum = Number(commission_rate);
-      if (Number.isNaN(crNum)) return NextResponse.json({ error: 'commission_rate must be a number' }, { status: 400 });
+    if (commissionRate !== undefined) {
+      const crNum = Number(commissionRate);
+      if (Number.isNaN(crNum)) return NextResponse.json({ error: 'commissionRate must be a number' }, { status: 400 });
       if (crNum < minCommission) {
         return NextResponse.json({ error: `Commission rate must be at least ${minCommission}%` }, { status: 400 });
       }
-      dataToUpdate.commission_rate = crNum;
+      dataToUpdate.commissionRate = crNum;
       editTriggered = true;
     }
 
@@ -262,28 +262,28 @@ export const PATCH = csrf(async (req) => {
     // Her edit sonrası admin onayını kaldır, ürünü pasife çek
     if (editTriggered) {
       dataToUpdate.activated_by_admin = false;
-      dataToUpdate.is_active = false;
+      dataToUpdate.isActive = false;
     }
 
     if (action === 'deactivate') {
-      dataToUpdate.is_active = false;
+      dataToUpdate.isActive = false;
     } else if (action === 'activate') {
-      dataToUpdate.is_active = true;
+      dataToUpdate.isActive = true;
     }
 
     // Ownership check
     const product = await prisma.merchantProduct.findUnique({
-      where: { product_id: Number(product_id) }
+      where: { productId: Number(productId) }
     });
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
-    if (product.merchant_id !== token.user_id) {
+    if (product.merchantId !== token.userId) {
       return NextResponse.json({ error: 'Unauthorized to update this product' }, { status: 403 });
     }
 
     const updated = await prisma.merchantProduct.update({
-      where: { product_id: Number(product_id) },
+      where: { productId: Number(productId) },
       data: dataToUpdate,
     });
 

@@ -16,7 +16,7 @@ if (!JWT_SECRET) throw new Error("Missing JWT_SECRET");
 const updateSchema = z.object({
   name:              z.string().min(2, "Name too short").max(100),
   language_preference: z.enum(['en','tr']),
-  currency_code:       z.enum(['EUR','TRY','USD'])
+  currencyCode:       z.enum(['EUR','TRY','USD'])
 });
 
 export async function POST(req) {
@@ -31,11 +31,11 @@ export async function POST(req) {
     let payload;
     try { payload = jwt.verify(token, JWT_SECRET); }
     catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
-    const user_id = payload.user_id;
-    if (!user_id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = payload.userId;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // 4) Rate-limit: max 5 güncelleme / dakika
-    if (!checkRateLimit(`settings:update:${user_id}`, 5, 60_000)) {
+    if (!checkRateLimit(`settings:update:${userId}`, 5, 60_000)) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
@@ -45,11 +45,11 @@ export async function POST(req) {
 
     // 6) DB güncellemesi
     await prisma.user.update({
-      where: { user_id },
+      where: { userId },
       data: {
         name: nameClean,
         language_preference: parsed.language_preference,
-        currency_code: parsed.currency_code
+        currencyCode: parsed.currencyCode
       }
     });
 

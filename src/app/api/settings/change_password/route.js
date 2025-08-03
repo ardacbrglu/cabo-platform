@@ -30,11 +30,11 @@ export async function POST(req) {
     let payload;
     try { payload = jwt.verify(token, JWT_SECRET); }
     catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
-    const user_id = payload.user_id;
-    if (!user_id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = payload.userId;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // 3) Rate-limit: max 3 şifre denemesi / 15 dk
-    if (!checkRateLimit(`settings:pwd:${user_id}`, 3, 15 * 60_000)) {
+    if (!checkRateLimit(`settings:pwd:${userId}`, 3, 15 * 60_000)) {
       return NextResponse.json({ error: "Too many attempts" }, { status: 429 });
     }
 
@@ -43,13 +43,13 @@ export async function POST(req) {
 
     // 5) Mevcut hash’i çek, doğrula
     const user = await prisma.user.findUnique({
-      where: { user_id },
-      select: { password_hash: true }
+      where: { userId },
+      select: { passwordHash: true }
     });
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const ok = await bcrypt.compare(current_password, user.password_hash);
+    const ok = await bcrypt.compare(current_password, user.passwordHash);
     if (!ok) {
       return NextResponse.json({ error: "Current password is incorrect" }, { status: 403 });
     }
@@ -57,8 +57,8 @@ export async function POST(req) {
     // 6) Yeni hash’i kaydet
     const newHash = await bcrypt.hash(new_password, 12);
     await prisma.user.update({
-      where: { user_id },
-      data: { password_hash: newHash }
+      where: { userId },
+      data: { passwordHash: newHash }
     });
 
     return NextResponse.json({ success: true });

@@ -36,7 +36,7 @@ function WalletProgress({ value, max }) {
 function exportToCSV(sales, date, t) {
   const header = `${t("orderId")},${t("product")},${t("amount")},${t("commission")},${t("quantity")},${t("date")}\n`;
   const rows = sales.map(s =>
-    [s.order_id, s.product, s.amount, s.commission, s.quantity, s.converted_at].join(',')
+    [s.orderId, s.product, s.amount, s.commission, s.quantity, s.converted_at].join(',')
   ).join('\n');
   const csv = header + rows;
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -66,8 +66,8 @@ export default function WalletPage() {
   const [history, setHistory] = useState([]);
   const [payoutState, setPayoutState] = useState({ status: '', message: '' });
   const [detailsModal, setDetailsModal] = useState({
-    open: false, sales: [], total: 0, status: '', date: '', paid_at: null, rejected_reason: '', updated_at: null,
-    bankName: '', iban: '', realName: '', platform_paid: false, platform_paid_at: null, page: 1, totalPages: 1, request_id: null,
+    open: false, sales: [], total: 0, status: '', date: '', paid_at: null, rejectedReason: '', updatedAt: null,
+    bankName: '', iban: '', realName: '', platform_paid: false, platformPaidAt: null, page: 1, totalPages: 1, requestId: null,
   });
   const [ibanMissing, setIbanMissing] = useState(true);
   const [bankMissing, setBankMissing] = useState(true);
@@ -95,7 +95,7 @@ export default function WalletPage() {
               ...u,
               name: data.name,
               email: data.email,
-              user_id: data.user_id,
+              userId: data.userId,
               role: data.role,
             }));
           }
@@ -194,7 +194,7 @@ export default function WalletPage() {
   }
 
 
-  async function handleCancelRequest(request_id) {
+  async function handleCancelRequest(requestId) {
     if (isSubmitting) return;
     if (!window.confirm(t("cancelPayoutConfirm"))) return;
     setIsSubmitting(true);
@@ -205,7 +205,7 @@ export default function WalletPage() {
         "Content-Type": "application/json",
         "x-csrf-token": csrfToken
       },
-      body: JSON.stringify({ cancelRequest: true, request_id })
+      body: JSON.stringify({ cancelRequest: true, requestId })
     });
     setIsSubmitting(false);
     const data = await res.json();
@@ -219,7 +219,7 @@ export default function WalletPage() {
   }
 
 
-  const fetchDetails = async (request_id, pageNum = 1) => {
+  const fetchDetails = async (requestId, pageNum = 1) => {
     // 1) CSRF token hazır değilse fetch’e hiç kalkışmayalım
     if (!csrfToken) {
       console.warn("CSRF token henüz alınmadı, detayları çekilmiyor.");
@@ -233,7 +233,7 @@ export default function WalletPage() {
           'Content-Type': 'application/json',
           'x-csrf-token': csrfToken
         },
-        body: JSON.stringify({ request_id, page: pageNum, pageSize: 10 })
+        body: JSON.stringify({ requestId, page: pageNum, pageSize: 10 })
       });
 
       // 2) HTTP kodunu kontrol edelim
@@ -253,7 +253,7 @@ export default function WalletPage() {
         open: true,
         page: pageNum,
         totalPages: data.totalPages || 1,
-        request_id
+        requestId
       }));
     } catch (networkErr) {
       console.error("Network veya parse hatası:", networkErr);
@@ -261,14 +261,14 @@ export default function WalletPage() {
     }
   };
 
-  function openDetails(request_id) {
+  function openDetails(requestId) {
     // Burada da yine token kontrolü koyabilirsiniz
     if (!csrfToken) return;
-    fetchDetails(request_id, 1);
+    fetchDetails(requestId, 1);
   }
 
   function closeDetails() {
-    setDetailsModal({ open: false, sales: [], total: 0, status: '', date: '', paid_at: null, rejected_reason: '', updated_at: null });
+    setDetailsModal({ open: false, sales: [], total: 0, status: '', date: '', paid_at: null, rejectedReason: '', updatedAt: null });
   }
 
   // Pagination
@@ -491,18 +491,18 @@ export default function WalletPage() {
                             ({new Date(item.paid_at).toLocaleDateString()})
                           </span>
                         )}
-                        {item.status === "rejected" && item.rejected_reason && (
+                        {item.status === "rejected" && item.rejectedReason && (
                           <span className="ml-1 text-red-400 font-mono text-xs">
-                            ({item.rejected_reason})
+                            ({item.rejectedReason})
                           </span>
                         )}
                       </td>
                       <td className="py-2 px-3">{item.method}</td>
                       <td className="py-2 px-3">{item.bankName || '-'}</td>
                       <td className="py-2 px-3 flex items-center gap-1">
-                        {(item.status === "pending" && item.request_id) && (
+                        {(item.status === "pending" && item.requestId) && (
                           <button
-                            onClick={() => handleCancelRequest(item.request_id)}
+                            onClick={() => handleCancelRequest(item.requestId)}
                             disabled={isSubmitting}
                             className="text-red-500 hover:bg-red-900/30 rounded p-1 transition flex items-center gap-1 text-xs font-mono"
                           >
@@ -510,7 +510,7 @@ export default function WalletPage() {
                           </button>
                         )}
                         <button
-                          onClick={() => openDetails(item.request_id)}
+                          onClick={() => openDetails(item.requestId)}
                           className="text-blue-400 hover:underline ml-1 text-xs font-mono"
                         >{t("details")}</button>
                       </td>
@@ -557,8 +557,8 @@ export default function WalletPage() {
                 {t("status")}: <span className="font-bold">{t(detailsModal.status)}</span> <br />
                 {t("total")}: <span style={{color: COLOR_GREEN}}>₺{detailsModal.total.toFixed(2)}</span>
                 {detailsModal.paid_at && <span> &middot; <span className="text-green-400">{t("paidAt")}: {new Date(detailsModal.paid_at).toLocaleDateString()}</span></span>}
-                {detailsModal.rejected_reason && <span> &middot; <span className="text-red-400">{t("reason")}: {detailsModal.rejected_reason}</span></span>}
-                {detailsModal.updated_at && <span> &middot; <span className="text-gray-300">{t("updatedAt")}: {new Date(detailsModal.updated_at).toLocaleDateString()}</span></span>}
+                {detailsModal.rejectedReason && <span> &middot; <span className="text-red-400">{t("reason")}: {detailsModal.rejectedReason}</span></span>}
+                {detailsModal.updatedAt && <span> &middot; <span className="text-gray-300">{t("updatedAt")}: {new Date(detailsModal.updatedAt).toLocaleDateString()}</span></span>}
                 <br />
                 {t("bankName")}: <span className="text-[#81d742]">{detailsModal.bankName || '-'}</span> &nbsp;
                 {t("iban")}: <span className="text-[#81d742]">{detailsModal.iban || '-'}</span> &nbsp;
@@ -568,8 +568,8 @@ export default function WalletPage() {
                   ? <span className="text-green-400">✔</span>
                   : <span className="text-yellow-400">—</span>
                 }
-                {detailsModal.platform_paid_at &&
-                  <span> {t("at")} {new Date(detailsModal.platform_paid_at).toLocaleDateString()}</span>
+                {detailsModal.platformPaidAt &&
+                  <span> {t("at")} {new Date(detailsModal.platformPaidAt).toLocaleDateString()}</span>
                 }
               </div>
               <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
@@ -586,8 +586,8 @@ export default function WalletPage() {
                   </thead>
                   <tbody>
                     {detailsModal.sales.map(sale => (
-                      <tr key={sale.sale_id} className="border-b border-[#232323]">
-                        <td>{sale.order_id}</td>
+                      <tr key={sale.saleId} className="border-b border-[#232323]">
+                        <td>{sale.orderId}</td>
                         <td>{sale.product}</td>
                         <td>₺{sale.amount}</td>
                         <td style={{ color: COLOR_GREEN }}>₺{sale.commission}</td>
@@ -601,13 +601,13 @@ export default function WalletPage() {
               {/* Pagination Controls */}
               <div className="flex justify-between items-center mt-2">
                 <button
-                  onClick={() => fetchDetails(detailsModal.request_id, detailsModal.page - 1)}
+                  onClick={() => fetchDetails(detailsModal.requestId, detailsModal.page - 1)}
                   disabled={detailsModal.page <= 1}
                   className="px-2 py-1 bg-[#232323] rounded disabled:opacity-40"
                 >&lt; {t("prev")}</button>
                 <span className="text-[#81d742] text-xs font-mono">{t("page")} {detailsModal.page} / {detailsModal.totalPages}</span>
                 <button
-                  onClick={() => fetchDetails(detailsModal.request_id, detailsModal.page + 1)}
+                  onClick={() => fetchDetails(detailsModal.requestId, detailsModal.page + 1)}
                   disabled={detailsModal.page >= detailsModal.totalPages}
                   className="px-2 py-1 bg-[#232323] rounded disabled:opacity-40"
                 >{t("next")} &gt;</button>

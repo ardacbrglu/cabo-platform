@@ -21,14 +21,14 @@ const ROWS_PER_PAGE = 8;
 function formatAmount(eur) {
   return (Number(eur).toLocaleString("en-US", { minimumFractionDigits: 2 })) + " €";
 }
-function getStatusStyle(status) {
+function getstatusStyle(status) {
   if (status === "pending") return "bg-yellow-900/60 text-[#ffe7a1]";
   if (status === "merchant_paid") return "bg-green-900/60 text-[#b2ffa6]";
   if (status === "platform_confirmed") return "bg-cyan-900/60 text-[#a6fffb]";
   if (status === "rejected") return "bg-red-900/60 text-[#f3aaaa]";
   return "bg-gray-800 text-gray-200";
 }
-function getSaleStatusStyle(status) {
+function getSalestatusStyle(status) {
   if (status === "confirmed") return "bg-green-900/60 text-[#81d742]";
   if (status === "pending") return "bg-yellow-900/60 text-yellow-300";
   if (status === "rejected") return "bg-red-900/60 text-red-400";
@@ -79,7 +79,7 @@ export default function MerchantPaymentsPage() {
       setSelected(
         items
           .filter(item => item.status === "pending")
-          .map(item => item.item_ids)
+          .map(item => item.itemIds)
           .flat()
       );
     } else {
@@ -112,7 +112,7 @@ export default function MerchantPaymentsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ item_ids: selected }),
+        body: JSON.stringify({ itemIds: selected }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Payment failed");
@@ -136,7 +136,7 @@ export default function MerchantPaymentsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ item_ids: item.item_ids }),
+        body: JSON.stringify({ itemIds: item.itemIds }),
       });
       const data = await res.json();
       if (data.details && Array.isArray(data.details)) {
@@ -168,7 +168,7 @@ export default function MerchantPaymentsPage() {
 
   // Export to CSV
   function handleExport() {
-    let csv = [["Affiliate", "Amount", "Requested At", "Status"].join(",")];
+    let csv = [["Affiliate", "Amount", "Requested At", "status"].join(",")];
     for (const item of items) {
       csv.push([
         `"${item.affiliate_name}"`,
@@ -229,7 +229,7 @@ export default function MerchantPaymentsPage() {
               <th className="p-3">Affiliate</th>
               <th className="p-3 text-right">Amount</th>
               <th className="p-3">Requested At</th>
-              <th className="p-3">Status</th>
+              <th className="p-3">status</th>
               <th className="p-3"></th>
             </tr>
           </thead>
@@ -243,7 +243,7 @@ export default function MerchantPaymentsPage() {
             )}
             {items.map((item, idx) => (
               <tr
-                key={item.request_id + "-" + item.affiliate_id}
+                key={item.requestId + "-" + item.affiliate_id}
                 className="border-b border-[#222] hover:bg-[#1e261f] transition"
                 style={{ height: "56px" }}
               >
@@ -251,9 +251,9 @@ export default function MerchantPaymentsPage() {
                   <input
                     type="checkbox"
                     className="scale-110 accent-[#81d742]"
-                    checked={selected.some(id => item.item_ids.includes(id))}
+                    checked={selected.some(id => item.itemIds.includes(id))}
                     onChange={e =>
-                      handleSelect(item.item_ids, e.target.checked, item.status === "pending")
+                      handleSelect(item.itemIds, e.target.checked, item.status === "pending")
                     }
                     disabled={item.status !== "pending"}
                   />
@@ -265,7 +265,7 @@ export default function MerchantPaymentsPage() {
                 <td className="p-3">{item.requested_at?.replace("T", " ").substring(0, 19)}</td>
                 <td className="p-3">
                   <span
-                    className={`font-bold px-2 py-1 rounded ${getStatusStyle(item.status)}`}
+                    className={`font-bold px-2 py-1 rounded ${getstatusStyle(item.status)}`}
                   >
                     {statusLabels[item.status] || item.status}
                   </span>
@@ -325,7 +325,7 @@ export default function MerchantPaymentsPage() {
               {formatAmount(
                 items
                   .filter(i =>
-                    i.item_ids.some(id => selected.includes(id))
+                    i.itemIds.some(id => selected.includes(id))
                   )
                   .reduce((sum, i) => sum + i.amount, 0)
               )}
@@ -365,8 +365,8 @@ export default function MerchantPaymentsPage() {
             <div className="mb-2 text-xs text-gray-400 flex flex-wrap items-center gap-x-5 gap-y-1">
               <span><span className="font-bold text-[#d1ffd0]">Affiliate:</span> {detailsAffiliate}</span>
               <span><span className="font-bold text-[#d1ffd0]">Request Date:</span> {detailsMeta?.requestDate || "-"}</span>
-              <span><span className="font-bold text-[#d1ffd0]">Status:</span> 
-                <span className={`ml-1 px-2 py-1 rounded border text-xs font-bold ${getStatusStyle(detailsMeta?.status)}`}>
+              <span><span className="font-bold text-[#d1ffd0]">status:</span> 
+                <span className={`ml-1 px-2 py-1 rounded border text-xs font-bold ${getstatusStyle(detailsMeta?.status)}`}>
                   {statusLabels[detailsMeta?.status] || detailsMeta?.status}
                 </span>
               </span>
@@ -384,9 +384,9 @@ export default function MerchantPaymentsPage() {
                     <th className="py-2 px-3">Product</th>
                     <th className="py-2 px-3 text-right">Amount</th>
                     <th className="py-2 px-3 text-right">Commission</th>
-                    <th className="py-2 px-3 text-right">Quantity</th>
+                    <th className="py-2 px-3 text-right">quantity</th>
                     <th className="py-2 px-3">Sale Date</th>
-                    <th className="py-2 px-3">Sale Status</th>
+                    <th className="py-2 px-3">Sale status</th>
                     <th className="py-2 px-3">Token</th>
                   </tr>
                 </thead>
@@ -410,7 +410,7 @@ export default function MerchantPaymentsPage() {
                   )}
                   {detailsData.map((sale, idx) => (
                     <tr key={idx} className="border-b border-[#232323] group">
-                      <td className="py-2 px-3">{sale.order_id}</td>
+                      <td className="py-2 px-3">{sale.orderId}</td>
                       <td className="py-2 px-3">{sale.product_name}</td>
                       <td className="py-2 px-3 text-right">{formatAmount(sale.amount)}</td>
                       <td className="py-2 px-3 text-right" style={{ color: "#81d742" }}>{formatAmount(sale.commission)}</td>
@@ -419,7 +419,7 @@ export default function MerchantPaymentsPage() {
                         <span className="font-bold text-gray-400">Sale Date:</span> {sale.sale_date || "-"}
                       </td>
                       <td className="py-2 px-3">
-                        <span className={`font-bold px-2 py-1 rounded border border-[#333] bg-[#232323]/60 text-xs ${getSaleStatusStyle(sale.status)}`}>
+                        <span className={`font-bold px-2 py-1 rounded border border-[#333] bg-[#232323]/60 text-xs ${getSalestatusStyle(sale.status)}`}>
                           {sale.status}
                         </span>
                       </td>

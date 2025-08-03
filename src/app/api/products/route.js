@@ -15,7 +15,7 @@ export async function GET() {
     if (token) {
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        userId = decoded.user_id;
+        userId = decoded.userId;
       } catch (err) {
         console.log("JWT decode error:", err);
       }
@@ -24,23 +24,23 @@ export async function GET() {
     // 1. Tüm aktif ve admin onaylı ürünleri çek
     let allProducts = await prisma.merchantProduct.findMany({
       where: {
-        is_active: true,
+        isActive: true,
         activated_by_admin: true,
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { createdAt: 'desc' },
       select: {
-        product_id: true,
+        productId: true,
         name: true,
         description: true,
         image_url: true,
         merchant_url: true,
-        commission_rate: true,
-        merchant_id: true,
-        total_clicks: true,
+        commissionRate: true,
+        merchantId: true,
+        totalClicks: true,
         total_purchases: true,
         max_sales_limit: true,
         activated_by_admin: true,
-        is_active: true,
+        isActive: true,
       },
     });
 
@@ -56,14 +56,14 @@ export async function GET() {
     let visibleLinkIds = [];
     if (userId) {
       userLinks = await prisma.affiliateLink.findMany({
-        where: { user_id: userId },
-        select: { product_id: true, token: true, is_visible: true, expires_at: true }
+        where: { userId: userId },
+        select: { productId: true, token: true, isVisible: true, expiresAt: true }
       });
 
-      const activeProductIds = new Set(products.map(p => p.product_id));
+      const activeProductIds = new Set(products.map(p => p.productId));
       visibleLinkIds = userLinks
-        .filter(link => link.is_visible && activeProductIds.has(link.product_id))
-        .map(link => link.product_id);
+        .filter(link => link.isVisible && activeProductIds.has(link.productId))
+        .map(link => link.productId);
     }
 
     return NextResponse.json({

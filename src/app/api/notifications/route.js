@@ -16,22 +16,22 @@ export async function GET(req) {
   try { decoded = jwt.verify(token, JWT_SECRET); }
   catch { return NextResponse.json({ error: 'Invalid token' }, { status: 401 }); }
 
-  const user_id = decoded.user_id;
-  if (!user_id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const userId = decoded.userId;
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   // 3) Sadece okunmamış istenirse ?unreadOnly=true
   const url = new URL(req.url);
   const unreadOnly = url.searchParams.get('unreadOnly') === 'true';
 
   // Silinmişleri gösterme!
-  const where = { user_id, is_deleted: false };
+  const where = { userId, isDeleted: false };
   if (unreadOnly) where.read = false;
 
   // 4) DB’den çek
   const total = await prisma.notifications.count({ where });
   const notifications = await prisma.notifications.findMany({
     where,
-    orderBy: { created_at: 'desc' }
+    orderBy: { createdAt: 'desc' }
   });
 
   return NextResponse.json({ total, notifications });

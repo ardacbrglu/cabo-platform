@@ -14,10 +14,10 @@ export async function GET(req) {
     // 2. Auth
     const token = getTokenFromRequest(req);
     const payload = token ? verifyToken(token) : null;
-    if (!payload?.user_id) {
+    if (!payload?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = payload.user_id;
+    const userId = payload.userId;
 
     // 3. Query params + VALIDATION
     const { searchParams } = new URL(req.url);
@@ -40,10 +40,10 @@ export async function GET(req) {
 
     // 4. Kullanıcının aktif affiliate ürünleri
     const userLinks = await prisma.affiliateLink.findMany({
-      where: { user_id: userId, is_visible: true },
-      select: { product_id: true }
+      where: { userId: userId, isVisible: true },
+      select: { productId: true }
     });
-    const allProductIds = [...new Set(userLinks.map(l => l.product_id))];
+    const allProductIds = [...new Set(userLinks.map(l => l.productId))];
     if (allProductIds.length === 0) {
       return NextResponse.json({
         products: [],
@@ -59,12 +59,12 @@ export async function GET(req) {
 
     // Tüm aktif ürünlerin bilgilerini al
     const activeProducts = await prisma.merchantProduct.findMany({
-      where: { product_id: { in: allProductIds }, is_active: true },
-      select: { product_id: true, name: true, image_url: true }
+      where: { productId: { in: allProductIds }, isActive: true },
+      select: { productId: true, name: true, image_url: true }
     });
 
     // Seçili ürün filtrelemesi
-    let filteredProductIds = activeProducts.map(p => p.product_id);
+    let filteredProductIds = activeProducts.map(p => p.productId);
     if (productIds.length > 0 && !productIds.includes(0)) {
       filteredProductIds = filteredProductIds.filter(id => productIds.includes(id));
     }
@@ -78,59 +78,59 @@ export async function GET(req) {
     const clickRecordsRaw = await prisma.click.findMany({
       where: {
         affiliate_link: {
-          user_id: userId,
-          product_id: { in: filteredProductIds }
+          userId: userId,
+          productId: { in: filteredProductIds }
         },
         ...(startDate || endDate ? { clicked_at: dateFilter } : {})
       },
       select: {
         clicked_at: true,
-        affiliate_link: { select: { product_id: true } }
+        affiliate_link: { select: { productId: true } }
       }
     });
     const clickRecords = clickRecordsRaw.map(r => ({
       date: r.clicked_at.toISOString().slice(0, 10),
-      product_id: r.affiliate_link.product_id
+      productId: r.affiliate_link.productId
     }));
 
     // 7. Satış kayıtları (quantity destekli!)
     const saleRecordsRaw = await prisma.affiliateUserSale.findMany({
       where: {
-        user_id: userId,
-        product_id: { in: filteredProductIds },
+        userId: userId,
+        productId: { in: filteredProductIds },
         ...(startDate || endDate ? { converted_at: dateFilter } : {}),
       },
       select: {
         converted_at: true,
-        product_id: true,
-        quantity: true // <--- Quantity çekiliyor!
+        productId: true,
+        quantity: true // <--- quantity çekiliyor!
       }
     });
     // quantity null ise 1 alınır (default)
     const saleRecords = saleRecordsRaw.map(r => ({
       date: r.converted_at.toISOString().slice(0, 10),
-      product_id: r.product_id,
+      productId: r.productId,
       quantity: typeof r.quantity === "number" && r.quantity > 0 ? r.quantity : 1
     }));
 
     // 8. Confirmed Sales listesi (quantity ile!)
     const confirmedSalesRaw = await prisma.affiliateUserSale.findMany({
       where: {
-        user_id: userId,
-        product_id: { in: filteredProductIds },
+        userId: userId,
+        productId: { in: filteredProductIds },
         status: "confirmed",
         ...(startDate || endDate ? { converted_at: dateFilter } : {}),
       },
       orderBy: { converted_at: "desc" },
       select: {
-        sale_id: true,
+        saleId: true,
         amount: true,
-        commission_affiliate: true,
+        commissionAffiliate: true,
         status: true,
         converted_at: true,
-        product_id: true,
+        productId: true,
         quantity: true,
-        merchant_products: { select: { name: true, image_url: true } }
+        merchantProducts: { select: { name: true, image_url: true } }
       }
     });
 
@@ -138,23 +138,23 @@ export async function GET(req) {
     // Toplam satış quantity’ye göre!
     const totalClicks = clickRecords.length;
     const totalSales = saleRecords.reduce((sum, s) => sum + (s.quantity ?? 1), 0);
-    const totalEarnings = confirmedSalesRaw.reduce((sum, s) => sum + Number(s.commission_affiliate), 0);
+    const totalEarnings = confirmedSalesRaw.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
 
     // Dropdown ürün seçenekleri
     const productOptions = [
-      { product_id: 0, name: "All Products" },
-      ...activeProducts.map(p => ({ product_id: p.product_id, name: p.name }))
+      { productId: 0, name: "All Products" },
+      ...activeProducts.map(p => ({ productId: p.productId, name: p.name }))
     ];
 
     // Confirmed sales quantity ile maplenir
     const allConfirmedSales = confirmedSalesRaw.map(s => ({
-      sale_id: s.sale_id,
-      product_id: s.product_id,
-      productName: s.merchant_products?.name ?? 'Product',
-      productImage: s.merchant_products?.image_url ?? null,
+      saleId: s.saleId,
+      productId: s.productId,
+      productName: s.merchantProducts?.name ?? 'Product',
+      productImage: s.merchantProducts?.image_url ?? null,
       date: s.converted_at.toISOString().slice(0, 10),
       amount: Number(s.amount),
-      commission: Number(s.commission_affiliate),
+      commission: Number(s.commissionAffiliate),
       status: s.status,
       quantity: typeof s.quantity === "number" && s.quantity > 0 ? s.quantity : 1
     }));

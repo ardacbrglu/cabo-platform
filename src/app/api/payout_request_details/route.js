@@ -5,7 +5,7 @@ import { validateCsrfToken } from '@/lib/csrf';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { z } from 'zod';
 
-const bodySchema = z.object({ request_id: z.number().int().positive() });
+const bodySchema = z.object({ requestId: z.number().int().positive() });
 
 export async function POST(req) {
   try {
@@ -15,10 +15,10 @@ export async function POST(req) {
     // 2) Auth
     const token = getTokenFromRequest(req);
     const payload = token ? verifyToken(token) : null;
-    if (!payload?.user_id) {
+    if (!payload?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const userId = payload.user_id;
+    const userId = payload.userId;
 
     // 3) Rate-limit (10 çağrı/dakika)
     if (!checkRateLimit(req, userId, 10, 60_000, 'payout-details')) {
@@ -26,69 +26,69 @@ export async function POST(req) {
     }
 
     // 4) Body validation
-    const { request_id } = bodySchema.parse(await req.json());
+    const { requestId } = bodySchema.parse(await req.json());
 
     // 5) Payout request kontrolü
     const payoutReq = await prisma.payoutRequest.findUnique({
-      where: { request_id },
+      where: { requestId },
       select: {
-        user_id: true,
+        userId: true,
         requested_at: true,
-        amount_total: true,
+        amountTotal: true,
         status: true,
         paid_at: true,
-        rejected_reason: true,
-        updated_at: true,
+        rejectedReason: true,
+        updatedAt: true,
         iban: true,
-        bank_name: true,
-        real_user_fullname: true,
+        bankName: true,
+        realUserFullname: true,
         platform_paid: true,
-        platform_paid_at: true,
+        platformPaidAt: true,
       }
     });
-    if (!payoutReq || payoutReq.user_id !== userId) {
+    if (!payoutReq || payoutReq.userId !== userId) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
     // 6) İlgili item’ların sales ID’lerini oku
-    const items = await prisma.payout_request_items.findMany({
-      where: { request_id },
-      select: { source_sale_ids: true }
+    const items = await prisma.payoutRequestItems.findMany({
+      where: { requestId },
+      select: { source_saleIds: true }
     });
     const saleIds = items
-      .flatMap(i => (i.source_sale_ids || "").split(',').map(n => Number(n).valueOf()))
+      .flatMap(i => (i.source_saleIds || "").split(',').map(n => Number(n).valueOf()))
       .filter(n => Number.isInteger(n) && n > 0);
 
     // 7) Satışları çek (sayfa/page gerekirse eklenebilir)
     const sales = saleIds.length
       ? await prisma.affiliate_user_sales.findMany({
-          where: { sale_id: { in: saleIds }, user_id: userId },
-          include: { merchant_products: { select: { name: true } } }
+          where: { saleId: { in: saleIds }, userId: userId },
+          include: { merchantProducts: { select: { name: true } } }
         })
       : [];
 
     // 8) JSON cevabı
     return NextResponse.json({
       sales: sales.map(sale => ({
-        sale_id:       sale.sale_id,
-        order_id:      sale.order_id,
-        product:       sale.merchant_products?.name || "",
+        saleId:       sale.saleId,
+        orderId:      sale.orderId,
+        product:       sale.merchantProducts?.name || "",
         amount:        Number(sale.amount),
-        commission:    Number(sale.commission_affiliate),
+        commission:    Number(sale.commissionAffiliate),
         quantity:      sale.quantity,
         converted_at:  sale.converted_at.toISOString().slice(0, 19).replace('T',' ')
       })),
       status:           payoutReq.status,
       request_date:     payoutReq.requested_at?.toISOString() || "",
       paid_at:          payoutReq.paid_at,
-      rejected_reason:  payoutReq.rejected_reason,
-      updated_at:       payoutReq.updated_at,
-      total:            Number(payoutReq.amount_total),
+      rejectedReason:  payoutReq.rejectedReason,
+      updatedAt:       payoutReq.updatedAt,
+      total:            Number(payoutReq.amountTotal),
       iban:             payoutReq.iban || "",
-      bank_name:        payoutReq.bank_name || "",
-      real_user_fullname: payoutReq.real_user_fullname || "",
+      bankName:        payoutReq.bankName || "",
+      realUserFullname: payoutReq.realUserFullname || "",
       platform_paid:      payoutReq.platform_paid,
-      platform_paid_at:   payoutReq.platform_paid_at
+      platformPaidAt:   payoutReq.platformPaidAt
     });
 
   } catch (err) {

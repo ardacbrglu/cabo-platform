@@ -24,7 +24,7 @@ export async function POST(req) {
 
     // 2. Body al ve validasyon
     const body = await req.json();
-    const { message, user_id, all, type = 'info', link } = body;
+    const { message, userId, all, type = 'info', link } = body;
 
     if (!message || message.length < 2)
       return NextResponse.json({ error: "Message required" }, { status: 400 });
@@ -34,16 +34,16 @@ export async function POST(req) {
 
     // 3. Bildirimi ekle
     if (all) {
-      // Herkese (tüm user_id'lere)
+      // Herkese (tüm userId'lere)
       const users = await prisma.user.findMany({
         where: { status: 'active' }, // veya hepsi için: where: {}
-        select: { user_id: true }
+        select: { userId: true }
       });
       if (!users.length)
         return NextResponse.json({ error: "No users found" }, { status: 400 });
 
       const data = users.map(u => ({
-        user_id: u.user_id,
+        userId: u.userId,
         message,
         type,
         link: link || null,
@@ -53,13 +53,13 @@ export async function POST(req) {
       await prisma.notifications.createMany({ data });
       return NextResponse.json({ ok: true, count: data.length });
     } else {
-      // Sadece belirli user_id'ye
-      if (!user_id)
-        return NextResponse.json({ error: "user_id required" }, { status: 400 });
+      // Sadece belirli userId'ye
+      if (!userId)
+        return NextResponse.json({ error: "userId required" }, { status: 400 });
 
       await prisma.notifications.create({
         data: {
-          user_id,
+          userId,
           message,
           type,
           link: link || null,

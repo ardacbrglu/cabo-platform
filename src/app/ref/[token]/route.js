@@ -30,18 +30,18 @@ export async function GET(request, { params }) {
     const link = await prisma.affiliateLink.findFirst({
       where: {
         token,
-        is_visible: true,
-        expires_at: { gt: now }
+        isVisible: true,
+        expiresAt: { gt: now }
       },
       select: {
-        link_id: true,
-        product_id: true,
+        linkId: true,
+        productId: true,
         product: {
-          select: { merchant_url: true, is_active: true }
+          select: { merchant_url: true, isActive: true }
         }
       }
     });
-    if (!link || !link.product.is_active) {
+    if (!link || !link.product.isActive) {
       return NextResponse.json({ error: 'Link not found or inactive' }, { status: 404 });
     }
 
@@ -53,8 +53,8 @@ export async function GET(request, { params }) {
     const cutoff = new Date(Date.now() - 30 * 60 * 1000);
     const recentClick = await prisma.click.findFirst({
       where: {
-        link_id:   link.link_id,
-        ip_address: ip,
+        linkId:   link.linkId,
+        ipAddress: ip,
         user_agent: userAgent,
         clicked_at: { gte: cutoff }
       }
@@ -65,15 +65,15 @@ export async function GET(request, { params }) {
       await prisma.$transaction([
         prisma.click.create({
           data: {
-            link_id:    link.link_id,
-            ip_address: ip,
+            linkId:    link.linkId,
+            ipAddress: ip,
             user_agent: userAgent,
             clicked_at: new Date()
           }
         }),
         prisma.merchantProduct.update({
-          where: { product_id: link.product_id },
-          data: { total_clicks: { increment: 1 } }
+          where: { productId: link.productId },
+          data: { totalClicks: { increment: 1 } }
         })
       ]);
     }

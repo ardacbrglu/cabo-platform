@@ -33,21 +33,21 @@ export async function GET(req) {
     } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const user_id = payload.user_id ?? payload.userId;
-    if (!user_id) {
+    const userId = payload.userId ?? payload.userId;
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // 4) Fetch and sanitize user
     const user = await prisma.user.findUnique({
-      where: { user_id },
+      where: { userId },
       select: {
-        user_id: true,
+        userId: true,
         name: true,
         email: true,
         role: true,
         language_preference: true,
-        currency_code: true
+        currencyCode: true
       }
     });
     if (!user) {

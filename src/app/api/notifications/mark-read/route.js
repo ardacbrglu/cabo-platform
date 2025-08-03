@@ -14,8 +14,8 @@ export async function POST(req) {
   try { decoded = jwt.verify(token, JWT_SECRET); }
   catch { return NextResponse.json({ error: "Invalid token" }, { status: 401 }); }
 
-  const user_id = decoded.user_id;
-  if (!user_id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = decoded.userId;
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { ids } = await req.json();
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -23,7 +23,7 @@ export async function POST(req) {
   }
 
   await prisma.notifications.updateMany({
-    where: { id: { in: ids }, user_id },
+    where: { id: { in: ids }, userId },
     data: { read: true },
   });
 

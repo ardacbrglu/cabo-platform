@@ -1,24 +1,24 @@
 import { useEffect, useState, useCallback } from "react";
 
 // Bildirim hook'u
-export function useNotifications() {
-  const [notifications, setNotifications] = useState([]);
+export function usenotifications() {
+  const [notifications, setnotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Bildirimleri getir
-  const fetchNotifications = useCallback(async () => {
+  const fetchnotifications = useCallback(async () => {
     const res = await fetch('/api/notifications');
     const data = await res.json();
     const nots = Array.isArray(data.notifications) ? data.notifications : [];
-    setNotifications(nots);
+    setnotifications(nots);
     setUnreadCount(nots.filter(n => !n.read).length);
   }, []);
 
   useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 12000);
+    fetchnotifications();
+    const interval = setInterval(fetchnotifications, 12000);
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [fetchnotifications]);
 
   // Seçili bildirimi okundu yap
   const markSelectedAsRead = async (ids) => {
@@ -28,7 +28,7 @@ export function useNotifications() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     });
-    setNotifications((nots = []) => Array.isArray(nots)
+    setnotifications((nots = []) => Array.isArray(nots)
       ? nots.map(n => ids.includes(n.id) ? { ...n, read: true } : n)
       : []
     );
@@ -45,14 +45,14 @@ export function useNotifications() {
   };
 
   // Bildirim(ler)i sil
-  const deleteNotifications = async (ids) => {
+  const deletenotifications = async (ids) => {
     if (!ids.length) return;
     await fetch('/api/notifications/delete', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     });
-    setNotifications((nots = []) => Array.isArray(nots)
+    setnotifications((nots = []) => Array.isArray(nots)
       ? nots.filter(n => !ids.includes(n.id))
       : []
     );
@@ -67,7 +67,7 @@ export function useNotifications() {
     unreadCount,
     markAllAsRead,
     markSelectedAsRead,
-    fetchNotifications,
-    deleteNotifications,
+    fetchnotifications,
+    deletenotifications,
   };
 }

@@ -25,27 +25,27 @@ export async function POST(req) {
       return NextResponse.json({ error: "Invalid token" }, { status: 403 });
     }
 
-    const userId = payload.user_id;
+    const userId = payload.userId;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const { product_id } = body;
-    // Güvenlik: product_id sayısal mı?
-    if (!product_id || isNaN(Number(product_id))) {
-      return NextResponse.json({ error: "Invalid product_id" }, { status: 400 });
+    const { productId } = body;
+    // Güvenlik: productId sayısal mı?
+    if (!productId || isNaN(Number(productId))) {
+      return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
     }
 
     // 1️⃣ Ürün aktif/uygun mu?
     const product = await prisma.merchantProduct.findUnique({
-      where: { product_id: Number(product_id) },
+      where: { productId: Number(productId) },
       select: {
-        is_active: true,
+        isActive: true,
         activated_by_admin: true,
         total_purchases: true,
         max_sales_limit: true
       }
     });
-    if (!product || !product.is_active) {
+    if (!product || !product.isActive) {
       return NextResponse.json({ error: "This product is not active." }, { status: 403 });
     }
     if (!product.activated_by_admin) {
@@ -58,8 +58,8 @@ export async function POST(req) {
     // 2️⃣ Kullanıcıya ait bu ürün için link var mı?
     let existing = await prisma.affiliateLink.findFirst({
       where: {
-        user_id: userId,
-        product_id: Number(product_id)
+        userId: userId,
+        productId: Number(productId)
       }
     });
 
@@ -67,11 +67,11 @@ export async function POST(req) {
 
     if (existing) {
       // Eğer expire olmuşsa yeni token oluştur
-      if (existing.expires_at && new Date(existing.expires_at) < now) {
+      if (existing.expiresAt && new Date(existing.expiresAt) < now) {
         // Eskiyi inaktif yap
         await prisma.affiliateLink.update({
-          where: { link_id: existing.link_id },
-          data: { is_visible: false }
+          where: { linkId: existing.linkId },
+          data: { isVisible: false }
         });
 
         // Yeni token üret ve kaydet
@@ -85,32 +85,32 @@ export async function POST(req) {
 
         const created = await prisma.affiliateLink.create({
           data: {
-            user_id: userId,
-            product_id: Number(product_id),
+            userId: userId,
+            productId: Number(productId),
             token: newToken,
-            is_visible: true,
-            created_at: new Date(),
-            expires_at: expiresAt
+            isVisible: true,
+            createdAt: new Date(),
+            expiresAt: expiresAt
           },
         });
 
         return NextResponse.json({
           message: "Created new token (expired before)",
           token: created.token,
-          expires_at: created.expires_at
+          expiresAt: created.expiresAt
         });
       }
       // Hala aktif, sadece görünebilir yap ve token döndür
-      if (!existing.is_visible) {
+      if (!existing.isVisible) {
         await prisma.affiliateLink.update({
-          where: { link_id: existing.link_id },
-          data: { is_visible: true }
+          where: { linkId: existing.linkId },
+          data: { isVisible: true }
         });
       }
       return NextResponse.json({
         message: "Already exists",
         token: existing.token,
-        expires_at: existing.expires_at
+        expiresAt: existing.expiresAt
       });
     }
 
@@ -127,19 +127,19 @@ export async function POST(req) {
 
     const created = await prisma.affiliateLink.create({
       data: {
-        user_id: userId,
-        product_id: Number(product_id),
+        userId: userId,
+        productId: Number(productId),
         token: newToken,
-        is_visible: true,
-        created_at: new Date(),
-        expires_at: expiresAt
+        isVisible: true,
+        createdAt: new Date(),
+        expiresAt: expiresAt
       },
     });
 
     return NextResponse.json({
       message: "Created",
       token: created.token,
-      expires_at: created.expires_at
+      expiresAt: created.expiresAt
     });
 
   } catch (err) {

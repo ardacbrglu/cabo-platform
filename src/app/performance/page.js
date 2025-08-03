@@ -56,16 +56,16 @@ export default function PerformancePage() {
 
   // User fetch (for locale)
   useEffect(() => {
-    if (!user?.user_id || !user?.name) {
+    if (!user?.userId || !user?.name) {
       fetch('/api/me')
         .then(res => res.json())
         .then(data => {
-          if (data && data.user_id) {
+          if (data && data.userId) {
             setUser(u => ({
               ...u,
               name: data.name,
               email: data.email,
-              user_id: data.user_id,
+              userId: data.userId,
               role: data.role,
             }));
           }
@@ -88,7 +88,7 @@ export default function PerformancePage() {
 
         setProducts(
           Array.isArray(data.products)
-            ? data.products.map(p => ({ value: p.product_id, label: p.name }))
+            ? data.products.map(p => ({ value: p.productId, label: p.name }))
             : []
         );
         setStats({
@@ -125,7 +125,7 @@ export default function PerformancePage() {
         : filters.productIds;
 
     const productFilter = (item) =>
-      !selectedIds || selectedIds.includes(item.product_id);
+      !selectedIds || selectedIds.includes(item.productId);
 
     const dailyMap = {};
     saleRecords.filter(productFilter).forEach(({ date, quantity }) => {
@@ -257,7 +257,7 @@ export default function PerformancePage() {
     const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `performance_${user?.user_id || 'user'}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `performance_${user?.userId || 'user'}_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
   }
 
@@ -320,7 +320,7 @@ export default function PerformancePage() {
               <BarChart2 size={KPI_ICON_SIZE} color={COLOR_GREEN} />
               <div>
                 <div className="text-[#81d742] font-extrabold text-xl">{stats.totalClicks}</div>
-                <div className="text-gray-400 uppercase text-xs tracking-wide">{t('performance.total_clicks')}</div>
+                <div className="text-gray-400 uppercase text-xs tracking-wide">{t('performance.totalClicks')}</div>
               </div>
             </div>
             <div className="bg-[#222] rounded-xl shadow flex flex-row items-center gap-3 px-6 py-3 min-w-[145px]">
@@ -407,7 +407,7 @@ export default function PerformancePage() {
                   const rowNum = (allConfirmedSales.length - ((salesPage - 1) * SALES_PER_PAGE) - i);
                   return (
                     <li
-                      key={s.sale_id || s.date + '-' + i}
+                      key={s.saleId || s.date + '-' + i}
                       className="flex items-center gap-3 py-2 px-2 my-0.5 rounded-xl bg-[#222] hover:bg-[#232423] transition"
                       style={{ minHeight: 49, height: 49, maxHeight: 49 }}
                     >

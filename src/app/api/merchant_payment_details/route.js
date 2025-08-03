@@ -6,7 +6,7 @@ import { checkRateLimit } from "@/lib/ratelimit";
 import { z } from "zod";
 
 const requestSchema = z.object({
-  item_ids: z.array(z.number().int().positive()).min(1),
+  itemIds: z.array(z.number().int().positive()).min(1),
 });
 
 export async function POST(req) {
@@ -20,28 +20,29 @@ export async function POST(req) {
     if (!user || user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    await checkRateLimit(req, user.user_id, 10, 60_000, 'merchant-payout-details');
+    await checkRateLimit(req, user.userId, 10, 60_000, 'merchant-payout-details');
 
     // Input validation (zod)
     const body = await req.json();
-    const { item_ids } = requestSchema.parse(body);
+    const { itemIds } = requestSchema.parse(body);
 
     // Sadece merchant’a ait payout item'larını çek
-    const items = await prisma.payout_request_items.findMany({
+    const items = await prisma.payoutRequestItems.findMany({
       where: {
-        item_id: { in: item_ids },
-        merchant_id: user.user_id,
+        itemId: { in: itemIds },
+        merchantId: user.userId,
       },
       select: {
-        item_id: true,
+        itemId: true,
         amount: true,
-        product_id: true,
-        source_sale_ids: true,
+        productId: true,
+        source_saleIds: true,
         status: true,
-        payout_requests: {
+        payoutRequests
+: {
           select: {
-            user_id: true,
-            real_user_fullname: true,
+            userId: true,
+            realUserFullname: true,
             requested_at: true,
           }
         }
@@ -55,37 +56,38 @@ export async function POST(req) {
     // Her payout item için ilgili satışları topla
     let sales = [];
     for (const item of items) {
-      if (item.source_sale_ids) {
-        const saleIds = item.source_sale_ids.split(',').map(id => Number(id)).filter(Boolean);
+      if (item.source_saleIds) {
+        const saleIds = item.source_saleIds.split(',').map(id => Number(id)).filter(Boolean);
         const salesData = await prisma.affiliate_user_sales.findMany({
-          where: { sale_id: { in: saleIds } },
+          where: { saleId: { in: saleIds } },
           select: {
-            sale_id: true,
-            order_id: true,
+            saleId: true,
+            orderId: true,
             amount: true,
-            commission_affiliate: true,
+            commissionAffiliate: true,
             quantity: true,
             status: true,
             converted_at: true,
-            product_id: true,
-            affiliate_link_id: true,
+            productId: true,
+            affiliate_linkId: true,
           },
         });
-        // affiliate_link_id’den token çek
+        // affiliate_linkId’den token çek
         for (const sale of salesData) {
           let saleToken = null;
-          if (sale.affiliate_link_id) {
-            const link = await prisma.affiliate_links.findUnique({
-              where: { link_id: sale.affiliate_link_id },
+          if (sale.affiliate_linkId) {
+            const link = await prisma.affiliateLinks.findUnique({
+              where: { linkId: sale.affiliate_linkId },
               select: { token: true }
             });
             saleToken = link?.token || "";
           }
           sales.push({
             ...sale,
-            item_id: item.item_id,
+            itemId: item.itemId,
             payout_status: item.status,
-            requested_at: item.payout_requests?.requested_at,
+            requested_at: item.payoutRequests
+?.requested_at,
             token: saleToken,
           });
         }
@@ -93,29 +95,31 @@ export async function POST(req) {
     }
 
     // Ürün isimlerini map’le
-    const productIds = [...new Set(sales.map(s => s.product_id))];
+    const productIds = [...new Set(sales.map(s => s.productId))];
     const products = productIds.length
       ? await prisma.merchantProduct.findMany({
-          where: { product_id: { in: productIds } },
-          select: { product_id: true, name: true }
+          where: { productId: { in: productIds } },
+          select: { productId: true, name: true }
         })
       : [];
-    const productMap = Object.fromEntries(products.map(p => [p.product_id, p.name]));
+    const productMap = Object.fromEntries(products.map(p => [p.productId, p.name]));
 
     // Meta bilgileri (modal üstündeki bilgiler için)
     const meta = {
       status: items[0]?.status || "",
       total: items.reduce((sum, i) => sum + Number(i.amount), 0),
-      requestDate: items[0]?.payout_requests?.requested_at?.toISOString() || "",
-      affiliate_name: items[0]?.payout_requests?.real_user_fullname || "",
+      requestDate: items[0]?.payoutRequests
+?.requested_at?.toISOString() || "",
+      affiliate_name: items[0]?.payoutRequests
+?.realUserFullname || "",
     };
 
     // Sale detaylarını frontende hazırla
     const details = sales.map(s => ({
-      order_id: s.order_id,
-      product_name: productMap[s.product_id] || "",
+      orderId: s.orderId,
+      product_name: productMap[s.productId] || "",
       amount: Number(s.amount),
-      commission: Number(s.commission_affiliate),
+      commission: Number(s.commissionAffiliate),
       quantity: s.quantity,
       sale_date: s.converted_at
         ? new Date(s.converted_at).toISOString().slice(0, 19).replace('T', ' ')

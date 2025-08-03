@@ -13,7 +13,7 @@ export function UserProvider({ children }) {
       fetch('/api/me')
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (data && data.user_id) setUser(data);
+          if (data && data.userId) setUser(data);
           else setUser(null); // User yoksa null
         })
         .catch(() => setUser(null));

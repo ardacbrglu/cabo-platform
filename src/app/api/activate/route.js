@@ -7,14 +7,14 @@ export const GET = async (req) => {
     return Response.json({ success: false, message: "Invalid activation token." }, { status: 400 });
   }
 
-  const user = await prisma.user.findFirst({ where: { activation_token: token, status: "pending" } });
+  const user = await prisma.user.findFirst({ where: { activationToken: token, status: "pending" } });
   if (!user) {
     return Response.json({ success: false, message: "Token invalid or already used." }, { status: 400 });
   }
 
   await prisma.user.update({
-    where: { user_id: user.user_id },
-    data: { status: "active", activation_token: null }
+    where: { userId: user.userId },
+    data: { status: "active", activationToken: null }
   });
 
   // İsteğe bağlı: frontendde bir sayfaya yönlendirme yapabilirsin.
