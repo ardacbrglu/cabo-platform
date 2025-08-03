@@ -4,7 +4,6 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
 import axios from 'axios';
-// Nodemailer kurulmalı: npm i nodemailer
 import nodemailer from 'nodemailer';
 
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PROD_!@#_Cabo";
@@ -15,30 +14,32 @@ const nameRegex = /^[a-zA-Z0-9_]{3,32}$/;
 
 const messages = {
   en: {
-    ratelimit: "Too many requests. Please try again later.",
+    ratelimit: "Too many requests. Please wait and try again.",
     csrf: "Invalid CSRF token.",
-    terms: "You must accept terms and privacy policy.",
     required: "Please fill in all fields.",
     email: "Invalid email address.",
-    username: "Username must be 3-32 chars, only letters, numbers, and _.",
-    password: "Password must be at least 8 chars and contain both letters and numbers.",
-    uniq: "Username or email already in use.",
+    username: "Username must be 3-32 chars, only letters, numbers and _. No spaces.",
+    password: "Password must be at least 8 chars, include both letters and numbers.",
+    uniq: "This email is already registered.",
+    terms: "You must accept the Terms and Privacy Policy.",
     captcha: "Captcha verification failed. Please try again.",
     success: "Registration successful! Please check your email to activate your account.",
-    fail: "Registration failed. Please try again."
+    fail: "Registration failed. Please try again.",
+    googleReg: "This email is registered with Google. Please sign in with Google.",
   },
   tr: {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
-    csrf: "CSRF tokenı geçersiz.",
-    terms: "Kullanım ve gizlilik şartlarını kabul etmelisin.",
+    csrf: "CSRF anahtarı geçersiz.",
     required: "Lütfen tüm alanları doldurun.",
     email: "Geçersiz e-posta adresi.",
-    username: "Kullanıcı adı 3-32 karakter, sadece harf, rakam ve _ içermeli.",
-    password: "Şifre en az 8 karakter ve harf/rakam içermeli.",
-    uniq: "Kullanıcı adı veya e-posta zaten kullanılıyor.",
+    username: "Kullanıcı adı 3-32 karakter olmalı, sadece harf/rakam/_ içerebilir. Boşluk yok.",
+    password: "Şifre en az 8 karakter ve hem harf hem rakam içermeli.",
+    uniq: "Bu e-posta zaten kayıtlı.",
+    terms: "Kullanım ve gizlilik şartlarını kabul etmelisiniz.",
     captcha: "Doğrulama başarısız oldu. Lütfen tekrar deneyin.",
-    success: "Kayıt başarılı! Hesabını aktifleştirmek için e-postanı kontrol et.",
-    fail: "Kayıt başarısız. Lütfen tekrar deneyin."
+    success: "Kayıt başarılı! Hesabınızı aktifleştirmek için e-posta kutunuzu kontrol edin.",
+    fail: "Kayıt başarısız. Lütfen tekrar deneyin.",
+    googleReg: "Bu e-posta Google ile kayıtlı. Lütfen Google ile giriş yapın.",
   }
 };
 
@@ -120,11 +121,25 @@ export const POST = csrf(async (req) => {
       });
     }
 
-    // Uniq kontrol
+    // Google ile kayıtlı kullanıcı kontrolü
+    // Eğer "accounts" tablosunda bu e-posta var ve provider "google" ise => Google ile giriş yapmalısın uyarısı
+    const googleAccount = await prisma.account.findFirst({
+      where: {
+        provider: "google",
+        user: { email: cleanEmail }
+      }
+    });
+    if (googleAccount) {
+      return new Response(JSON.stringify({ success: false, message: msg.googleReg }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Uniq kontrol (users tablosu için)
     const existing = await prisma.user.findFirst({
       where: {
         OR: [
-          { name: cleanName },
           { email: cleanEmail }
         ]
       }
@@ -154,7 +169,6 @@ export const POST = csrf(async (req) => {
     });
 
     // Aktivasyon maili gönder (nodemailer ile)
-    // .env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS olmalı
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT),
@@ -170,7 +184,7 @@ export const POST = csrf(async (req) => {
       subject: locale === "tr" ? "Cabo Hesap Aktivasyonu" : "Cabo Account Activation",
       html: `
         <p>${locale === "tr"
-          ? "Cabo hesabını aktifleştirmek için aşağıdaki linke tıkla:"
+          ? "Cabo hesabınızı aktifleştirmek için aşağıdaki linke tıklayın:"
           : "Click below to activate your Cabo account:"}</p>
         <p>
           <a href="${process.env.NEXT_PUBLIC_BASE_URL}/activate?token=${activationToken}">
@@ -179,7 +193,7 @@ export const POST = csrf(async (req) => {
         </p>
         <br>
         <p>${locale === "tr"
-          ? "Link 24 saat geçerlidir."
+          ? "Bu link 24 saat geçerlidir."
           : "This link is valid for 24 hours."}</p>
       `
     };
