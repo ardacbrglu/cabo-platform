@@ -284,10 +284,18 @@
   "salestatus": "Sale status",
   "token": "Token",
   "close": "Close",
-  "passwordSetSuccess": "Şifreniz başarıyla oluşturuldu.",
-  "tooManyRequests": "Çok fazla deneme. Lütfen tekrar deneyin.",
-  "currentPasswordPlaceholder": "Mevcut şifre (Google ile ilk kez şifre belirliyorsan boş bırak)",
-  "newPasswordPlaceholder": "Yeni şifre (min 8 karakter)",
-  "repeatNewPasswordPlaceholder": "Yeni şifre (tekrar)",
-  "hybridPasswordHint": "Google ile kaydolduysan klasik giriş için şifre belirleyebilirsin. İlk kez şifre oluşturuyorsan mevcut şifreyi boş bırak."
+  "passwordSetSuccess": "Your password has been created successfully.",
+  "tooManyRequests": "Too many attempts. Please try again.",
+  "currentPasswordPlaceholder": "Current password (leave empty if setting password for the first time)",
+  "newPasswordPlaceholder": "New password (min 8 characters)",
+  "repeatNewPasswordPlaceholder": "Repeat new password",
+  "hybridPasswordHint": "If you signed up with Google, you can now set a classic password. Leave current password empty if setting for the first time.",
+  "activation.title": "Account Activation",
+  "activation.success": "✅ Your account has been activated. You can now log in.",
+  "activation.fail": "❌ Activation failed",
+  "activation.invalid": "Invalid activation token.",
+  "activation.error": "❌ An error occurred. Please try again.",
+  "activation.loginLink": "Go to login page",
+  "activating": "Activating your account..."
 }
+

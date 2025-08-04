@@ -1,4 +1,3 @@
-// ✅ BACKEND: app/api/activate/route.js
 import prisma from '@/lib/prisma';
 export const dynamic = "force-dynamic";
 
