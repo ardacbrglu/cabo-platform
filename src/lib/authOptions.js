@@ -1,4 +1,3 @@
-// lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -8,7 +7,7 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
-// Token çekici (Cookie'den cabo_token alır)
+// Token çekici
 export function getTokenFromRequest(req) {
   const cookieHeader =
     req.headers?.get?.("cookie") || req.headers?.cookie || "";
@@ -86,20 +85,31 @@ export const authOptions = {
     },
     async signIn({ user, account }) {
       if (account?.provider === "google" && user?.email) {
-        const existing = await prisma.user.findUnique({ where: { email: user.email } });
+        const existing = await prisma.user.findUnique({
+          where: { email: user.email }
+        });
+
         if (!existing) {
-          await prisma.user.update({
-            where: { email: user.email },
+          await prisma.user.create({
             data: {
+              name: user.name || "Google User",
+              email: user.email,
+              passwordHash: "",
               termsAccepted: true,
               status: "active",
               role: "affiliate",
-            },
+              emailVerified: new Date()
+            }
           });
         }
+
+        if (existing?.status === "pending") {
+          return false;
+        }
       }
+
       return true;
-    },
+    }
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
