@@ -1,8 +1,30 @@
+// lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+
+// Token çekici (Cookie'den cabo_token alır)
+export function getTokenFromRequest(req) {
+  const cookieHeader =
+    req.headers?.get?.("cookie") || req.headers?.cookie || "";
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(/cabo_token=([^;]+)/);
+  return match ? match[1] : null;
+}
+
+// Token doğrulayıcı
+export function verifyToken(token) {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return null;
+  }
+}
 
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
@@ -22,9 +44,11 @@ export const authOptions = {
           where: { email: credentials.email },
         });
         if (!user) return null;
+
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!isValid) return null;
         if (user.status !== "active") return null;
+
         return {
           id: user.id,
           name: user.name,
@@ -45,7 +69,7 @@ export const authOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.sub = user.id;  // int
+        token.sub = user.id;
         token.email = user.email;
         token.role = user.role;
         token.status = user.status;

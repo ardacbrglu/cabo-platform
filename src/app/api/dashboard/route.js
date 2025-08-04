@@ -1,8 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/auth";
-
+import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 function getDeviceType(userAgent = "") {
   userAgent = (userAgent || "").toLowerCase();
   if (userAgent.includes("android")) return "Android";

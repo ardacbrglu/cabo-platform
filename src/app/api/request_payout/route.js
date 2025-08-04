@@ -1,8 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/auth";
-
+import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 // minPayout değeri örnek olarak alınıyor, bunu environment/config'den çekebilirsin.
 const minPayout = 100; // Örneğin 100₺
 
