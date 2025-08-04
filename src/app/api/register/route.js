@@ -100,6 +100,15 @@ export const POST = csrf(async (req) => {
 
     await sendActivationEmail(cleanEmail, activationToken);
 
+    try {
+      await sendActivationEmail(cleanEmail, activationToken);
+    } catch (emailErr) {
+      console.error("EMAIL SEND ERROR:", emailErr);
+      return new Response(JSON.stringify({ success: false, message: "Activation email could not be sent." }), {
+        status: 500
+      });
+    }
+
     return new Response(JSON.stringify({ success: true, message: msg.success }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
