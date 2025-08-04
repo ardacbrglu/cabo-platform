@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";// import { checkRateLimit } from "@/lib/ratelimit"; // Eğer aktifse açabilirsin
+import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
+import { checkRateLimit } from "@/lib/ratelimit"; // Eğer aktifse açabilirsin
 
 const isValidDate = str => !isNaN(Date.parse(str));
 const isValidIdArray = arr => Array.isArray(arr) && arr.every(Number.isInteger);
