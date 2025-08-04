@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
@@ -6,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
 
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
-const RATE_LIMIT_WINDOW = 60 * 1000;
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 dakika
 const RATE_LIMIT_COUNT = 6;
 
 const messages = {
@@ -47,14 +48,16 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
-    // 3. Body verileri
+    // 3. İstek body verileri
     const { email, password } = await req.json();
     if (!email || !password) {
       return Response.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     // 4. Kullanıcı bul
-    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (!user) {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
@@ -76,7 +79,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
-    // 5. JWT üret
+    // 5. JWT token üret
     const token = jwt.sign(
       {
         userId: user.id,
@@ -93,7 +96,7 @@ export const POST = csrf(async (req) => {
     headers.append("Content-Type", "application/json");
     headers.append(
       "Set-Cookie",
-      `cabo_token=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax;${process.env.NODE_ENV === 'production' ? ' Secure' : ''}`
+      `cabo_token=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 60 * 60}; SameSite=Strict;${process.env.NODE_ENV === 'production' ? ' Secure;' : ''}`
     );
 
     return new Response(JSON.stringify({
@@ -103,7 +106,6 @@ export const POST = csrf(async (req) => {
 
   } catch (err) {
     console.error("USER LOGIN ERROR:", err);
-    const msg = messages.tr.fail;
-    return Response.json({ success: false, message: msg }, { status: 500 });
+    return Response.json({ success: false, message: messages.tr.fail }, { status: 500 });
   }
 });

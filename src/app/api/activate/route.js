@@ -1,19 +1,29 @@
-import prisma from '@/lib/prisma';
-export const dynamic = "force-dynamic";
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
 export const GET = async (req) => {
+  const url = new URL(req.url);
+  const token = url.searchParams.get('token');
+
+  if (!token) {
+    return NextResponse.json({ success: false, message: "Token missing." }, { status: 400 });
+  }
+
   try {
-    const url = new URL(req.url);
-    const token = url.searchParams.get('token');
-
-    if (!token) {
-      return Response.json({ success: false, message: "Invalid activation token." }, { status: 400 });
-    }
-
-    const user = await prisma.user.findFirst({ where: { activationToken: token, status: "pending" } });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await prisma.user.findFirst({
+      where: {
+        email: decoded.email,
+        status: "pending",
+        activationToken: token
+      }
+    });
 
     if (!user) {
-      return Response.json({ success: false, message: "Token invalid or already used." }, { status: 400 });
+      return NextResponse.json({ success: false, message: "Invalid or expired token." }, { status: 400 });
     }
 
     await prisma.user.update({
@@ -25,10 +35,10 @@ export const GET = async (req) => {
       }
     });
 
-    return Response.json({ success: true, message: "Your account has been activated! You can now log in." });
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/login?activated=1`);
 
   } catch (err) {
-    console.error("ACTIVATION ERROR:", err);
-    return Response.json({ success: false, message: "Server error." }, { status: 500 });
+    console.error("Activation error:", err);
+    return NextResponse.json({ success: false, message: "Invalid token." }, { status: 400 });
   }
 };
