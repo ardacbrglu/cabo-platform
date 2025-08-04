@@ -26,7 +26,7 @@ export const authOptions = {
         if (!isValid) return null;
         if (user.status !== "active") return null;
         return {
-          id: user.id, // DİKKAT! BURADA user.id (prisma int auto-increment) olmalı
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -44,9 +44,8 @@ export const authOptions = {
   },
   callbacks: {
     async jwt({ token, user }) {
-      // Sadece user varsa atama yap!
       if (user) {
-        token.sub = user.id;   // INT olmalı!
+        token.sub = user.id;  // int
         token.email = user.email;
         token.role = user.role;
         token.status = user.status;
@@ -61,16 +60,22 @@ export const authOptions = {
       }
       return session;
     },
-  },
-  events: {
-    async createUser({ user }) {
-      if (user.email) {
-        await prisma.user.update({
-          where: { email: user.email },
-          data: { termsAccepted: true, status: 'acttive' }
-        });
+    async signIn({ user, account }) {
+      if (account?.provider === "google" && user?.email) {
+        const existing = await prisma.user.findUnique({ where: { email: user.email } });
+        if (!existing) {
+          await prisma.user.update({
+            where: { email: user.email },
+            data: {
+              termsAccepted: true,
+              status: "active",
+              role: "affiliate",
+            },
+          });
+        }
       }
-    }
+      return true;
+    },
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
