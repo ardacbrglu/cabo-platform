@@ -11,7 +11,7 @@ model User {
   id                   Int                  @id @default(autoincrement())
   name                 String               @db.VarChar(100)
   email                String               @unique @db.VarChar(255)
-  passwordHash         String               @db.VarChar(255)
+  passwordHash         String?              @db.VarChar(255)
   role                 Role                 @default(affiliate)
   languagePreference   String               @default("en") @db.VarChar(10)
   currencyCode         String               @default("EUR") @db.Char(3)
