@@ -11,6 +11,7 @@ model User {
   id                   Int                  @id @default(autoincrement())
   name                 String               @db.VarChar(100)
   email                String               @unique @db.VarChar(255)
+  emailVerified        DateTime?            @db.DateTime(0)
   passwordHash         String?              @db.VarChar(255)
   role                 Role                 @default(affiliate)
   languagePreference   String               @default("en") @db.VarChar(10)
@@ -41,6 +42,8 @@ model User {
   @@map("users")
 }
 
+
+
 model Account {
   id                 Int      @id @default(autoincrement())
   userId             Int
@@ -61,6 +64,10 @@ model Account {
   @@index([userId])
   @@map("accounts")
 }
+
+
+
+
 
 model Session {
   id           Int      @id @default(autoincrement())

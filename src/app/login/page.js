@@ -26,12 +26,14 @@ const translations = {
     loggingIn: "Logging in...",
     errorFill: "Please enter your email and password.",
     forgot: "Forgot password?",
-    forgotSoon: "Password reset coming soon!",
     noAccount: "Don’t have an account?",
     registerHere: "Register here",
     or: "or",
     googleBtn: "Sign in with Google",
-    googleSoon: "Google login coming soon!"
+    googleSignInError: "Google sign-in failed.",
+    serverError: "Server error. Please try again later.",
+    setPassword: "You signed up with Google. Please set a password to log in.",
+    setPasswordLink: "Click to set password"
   },
   tr: {
     title: "Kullanıcı Girişi",
@@ -49,12 +51,14 @@ const translations = {
     loggingIn: "Giriş yapılıyor...",
     errorFill: "Lütfen e-posta ve şifrenizi girin.",
     forgot: "Şifreni mi unuttun?",
-    forgotSoon: "Şifre sıfırlama yakında!",
     noAccount: "Hesabın yok mu?",
     registerHere: "Buradan kaydol",
     or: "veya",
     googleBtn: "Google ile giriş yap",
-    googleSoon: "Google ile giriş çok yakında!"
+    googleSignInError: "Google ile giriş başarısız oldu.",
+    serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
+    setPassword: "Google ile kayıt oldunuz. Giriş yapabilmek için şifre belirleyin.",
+    setPasswordLink: "Şifre belirlemek için tıklayın"
   }
 };
 
@@ -67,7 +71,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showForgot, setShowForgot] = useState(false);
 
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
@@ -96,22 +99,19 @@ export default function LoginPage() {
         setError(data.message || t('errorFill'));
       }
     } catch {
-      setError('Server error. Please try again later.');
+      setError(t('serverError'));
     } finally {
       setLoading(false);
     }
   };
 
-  // Google ile login
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
     try {
       await signIn("google", { callbackUrl: "/dashboard" });
     } catch {
-      setError(locale === "tr"
-        ? "Google ile giriş başarısız oldu."
-        : "Google sign-in failed.");
+      setError(t('googleSignInError'));
     }
     setLoading(false);
   };
@@ -184,13 +184,26 @@ export default function LoginPage() {
               <button
                 type="button"
                 className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition"
-                onClick={() => setShowForgot(true)}
+                onClick={() => router.push('/password_reset')}
               >
                 {t('forgot')}
               </button>
             </div>
 
-            {error && <div className="text-red-500 text-base text-center">{error}</div>}
+            {/* Hata mesajı, Google user için ayrı butonlu */}
+            {error && (
+              <div className="text-red-500 text-base text-center">
+                {error === t('setPassword') || error === translations.tr.setPassword || error === translations.en.setPassword ? (
+                  <>
+                    {t('setPassword')}
+                    <br />
+                    <Link href="/password_reset" className="text-[#81d742] underline ml-1 hover:text-[#b3ffb3]">
+                      {t('setPasswordLink')}
+                    </Link>
+                  </>
+                ) : error}
+              </div>
+            )}
 
             <button
               type="submit"
@@ -205,7 +218,6 @@ export default function LoginPage() {
               <span className="px-3 text-gray-400 text-sm font-semibold">{t('or')}</span>
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
-
 
             <button
               type="button"
@@ -226,9 +238,6 @@ export default function LoginPage() {
               </span>
               {t('googleBtn')}
             </button>
-
-
-
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
@@ -239,22 +248,6 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
-
-      {/* Forgot Password Modal */}
-      {showForgot && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-          <div className="bg-[#181818] rounded-xl shadow-xl p-8 max-w-sm w-full border border-[#232323] text-center">
-            <h4 className="text-lg md:text-xl text-[#d1ffd0] font-bold mb-4">{t('forgot')}</h4>
-            <div className="text-gray-300 text-base mb-6">{t('forgotSoon')}</div>
-            <button
-              onClick={() => setShowForgot(false)}
-              className="mt-2 px-6 py-3 rounded-lg bg-[#81d742] text-[#111] font-bold hover:bg-[#b3ffb3] transition"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
 
       <style jsx global>{`
         @media (max-width: 768px) {
