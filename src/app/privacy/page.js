@@ -1,5 +1,10 @@
 
+'use client';
 
 export default function Page() {
-  return <div>Coming soon.</div>;
+  return (
+    <div>
+      Coming soon.
+    </div>
+  );
 }
