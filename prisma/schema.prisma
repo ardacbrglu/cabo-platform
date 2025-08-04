@@ -21,6 +21,7 @@ model User {
   bankName             String?              @db.VarChar(100)
   iban                 String?              @db.VarChar(34)
   phoneNumber          String?              @db.VarChar(25)
+  image                String?              @db.Text
   status               Userstatus           @default(pending)
   isFlagged            Boolean              @default(false)
   flagReason           String?              @db.VarChar(255)

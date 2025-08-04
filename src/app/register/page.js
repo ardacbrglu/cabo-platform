@@ -96,19 +96,31 @@ export default function RegisterPage() {
     setTimeout(() => router.push('/login'), 1800);
   };
 
+  
   // Google ile kayıt/giriş
   const handleGoogleSignIn = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      await signIn("google", { callbackUrl: "/dashboard" });
-    } catch {
-      setError(locale === "tr"
-        ? "Google ile giriş başarısız oldu." 
-        : "Google sign-in failed.");
-    }
-    setLoading(false);
-  };
+  setError('');
+  // Terms zorunlu
+  if (!terms) {
+    setError(t('termsReq'));
+    return;
+  }
+  // Captcha zorunlu
+  if (!captcha) {
+    setError(t('captchaReq'));
+    return;
+  }
+  setLoading(true);
+  try {
+    await signIn("google", { callbackUrl: "/dashboard" });
+  } catch {
+    setError(locale === "tr"
+      ? "Google ile giriş başarısız oldu."
+      : "Google sign-in failed.");
+  }
+  setLoading(false);
+};
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();

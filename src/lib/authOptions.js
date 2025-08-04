@@ -67,7 +67,7 @@ export const authOptions = {
       if (user.email) {
         await prisma.user.update({
           where: { email: user.email },
-          data: { termsAccepted: true }
+          data: { termsAccepted: true, status: 'acttive' }
         });
       }
     }
