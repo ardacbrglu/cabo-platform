@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLocale } from '@/context/LocaleContext';
-import { useTranslation } from '@/lib/useTranslation';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ActivatePage() {
   const params = useSearchParams();
