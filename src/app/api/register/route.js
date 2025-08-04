@@ -98,7 +98,7 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    await sendActivationEmail(cleanEmail, activationToken);
+ 
 
     try {
       await sendActivationEmail(cleanEmail, activationToken);

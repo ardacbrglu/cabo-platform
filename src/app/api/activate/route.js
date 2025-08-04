@@ -1,12 +1,13 @@
+// ✅ app/api/activate/route.js
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PROD_!@#_Cabo";
 
-export const GET = async (req) => {
+export async function GET(req) {
   const url = new URL(req.url);
-  const token = url.searchParams.get('token');
+  const token = url.searchParams.get("token");
 
   if (!token) {
     return NextResponse.json({ success: false, message: "Token missing." }, { status: 400 });
@@ -14,31 +15,26 @@ export const GET = async (req) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await prisma.user.findFirst({
-      where: {
-        email: decoded.email,
-        status: "pending",
-        activationToken: token
-      }
-    });
+    const email = decoded.email;
 
-    if (!user) {
-      return NextResponse.json({ success: false, message: "Invalid or expired token." }, { status: 400 });
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user || user.status === "active") {
+      return NextResponse.json({ success: false, message: "Already activated or user not found." }, { status: 400 });
     }
 
     await prisma.user.update({
-      where: { id: user.id },
+      where: { email },
       data: {
         status: "active",
+        emailVerified: true,
         activationToken: null,
-        emailVerified: new Date()
-      }
+      },
     });
 
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/login?activated=1`);
-
+    return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Activation error:", err);
-    return NextResponse.json({ success: false, message: "Invalid token." }, { status: 400 });
+    console.error("ACTIVATION ERROR:", err);
+    return NextResponse.json({ success: false, message: "Invalid or expired token." }, { status: 400 });
   }
-};
+}
