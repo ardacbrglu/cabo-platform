@@ -1,50 +1,55 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
 
-export default function ActivatePage() {
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import PublicLayout from "@/components/PublicLayout";
+
+function ActivateContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const [message, setMessage] = useState('Activating...');
-  const [success, setSuccess] = useState(false);
+  const token = searchParams.get("token");
+  const [message, setMessage] = useState("Verifying...");
+  const [status, setStatus] = useState("loading");
 
   useEffect(() => {
-    const token = searchParams.get('token');
     if (!token) {
-      setMessage("Missing activation token.");
+      setMessage("Invalid activation link.");
+      setStatus("error");
       return;
     }
 
     fetch(`/api/activate?token=${token}`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data) => {
         if (data.success) {
-          setSuccess(true);
-          setMessage("Account activated! You can now log in.");
+          setMessage("Your account has been activated. You can now log in.");
+          setStatus("success");
         } else {
-          setSuccess(false);
-          setMessage(data.message || "Activation failed.");
+          setMessage(data.message || "Activation failed or link expired.");
+          setStatus("error");
         }
       })
       .catch(() => {
-        setMessage("An error occurred.");
-        setSuccess(false);
+        setMessage("An unexpected error occurred.");
+        setStatus("error");
       });
-  }, []);
+  }, [token]);
 
   return (
-    <div className="min-h-screen flex flex-col justify-center items-center px-4 text-center">
-      <h2 className={`text-3xl font-bold mb-4 ${success ? 'text-green-400' : 'text-red-400'}`}>
-        {message}
-      </h2>
-      {success && (
-        <button
-          onClick={() => router.push('/login')}
-          className="mt-4 px-6 py-3 rounded-lg bg-[#81d742] text-black hover:bg-[#aaff6c] transition"
-        >
-          Go to Login
-        </button>
-      )}
-    </div>
+    <PublicLayout>
+      <div className="min-h-[60vh] flex items-center justify-center px-4">
+        <div className={`max-w-md w-full text-center p-6 rounded-xl border ${status === "success" ? "border-green-500" : "border-red-500"} text-white`}>
+          <h2 className="text-2xl font-bold mb-4">Account Activation</h2>
+          <p className="text-lg">{message}</p>
+        </div>
+      </div>
+    </PublicLayout>
+  );
+}
+
+export default function ActivatePage() {
+  return (
+    <Suspense fallback={<div className="text-center text-white mt-20">Loading...</div>}>
+      <ActivateContent />
+    </Suspense>
   );
 }
