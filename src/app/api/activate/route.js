@@ -32,9 +32,9 @@ export async function GET(req) {
       },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.redirect(new URL("/activated", req.url));
   } catch (err) {
     console.error("ACTIVATION ERROR:", err);
-    return NextResponse.json({ success: false, message: "Invalid or expired token." }, { status: 400 });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
   }
 }
