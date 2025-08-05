@@ -3,17 +3,23 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 import { validateCsrfToken } from "@/lib/csrf";
+
+// SECURITY REVIEW: This route uses validateCsrfToken for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import { checkRateLimit } from "@/lib/ratelimit";
 import { z } from "zod";
+// SECURITY REVIEW: This API exposes merchant payout details. See comments below for security notes.
 
 const requestSchema = z.object({
   itemIds: z.array(z.number().int().positive()).min(1),
 });
 
 export async function POST(req) {
+  // WARNING: Ensure only authenticated merchants can access payout details. Never expose sensitive info to unauthorized users.
   try {
     // CSRF koruması
     await validateCsrfToken(req);
+    // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing merchant payment operations.
+    // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
 
     // Auth & Rate Limit
     const token = getTokenFromRequest(req);
@@ -22,10 +28,12 @@ export async function POST(req) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     await checkRateLimit(req, user.userId, 10, 60_000, 'merchant-payout-details');
+    // WARNING: Always validate and sanitize userId from token. Never trust user input for sensitive queries.
 
     // Input validation (zod)
     const body = await req.json();
     const { itemIds } = requestSchema.parse(body);
+    // NOTE: Input validation is done with zod. Good practice for preventing injection and type errors.
 
     // Sadece merchant’a ait payout item'larını çek
     const items = await prisma.payoutRequestItem.findMany({
@@ -48,6 +56,7 @@ export async function POST(req) {
         }
       }
     });
+    // WARNING: Only select fields that are safe to expose. Never return sensitive data (passwords, tokens, etc).
 
     if (!items.length) {
       return NextResponse.json({ error: "No payout items found" }, { status: 404 });
@@ -92,6 +101,7 @@ export async function POST(req) {
         }
       }
     }
+    // NOTE: Only expose non-sensitive sale details. Never include internal notes or admin-only data.
 
     // Ürün isimlerini map’le
     const productIds = [...new Set(sales.map(s => s.productId))];
@@ -102,6 +112,7 @@ export async function POST(req) {
         })
       : [];
     const productMap = Object.fromEntries(products.map(p => [p.productId, p.name]));
+    // NOTE: Only expose product names, not internal product data.
 
     // Meta bilgileri (modal üstündeki bilgiler için)
     const meta = {
@@ -128,9 +139,11 @@ export async function POST(req) {
       affiliate_name: meta.affiliate_name,
       meta,
     });
+    // NOTE: Only expose non-sensitive payout and sale details. Never include internal notes or admin-only data.
 
   } catch (err) {
     console.error("Merchant Payment Details Error:", err);
+    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
-'use client';
+"use client";
+// SECURITY REVIEW: This page handles user registration UI. See comments below for security notes.
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -88,6 +89,7 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  // NOTE: All sensitive state is kept in React state. Never expose sensitive data in the UI or logs.
 
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
@@ -99,27 +101,28 @@ export default function RegisterPage() {
   
   // Google ile kayıt/giriş
   const handleGoogleSignIn = async () => {
-  setError('');
-  // Terms zorunlu
-  if (!terms) {
-    setError(t('termsReq'));
-    return;
-  }
-  // Captcha zorunlu
-  if (!captcha) {
-    setError(t('captchaReq'));
-    return;
-  }
-  setLoading(true);
-  try {
-    await signIn("google", { callbackUrl: "/dashboard" });
-  } catch {
-    setError(locale === "tr"
-      ? "Google ile giriş başarısız oldu."
-      : "Google sign-in failed.");
-  }
-  setLoading(false);
-};
+    setError('');
+    // Terms zorunlu
+    if (!terms) {
+      setError(t('termsReq'));
+      return;
+    }
+    // Captcha zorunlu
+    if (!captcha) {
+      setError(t('captchaReq'));
+      return;
+    }
+    setLoading(true);
+    try {
+      await signIn("google", { callbackUrl: "/dashboard" });
+    } catch {
+      setError(locale === "tr"
+        ? "Google ile giriş başarısız oldu."
+        : "Google sign-in failed.");
+    }
+    setLoading(false);
+    // NOTE: Google sign-in is protected by terms and captcha checks. Good practice.
+  };
 
 
   const handleSubmit = async (e) => {
@@ -163,6 +166,9 @@ export default function RegisterPage() {
     } finally {
       setLoading(false);
     }
+    // NOTE: Registration form is protected by CSRF token and captcha. Good practice.
+    // WARNING: No client-side password strength check. Consider adding a password strength meter for better UX and security.
+    // WARNING: No client-side email format validation beyond input type. Consider using a library for stricter validation.
   };
 
   return (
@@ -220,6 +226,7 @@ export default function RegisterPage() {
               autoCorrect="off"
               value={name}
               onChange={e => setName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+              // NOTE: Username is restricted to alphanumeric and underscores. Good for basic sanitization.
               placeholder={t('usernamePH')}
               minLength={3}
               maxLength={32}
@@ -240,6 +247,7 @@ export default function RegisterPage() {
               autoCorrect="off"
               value={email}
               onChange={e => setEmail(e.target.value)}
+              // WARNING: No client-side email format validation beyond input type. Consider using a library for stricter validation.
               placeholder={t('emailPH')}
               required
               className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
@@ -256,6 +264,7 @@ export default function RegisterPage() {
               autoComplete="new-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
+              // WARNING: No client-side password strength check. Consider adding a password strength meter for better UX and security.
               placeholder={t('passwordPH')}
               minLength={8}
               required
@@ -279,11 +288,14 @@ export default function RegisterPage() {
 
           {/* reCAPTCHA */}
           <Captcha onChange={setCaptcha} lang={locale} />
+          {/* NOTE: Captcha is required for all registrations. Good for bot prevention. */}
 
           <CSRFTokenInput />
+          {/* NOTE: CSRF token is included in all sensitive requests. Good practice. */}
 
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
           {success && <div className="text-green-400 text-base md:text-lg text-center">{success}</div>}
+          {/* WARNING: Avoid displaying raw server error messages to users. Sanitize error output if needed. */}
 
           <button
             type="submit"

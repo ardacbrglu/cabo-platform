@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 import { validateCsrfToken } from '@/lib/csrf';
+
+// SECURITY REVIEW: This route uses validateCsrfToken for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import { checkRateLimit } from '@/lib/ratelimit';
 import { z } from 'zod';
 
@@ -12,6 +14,7 @@ export async function POST(req) {
   try {
     // 1) CSRF
     await validateCsrfToken(req);
+    // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing payout operations.
 
     // 2) Auth
     const token = getTokenFromRequest(req);

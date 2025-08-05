@@ -11,7 +11,6 @@ export default function ContentWrapper({ children }) {
   const [validLocale, setValidLocale] = useState(true);
 
   useEffect(() => {
-    // Eğer sadece "/tr" veya "/en" dışındaki localelere izin veriyorsan kontrol:
     const segments = pathname.split('/');
     const currentLocale = segments[1];
     if (currentLocale && !['tr', 'en'].includes(currentLocale)) {

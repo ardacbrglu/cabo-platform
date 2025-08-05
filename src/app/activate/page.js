@@ -1,9 +1,20 @@
 'use client';
-import { useSearchParams } from 'next/navigation';
+
+import { useSearchParams, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
 export default function ActivatedPage() {
   const params = useSearchParams();
+  const router = useRouter();
   const isError = params.get("error");
+
+  // ✅ 3 saniye sonra login sayfasına yönlendir
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      router.push("/login");
+    }, 3000);
+    return () => clearTimeout(timeout);
+  }, [router]);
 
   return (
     <div className="flex flex-col justify-center items-center min-h-screen text-white text-center px-6">
@@ -15,7 +26,7 @@ export default function ActivatedPage() {
       ) : (
         <>
           <h1 className="text-3xl font-bold mb-4">Account Activated!</h1>
-          <p className="text-green-400 text-lg">Your account is now active. You can log in.</p>
+          <p className="text-green-400 text-lg">Your account is now active. Redirecting to login...</p>
         </>
       )}
     </div>

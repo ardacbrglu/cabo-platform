@@ -1,10 +1,13 @@
 import { csrf } from '@/lib/csrf';
+
+// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import prisma from '@/lib/prisma';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPasswordResetEmail } from '@/lib/mailer'; // aşağıda anlatacağım
 import { addMinutes } from 'date-fns';
 
 export const POST = csrf(async (req) => {
+  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
   try {
     const { email } = await req.json();
     if (!email) {

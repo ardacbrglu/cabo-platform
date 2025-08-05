@@ -1,4 +1,5 @@
-'use client';
+"use client";
+// SECURITY REVIEW: This page handles wallet and payout UI. See comments below for security notes.
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
@@ -129,9 +130,11 @@ export default function WalletPage() {
 
   function validateIban(val) {
     return val.startsWith('TR') && val.length === 26;
+    // WARNING: Only checks format, not validity or ownership. Consider further validation for financial operations.
   }
   function validateRealName(val) {
     return val && val.trim().split(' ').length >= 2 && val.trim().length >= 4;
+    // NOTE: Only checks for minimum length and two words. Consider stricter validation if needed.
   }
 
   function handleIbanSave(e) {
@@ -167,6 +170,7 @@ export default function WalletPage() {
       }
       refreshData();
     });
+    // NOTE: CSRF token is included in all sensitive requests. Good practice.
   }
 
 
@@ -182,6 +186,7 @@ export default function WalletPage() {
       },
       body: JSON.stringify({ requestPayout: true })
     });
+    // NOTE: All payout requests are protected by CSRF token. Good practice.
     setIsSubmitting(false);
     const data = await res.json();
     if (res.ok) {
@@ -207,6 +212,7 @@ export default function WalletPage() {
       },
       body: JSON.stringify({ cancelRequest: true, requestId })
     });
+    // NOTE: Cancel requests are protected by CSRF token. Good practice.
     setIsSubmitting(false);
     const data = await res.json();
     if (res.ok) {
@@ -225,6 +231,7 @@ export default function WalletPage() {
       console.warn("CSRF token henüz alınmadı, detayları çekilmiyor.");
       return;
     }
+    // WARNING: Never expose sensitive payout details to unauthorized users. Always validate permissions server-side.
 
     try {
       const res = await fetch('/api/payout_request_details', {

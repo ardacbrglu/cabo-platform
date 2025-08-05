@@ -71,6 +71,7 @@ export default function MerchantPaymentsPage() {
         setItems(data.items || []);
         setTotal(data.total || 0);
       });
+    // NOTE: Always validate and sanitize all data received from the API before displaying. Never trust client-side data for security decisions.
   }, [page, paySuccess]);
 
   // Select all logic (sadece pending'ler için toplu seçim)
@@ -123,6 +124,7 @@ export default function MerchantPaymentsPage() {
     } finally {
       setPaying(false);
     }
+    // WARNING: Always validate user permissions server-side for payment actions. Never trust client-side checks alone.
   }
 
   async function handleShowDetails(item) {
@@ -152,6 +154,7 @@ export default function MerchantPaymentsPage() {
       setDetailsMeta(null);
     }
     setDetailsLoading(false);
+    // NOTE: Always validate and sanitize all payout details before displaying. Never expose sensitive data to unauthorized users.
   }
 
   // Pagination

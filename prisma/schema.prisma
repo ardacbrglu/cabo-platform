@@ -24,6 +24,8 @@ model User {
   phoneNumber          String?              @db.VarChar(25)
   image                String?              @db.Text
   status               Userstatus           @default(pending)
+  failedAttempts       Int                  @default(0)
+  lockUntil            DateTime? 
   isFlagged            Boolean              @default(false)
   flagReason           String?              @db.VarChar(255)
   realUserFullname     String?              @db.VarChar(100)

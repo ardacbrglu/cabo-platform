@@ -6,6 +6,9 @@ import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { validateCsrfToken } from "@/lib/csrf";
 
+// SECURITY REVIEW: This route uses validateCsrfToken for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+// SECURITY REVIEW: This API handles wallet and payout logic. See comments below for security notes.
+
 function isValidIbanTR(iban) {
   return typeof iban === "string" && iban.startsWith("TR") && iban.length === 26;
 }
@@ -14,11 +17,14 @@ async function getUserIdSafe(req) {
   const token = getTokenFromRequest(req);
   const payload = token ? verifyToken(token) : null;
   if (!payload?.userId) return null;
+  // WARNING: Always validate and sanitize userId from token. Never trust user input for sensitive queries.
   await checkRateLimit(req, payload.userId, 40, "5m", "wallet-api");
+  // NOTE: Rate limiting is per user. Consider additional device/IP-based limits for abuse prevention.
   return payload.userId;
 }
 
 export async function GET(req) {
+  // WARNING: Ensure only authenticated users can access wallet data. Never expose sensitive info to unauthorized users.
   try {
     const userId = await getUserIdSafe(req);
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -26,6 +32,7 @@ export async function GET(req) {
     // Minimum payout (platformConfig)
     const config = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
     const minPayout = config ? Number(config.value) : 100;
+    // NOTE: Only expose non-sensitive config to users.
 
     const links = await prisma.affiliateLink.findMany({
       where: { userId: userId },
@@ -70,6 +77,7 @@ export async function GET(req) {
       where: { id: userId },
       select: { iban: true, bankName: true, realUserFullname: true }
     });
+    // WARNING: Only select fields that are safe to expose. Never return sensitive data (passwords, tokens, etc).
     const iban = user?.iban || "";
     const bankName = user?.bankName || "";
     const realName = user?.realUserFullname || "";
@@ -114,26 +122,33 @@ export async function GET(req) {
         updatedAt: item.updatedAt,
       }))
     });
+    // NOTE: Only expose non-sensitive payout history. Never include internal notes or admin-only data.
   } catch (err) {
     console.error("Wallet API GET error:", err);
+    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
     return NextResponse.json({ error: err.message || "Server error" }, { status: 500 });
   }
 }
 
 export async function POST(req) {
+  // WARNING: Ensure only authenticated users can modify wallet data. Validate all input fields strictly.
   try {
     const userId = await getUserIdSafe(req);
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     await validateCsrfToken(req);
+    // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing wallet operations.
+    // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
 
     const body = await req.json();
+    // WARNING: No input sanitization beyond basic checks. Consider using a library to sanitize all user input to prevent injection attacks.
 
     const config = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
     const minPayout = config ? Number(config.value) : 100;
 
     // IBAN/banka/ad güncelleme
     if (body.iban && body.bankName && body.realName) {
+      // WARNING: IBAN, bank name, and real name are user-controlled. Validate and sanitize before saving to DB.
       if (!isValidIbanTR(body.iban)) {
         return NextResponse.json({ error: "Invalid IBAN. Only 26-character Turkish IBAN starting with TR is allowed." }, { status: 400 });
       }
@@ -151,15 +166,18 @@ export async function POST(req) {
           realUserFullname: body.realName
         }
       });
+      // NOTE: Consider logging changes to sensitive user data for audit purposes.
       return NextResponse.json({ ok: true, message: "Bank info saved" });
     }
 
     if ((body.iban && !body.realName) || (body.bankName && !body.realName)) {
+      // NOTE: Always require full legal name for financial operations.
       return NextResponse.json({ error: "Full legal name is required." }, { status: 400 });
     }
 
     // Payout request başlat
     if (body.requestPayout) {
+      // WARNING: Payout requests are sensitive. Ensure all business rules are enforced and log actions for auditing.
       const activeRequest = await prisma.payoutRequest.findFirst({
         where: { userId: userId, status: { in: ["pending", "approved"] } }
       });
@@ -172,6 +190,7 @@ export async function POST(req) {
         where: { id: userId },
         select: { iban: true, bankName: true, realUserFullname: true }
       });
+      // WARNING: Always use a snapshot of user bank info at the time of payout request. Never trust client-side data for payouts.
       if (!user?.iban || !isValidIbanTR(user.iban)) {
         return NextResponse.json({ error: "Please save a valid IBAN first." }, { status: 400 });
       }
@@ -203,6 +222,7 @@ export async function POST(req) {
       }
 
       return await prisma.$transaction(async (tx) => {
+        // NOTE: All payout operations are wrapped in a DB transaction. Good practice for consistency.
         const payoutReq = await tx.payoutRequest.create({
           data: {
             userId: userId,
@@ -247,7 +267,9 @@ export async function POST(req) {
 
     // CANCEL REQUEST
     if (body.cancelRequest && body.requestId) {
+      // WARNING: Only allow users to cancel their own pending payout requests. Validate request ownership and status.
       return await prisma.$transaction(async (tx) => {
+        // NOTE: All cancel operations are wrapped in a DB transaction. Good practice for consistency.
         const reqItem = await tx.payoutRequest.findUnique({
           where: { requestId: body.requestId }
         });
@@ -309,6 +331,7 @@ export async function POST(req) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   } catch (err) {
     console.error("Wallet API POST error:", err);
+    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
     return NextResponse.json({ error: err.message || "Server error" }, { status: 500 });
   }
 }

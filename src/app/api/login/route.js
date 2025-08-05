@@ -1,14 +1,23 @@
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
+
+// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is not defined!");
+}
+
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 dakika
 const RATE_LIMIT_COUNT = 6;
+
+const MAX_failedAttempts = 5;
+const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dakika
 
 const messages = {
   en: {
@@ -17,6 +26,7 @@ const messages = {
     merchant: "Merchants cannot log in here.",
     google: "You signed up with Google. Please set a password to log in.",
     inactive: "Your account has not been activated yet.",
+    locked: "Too many failed attempts. Please try again later.",
     success: "Login successful!",
     fail: "Login failed. Please try again.",
     ratelimit: "Too many requests. Please wait.",
@@ -28,6 +38,7 @@ const messages = {
     merchant: "Satıcı hesapları buradan giriş yapamaz.",
     google: "Google ile kayıt oldunuz. Giriş yapabilmek için şifre belirleyin.",
     inactive: "Hesabınız henüz aktifleştirilmedi.",
+    locked: "Çok fazla hatalı deneme. Lütfen daha sonra tekrar deneyin.",
     success: "Giriş başarılı!",
     fail: "Giriş başarısız. Lütfen tekrar deneyin.",
     ratelimit: "Çok fazla istek. Lütfen bekleyin.",
@@ -36,30 +47,35 @@ const messages = {
 };
 
 export const POST = csrf(async (req) => {
+  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
   try {
-    // 1. Dil belirleme
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
     const locale = lang.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
-    // 2. Rate limit
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
-    // 3. İstek body verileri
     const { email, password } = await req.json();
+
     if (!email || !password) {
       return Response.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 4. Kullanıcı bul
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+
+    // Sabit bir hata mesajı kullanılarak user enum. engelleniyor
     if (!user) {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
+    }
+
+    // Account lock kontrolü (örnek: status = locked + lockUntil zamanı varsa)
+    if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
+      return Response.json({ success: false, message: msg.locked }, { status: 403 });
     }
 
     if (user.role === 'merchant') {
@@ -71,15 +87,36 @@ export const POST = csrf(async (req) => {
     }
 
     const isValid = await bcrypt.compare(password, user.passwordHash);
+
+    // Şifre hatalıysa, giriş denemeleri sayısını artır
     if (!isValid) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedAttempts: {
+            increment: 1
+          },
+          lockUntil: user.failedAttempts + 1 >= MAX_failedAttempts
+            ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
+            : user.lockUntil
+        }
+      });
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
+
+    // Başarılı girişte hatalı deneme sayısını sıfırla
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedAttempts: 0,
+        lockUntil: null
+      }
+    });
 
     if (user.status !== 'active') {
       return Response.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
-    // 5. JWT token üret
     const token = jwt.sign(
       {
         userId: user.id,
@@ -105,7 +142,7 @@ export const POST = csrf(async (req) => {
     }), { status: 200, headers });
 
   } catch (err) {
-    console.error("USER LOGIN ERROR:", err);
+    console.error("LOGIN ERROR:", err.message);
     return Response.json({ success: false, message: messages.tr.fail }, { status: 500 });
   }
 });

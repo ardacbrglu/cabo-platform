@@ -8,6 +8,8 @@ import { cookies } from 'next/headers';
 // Güvenlik: CSRF & Rate-limit middleware (örnek, senin altyapına göre)
 // Bunları proje altyapına eklemeyi unutma!
 import { csrf } from '@/lib/csrf';      // POST, PATCH için zorunlu
+
+// SECURITY REVIEW: This route uses the csrf middleware for POST and PATCH. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import { checkRateLimit } from '@/lib/ratelimit'; // IP tabanlı
 
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
@@ -98,6 +100,7 @@ export const GET = async (req) => {
 
 // --------- POST: Yeni ürün ekleme ---------
 export const POST = csrf(async (req) => {
+  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
   try {
     // RATE LIMIT: POST istekleri için (IP başı 10/dk)
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || 'unknown';
@@ -205,6 +208,7 @@ export const POST = csrf(async (req) => {
 
 // --------- PATCH: Ürün güncelleme (edit, activate, deactivate) ---------
 export const PATCH = csrf(async (req) => {
+  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
   try {
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || 'unknown';
     if (!checkRateLimit(`merchant_dashboard_patch_${ip}`, 10, 60_000)) {

@@ -1,5 +1,7 @@
 export const dynamic = "force-dynamic";
 import { csrf } from '@/lib/csrf';
+
+// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit } from '@/lib/ratelimit';
@@ -42,6 +44,7 @@ const messages = {
 };
 
 export const POST = csrf(async (req) => {
+  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
   try {
     // Locale
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
