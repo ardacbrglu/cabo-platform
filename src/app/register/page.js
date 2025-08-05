@@ -153,7 +153,7 @@ const handleSubmit = async (e) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-csrf-token': csrf_token || '',
+        'x-csrf-token': csrfToken || '',
         'accept-language': locale || 'en',
       },
       body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),

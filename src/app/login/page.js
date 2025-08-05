@@ -92,7 +92,7 @@ export default function LoginPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrf_token || ''
+          'x-csrf-token': csrfToken || ''
         },
         body: JSON.stringify({ email, password }),
       });

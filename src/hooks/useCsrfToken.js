@@ -11,7 +11,7 @@ export function useCsrfToken() {
         const text = await res.text();
         if (res.ok) {
           const data = JSON.parse(text);
-          setcsrf_token(data.csrf_token || '');
+          setcsrf_token(data.csrfToken || '');
         } else {
           console.error('CSRF endpoint failed:', text);
         }

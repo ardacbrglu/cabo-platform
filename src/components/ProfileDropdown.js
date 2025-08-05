@@ -5,6 +5,7 @@ import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 import { useRouter } from "next/navigation";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
+
 import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
@@ -42,7 +43,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
       method: 'POST',
       credentials: 'include',
       headers: {
-        'x-csrf-token': csrf_token || ''
+        'x-csrf-token': csrfToken || ''
       }
     });
     document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";

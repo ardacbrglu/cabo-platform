@@ -149,7 +149,7 @@ export default function MerchantRegisterPage() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-csrf-token": csrf_token || "",
+        "x-csrf-token": csrfToken || "",
         "accept-language": locale || "en"
       },
       body: JSON.stringify({
