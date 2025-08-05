@@ -10,7 +10,7 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 export default function SupportPage() {
   const { user } = useUser();
   const t = useTranslation();
-  const csrfToken = useCsrfToken();          // ← CSRF token’ı alın
+  const csrfToken = useCsrfToken(); // ← CSRF token hook
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
@@ -28,7 +28,7 @@ export default function SupportPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken     // ← CSRF token’ı header’da gönderin
+          'x-csrf-token': csrfToken // ← CSRF token header
         },
         body: JSON.stringify({ message }),
       });
@@ -40,7 +40,6 @@ export default function SupportPage() {
         setMessage('');
         setTimeout(() => setSent(false), 3500);
       } else {
-        // 429 veya 401/500 döndüyse, data.error içinden
         setError(data.error || t("errorGeneric"));
       }
     } catch (e) {
@@ -95,8 +94,7 @@ export default function SupportPage() {
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                disabled={sending || !csrf_token /* token gelene kadar disable */
-                }
+                disabled={sending || !csrfToken}
                 required
                 maxLength={900}
                 autoComplete="off"
@@ -104,7 +102,7 @@ export default function SupportPage() {
               <button
                 type="submit"
                 className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={sending || !message.trim() || !csrf_token}
+                disabled={sending || !message.trim() || !csrfToken}
               >
                 {sending ? t("sending") : t("send")}
               </button>
