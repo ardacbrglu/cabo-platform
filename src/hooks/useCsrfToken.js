@@ -1,7 +1,7 @@
-// src/hooks/usecsrf_token.js
+// src/hooks/useCsrfToken.js
 import { useEffect, useState } from 'react';
 
-export function usecsrf_token() {
+export function useCsrfToken() {
   const [csrf_token, setcsrf_token] = useState('');
 
   useEffect(() => {

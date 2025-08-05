@@ -83,7 +83,7 @@ const translations = {
 
 export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
-  const csrf_token = usecsrf_token();
+  const csrfToken = useCsrfToken();
 
   const [form, setForm] = useState({
     name: "",

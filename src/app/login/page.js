@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
-import usecsrf_token from '@/components/usecsrf_token';
-import { usecsrf_token } from '@/hooks/usecsrf_token';
+import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { signIn } from "next-auth/react";
 
 const translations = {
@@ -63,14 +63,14 @@ const translations = {
 };
 
 export default function LoginPage() {
-  // SECURITY REVIEW: This login form uses usecsrf_token and fetches the CSRF token, which is good.
+  // SECURITY REVIEW: This login form uses useCsrfToken and fetches the CSRF token, which is good.
   // SECURITY REVIEW: Password input uses type="password" and disables autocomplete for security.
   // SECURITY REVIEW: Google login uses next-auth, which is a secure standard. Make sure callback URLs are validated.
   // SECURITY REVIEW: Consider adding reCAPTCHA or similar bot protection to prevent automated login attempts.(mantikli ise ekleyelim)
   // SECURITY REVIEW: Consider rate limiting login attempts on the frontend to slow down brute-force attacks.(gerek var ise ekleyelim)
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const csrf_token = usecsrf_token();
+  const csrfToken = useCsrfToken();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -161,7 +161,7 @@ export default function LoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            <usecsrf_token />
+            <CSRFTokenInput/>
 
             <input
               type="email"

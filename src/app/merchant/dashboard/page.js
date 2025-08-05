@@ -20,7 +20,7 @@ function getQuotastatus(product) {
 export default function MerchantDashboardPage() {
   const t = useTranslation();
   const { user, setUser } = useUser();
-  const csrf_token = usecsrf_token(); // ← CSRF token hook
+  const csrfToken = useCsrfToken(); // ← CSRF token hook
 
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);

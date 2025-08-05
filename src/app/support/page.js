@@ -5,12 +5,12 @@ import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from 'lucide-react
 import { useUser } from '@/context/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useState, useRef } from 'react';
-import { usecsrf_token } from '@/hooks/usecsrf_token';
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function SupportPage() {
   const { user } = useUser();
   const t = useTranslation();
-  const csrf_token = usecsrf_token();          // ← CSRF token’ı alın
+  const csrfToken = useCsrfToken();          // ← CSRF token’ı alın
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);

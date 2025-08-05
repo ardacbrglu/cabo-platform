@@ -50,7 +50,7 @@ function exportToCSV(sales, date, t) {
 }
 
 export default function WalletPage() {
-  const csrf_token = usecsrf_token();
+  const csrfToken = useCsrfToken();
   const t = useTranslation();
   const [loading, setLoading] = useState(true);
   const [balance, setBalance] = useState(0);

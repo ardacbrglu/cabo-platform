@@ -36,7 +36,7 @@ export default function SettingsPage() {
   const { locale, setLocale } = useLocale();
   const t = useTranslation();
   const isMobile = useIsMobile();
-  const csrf_token = usecsrf_token();
+  const csrfToken = useCsrfToken();
 
   const cardGap = isMobile ? "gap-6" : "gap-7";
   const cardClass = `
