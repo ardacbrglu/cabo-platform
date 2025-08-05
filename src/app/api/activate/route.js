@@ -31,6 +31,8 @@ export async function GET(req) {
         status: "active",
         emailVerified: new Date(),
         activationToken: null,
+        activationRequestedCount: 0,
+        lastActivationRequestAt: null
       },
     });
 

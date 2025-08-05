@@ -5,13 +5,13 @@ import jwt from "jsonwebtoken";
 import { sendActivationEmail } from "@/lib/mailer";
 import { csrf } from "@/lib/csrf";
 
-// Güvenlik kontrolleri
+// Güvenlik kontrolü
 if (!process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET is not defined in environment variables.");
+  throw new Error("❌ JWT_SECRET is not defined in environment variables.");
 }
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Hata ve mesajlar
+// Çoklu dil destekli mesajlar
 const messages = {
   en: {
     invalid: "Invalid request.",
@@ -28,7 +28,7 @@ const messages = {
     rateLimit: "Günde en fazla 3 aktivasyon e-postası isteyebilirsiniz.",
     resent: "Yeni aktivasyon bağlantısı e-postanıza gönderildi.",
     fail: "Bir hata oluştu. Lütfen tekrar deneyin.",
-  }
+  },
 };
 
 export const POST = csrf(async (req) => {
@@ -53,7 +53,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.alreadyActive }, { status: 400 });
     }
 
-    // Rate limit: Günde en fazla 3 kez
+    // Günlük gönderim sınırı kontrolü
     const now = new Date();
     const last = user.lastActivationRequestAt || new Date(0);
     const isSameDay = now.toDateString() === last.toDateString();
@@ -62,10 +62,10 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.rateLimit }, { status: 429 });
     }
 
-    // Yeni token oluştur
+    // Yeni aktivasyon token oluştur
     const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
-    // DB güncelle
+    // Veritabanını güncelle (eski token geçersizleşir)
     await prisma.user.update({
       where: { email: cleanEmail },
       data: {
@@ -75,7 +75,7 @@ export const POST = csrf(async (req) => {
       },
     });
 
-    // E-posta gönder
+    // Aktivasyon e-postası gönder
     try {
       await sendActivationEmail(cleanEmail, newToken);
     } catch (err) {
@@ -84,7 +84,6 @@ export const POST = csrf(async (req) => {
     }
 
     return Response.json({ success: true, message: msg.resent });
-
   } catch (err) {
     console.error("❌ Resend Activation Error:", err);
     return Response.json({ success: false, message: messages.tr.fail }, { status: 500 });

@@ -1,5 +1,7 @@
+// ✅ FILE: src/app/resend-activation/page.js
 import React from "react";
-import Content from './Content'; // ✅ doğru
+import ResendActivationContent from "./ResendActivationContent";
+import ContentWrapper from "../activate/Content"; // Locale check
 
 export const metadata = {
   title: "Resend Activation - Cabo",
@@ -7,5 +9,9 @@ export const metadata = {
 };
 
 export default function ResendActivationPage() {
-  return <Content />;
+  return (
+    <ContentWrapper>
+      <ResendActivationContent />
+    </ContentWrapper>
+  );
 }
