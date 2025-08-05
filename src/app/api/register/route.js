@@ -1,8 +1,6 @@
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
-
-// SECURITY REVIEW: This route uses the csrf middleware, which is good. Ensure that the CSRF secret is strong and not the default. Consider using per-session/user tokens for higher security.
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -33,7 +31,8 @@ const messages = {
     success: "Registration successful! Please check your email to activate your account.",
     fail: "Registration failed. Please try again.",
     googleReg: "This email is registered with Google. Please sign in with Google.",
-    limitExceeded: "Activation email already sent 3 times today. Please try again later."
+    limitExceeded: "Activation email already sent 3 times today. Please try again tomorrow.",
+    alreadyActive: "This email is already registered and activated. Try logging in or resetting your password.",
   },
   tr: {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
@@ -48,12 +47,12 @@ const messages = {
     success: "Kayıt başarılı! Hesabınızı aktifleştirmek için e-posta kutunuzu kontrol edin.",
     fail: "Kayıt başarısız. Lütfen tekrar deneyin.",
     googleReg: "Bu e-posta Google ile kayıtlı. Lütfen Google ile giriş yapın.",
-    limitExceeded: "Aktivasyon e-postası bugün 3 kez gönderildi. Lütfen yarın tekrar deneyin."
+    limitExceeded: "Aktivasyon e-postası bugün 3 kez gönderildi. Lütfen yarın tekrar deneyin.",
+    alreadyActive: "Bu e-posta zaten kayıtlı ve aktif. Giriş yapabilir veya şifrenizi sıfırlayabilirsiniz.",
   }
 };
 
 export const POST = csrf(async (req) => {
-  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Make sure to keep this for all sensitive endpoints.
   try {
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
@@ -101,10 +100,11 @@ export const POST = csrf(async (req) => {
 
     if (existing) {
       if (existing.status === 'active') {
-        return Response.json({ success: false, message: msg.uniq }, { status: 409 });
+        // Hesap zaten aktifse, yeni kayıt engellenir. Şifre sıfırlama önerilir.
+        return Response.json({ success: false, message: msg.alreadyActive }, { status: 409 });
       }
 
-      // Rate limit günde max 3 gönderim
+      // Daha önce kayıtlı ama aktivasyonu bekliyor
       const now = new Date();
       const lastSent = existing.lastActivationRequestAt || new Date(0);
       const isToday = now.toDateString() === lastSent.toDateString();
@@ -135,7 +135,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: true, message: msg.success }, { status: 200 });
     }
 
-    // Yeni kullanıcı için kayıt
+    // ✅ Yeni kullanıcı kaydı
     const hashed = await bcrypt.hash(password, 10);
     const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
@@ -164,6 +164,6 @@ export const POST = csrf(async (req) => {
 
   } catch (err) {
     console.error("REGISTER ERROR:", err);
-    return Response.json({ success: false, message: messages[locale || "en"].fail }, { status: 500 });
+    return Response.json({ success: false, message: messages["tr"].fail }, { status: 500 });
   }
 });

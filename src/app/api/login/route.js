@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
 
-// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security(gerek var ise dusunelim, mevcut sistem yeterliyse gerek yok.).
 // SECURITY REVIEW: Passwords are compared using bcrypt, which is good. Make sure passwords are always hashed and never logged.
 // SECURITY REVIEW: JWT_SECRET is required and throws if missing, which is good. Ensure JWT_SECRET is strong and rotated periodically.
 // SECURITY REVIEW: Rate limiting is implemented per IP. Consider adding per-user rate limiting and account lockout after repeated failures.

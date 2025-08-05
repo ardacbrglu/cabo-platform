@@ -43,7 +43,8 @@ const translations = {
     failed: "Registration failed.",
     server: "Server error. Please try again later.",
     or: "or",
-    googleBtn: "Sign up with Google"
+    googleBtn: "Sign up with Google",
+    emailSent: "Activation email sent to"
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -73,7 +74,9 @@ const translations = {
     failed: "Kayıt başarısız.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
     or: "veya",
-    googleBtn: "Google ile kayıt ol"
+    googleBtn: "Google ile kayıt ol",
+    emailSent: "Aktivasyon e-postası gönderildi:"
+
   }
 };
 
@@ -128,7 +131,8 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setSuccess('');
+    setSuccess(`${t('success')} (${email})`);
+;
 
     if (!name || !email || !password) {
       setError(t('required'));
@@ -156,7 +160,7 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccess(t('success'));
+        setSuccess(`${t('success')} (${email})`);
         handleSuccessRedirect();
       } else {
         setError(data.message || t('failed'));
