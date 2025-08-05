@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import { useCsrfToken } from "@/hooks/useCsrfToken";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { signIn } from "next-auth/react";
 
 const translations = {
