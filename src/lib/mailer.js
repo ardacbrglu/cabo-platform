@@ -15,7 +15,7 @@ const transporter = nodemailer.createTransport({
 
 // ✅ Hesap aktivasyon maili gönderimi
 export async function sendActivationEmail(to, token) {
-  const url = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/activate?token=${token}`;
+  const url = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/api/activate?token=${token}`;
 
   try {
     await transporter.sendMail({
