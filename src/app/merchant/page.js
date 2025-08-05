@@ -158,7 +158,7 @@ export default function MerchantLoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            <CSRFTokenInput />
+            
             <input
               type="email"
               placeholder={t('emailPlaceholder')}
@@ -202,31 +202,6 @@ export default function MerchantLoginPage() {
               {loading ? t('loggingIn') : t('loginBtn')}
             </button>
 
-             {/* burasi duz giris ile google ile giris arasindaki OR yazisi */}
-            {/* <div className="flex items-center my-4">
-              <span className="flex-1 h-px bg-[#232323]" />
-              <span className="px-3 text-gray-400 text-sm font-semibold">{t('or')}</span>
-              <span className="flex-1 h-px bg-[#232323]" />
-            </div> */} 
-
-
-
-            {/* <button
-              type="button"
-              className="flex items-center justify-center gap-2 bg-white hover:bg-[#f5f5f5] text-[#0b0b0b] font-bold py-3 rounded-lg border border-[#eee] shadow transition"
-              onClick={() => setShowGoogle(true)}
-              disabled
-            >
-              <svg width="18" height="18" viewBox="0 0 48 48" className="mr-1">
-                <g>
-                  <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..." />
-                </g>
-              </svg>
-              {t('googleBtn')}
-            </button> */}
-
-
-
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
@@ -253,23 +228,6 @@ export default function MerchantLoginPage() {
           </div>
         </div>
       )}
-
-
-      {/* Google ile giriş yakında modal
-      {showGoogle && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-          <div className="bg-[#181818] rounded-xl shadow-xl p-8 max-w-sm w-full border border-[#232323] text-center">
-            <h4 className="text-lg md:text-xl text-[#d1ffd0] font-bold mb-4">{t('googleBtn')}</h4>
-            <div className="text-gray-300 text-base mb-6">{t('googleSoon')}</div>
-            <button
-              onClick={() => setShowGoogle(false)}
-              className="mt-2 px-6 py-3 rounded-lg bg-[#81d742] text-[#111] font-bold hover:bg-[#b3ffb3] transition"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )} */}
 
       <style jsx global>{`
         @media (max-width: 768px) {
