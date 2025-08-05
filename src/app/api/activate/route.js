@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_PROD_SECRET";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 export async function GET(req) {
   const url = new URL(req.url);
