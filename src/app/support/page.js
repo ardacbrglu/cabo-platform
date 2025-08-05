@@ -28,7 +28,7 @@ export default function SupportPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrf_token     // ← CSRF token’ı header’da gönderin
+          'x-csrf-token': csrfToken     // ← CSRF token’ı header’da gönderin
         },
         body: JSON.stringify({ message }),
       });
