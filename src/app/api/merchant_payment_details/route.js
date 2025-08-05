@@ -2,9 +2,9 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
-import { validateCsrfToken } from "@/lib/csrf";
+import { validatecsrf_token } from "@/lib/csrf";
 
-// SECURITY REVIEW: This route uses validateCsrfToken for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+// SECURITY REVIEW: This route uses validatecsrf_token for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import { checkRateLimit } from "@/lib/ratelimit";
 import { z } from "zod";
 // SECURITY REVIEW: This API exposes merchant payout details. See comments below for security notes.
@@ -17,7 +17,7 @@ export async function POST(req) {
   // WARNING: Ensure only authenticated merchants can access payout details. Never expose sensitive info to unauthorized users.
   try {
     // CSRF koruması
-    await validateCsrfToken(req);
+    await validatecsrf_token(req);
     // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing merchant payment operations.
     // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
 

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_LIFETIME_DAYS = 14;
 
 function generateToken() {

@@ -6,7 +6,7 @@ import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
-import { validateCsrfToken } from '@/lib/csrf';
+import { validatecsrf_token } from '@/lib/csrf';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { sanitizeHtml } from '@/lib/validation';
 
@@ -23,7 +23,7 @@ const updateSchema = z.object({
 export async function POST(req) {
   try {
     // 2) CSRF koruması
-    await validateCsrfToken(req);
+    await validatecsrf_token(req);
 
     // 3) Auth: Cookie → JWT
     const store = await cookies();

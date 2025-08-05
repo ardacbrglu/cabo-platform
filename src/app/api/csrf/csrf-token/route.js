@@ -1,12 +1,25 @@
-export const dynamic = "force-dynamic";
-export async function GET() {
-  // SECURITY REVIEW: Exposing the raw CSRF secret to the client is a critical vulnerability.
-  // Never send the actual CSRF secret to the frontend. Instead, generate a random token per session/user and validate it server-side.
-  // Always set a strong CSRF_SECRET in production and never use the fallback default.
-  const csrfToken = process.env.CSRF_SECRET || "CSRF_SECRET_DEFAULT";
+import { cookies } from 'next/headers';
+import crypto from "crypto";
 
-  // SECURITY REVIEW: Do NOT return the secret as the CSRF token. Use a securely generated random value instead.
-  return new Response(JSON.stringify({ csrfToken }), {
+const CSRF_COOKIE_NAME = "csrf_token";
+const CSRF_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  sameSite: "lax",
+  maxAge: 60 * 60 * 2 // 2 saat
+};
+
+export async function GET() {
+  const cookieStore = cookies();
+  let token = cookieStore.get(CSRF_COOKIE_NAME)?.value;
+
+  if (!token) {
+    token = crypto.randomBytes(32).toString("hex");
+    cookieStore.set(CSRF_COOKIE_NAME, token, CSRF_COOKIE_OPTIONS);
+  }
+
+  return new Response(JSON.stringify({ csrf_token: token }), {
     status: 200,
     headers: { "Content-Type": "application/json" }
   });

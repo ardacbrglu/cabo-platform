@@ -5,12 +5,12 @@ import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from 'lucide-react
 import { useUser } from '@/context/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useState, useRef } from 'react';
-import { useCsrfToken } from '@/hooks/useCsrfToken';
+import { usecsrf_token } from '@/hooks/usecsrf_token';
 
 export default function SupportPage() {
   const { user } = useUser();
   const t = useTranslation();
-  const csrfToken = useCsrfToken();          // ← CSRF token’ı alın
+  const csrf_token = usecsrf_token();          // ← CSRF token’ı alın
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
@@ -28,7 +28,7 @@ export default function SupportPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken     // ← CSRF token’ı header’da gönderin
+          'x-csrf-token': csrf_token     // ← CSRF token’ı header’da gönderin
         },
         body: JSON.stringify({ message }),
       });
@@ -95,7 +95,7 @@ export default function SupportPage() {
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                disabled={sending || !csrfToken /* token gelene kadar disable */
+                disabled={sending || !csrf_token /* token gelene kadar disable */
                 }
                 required
                 maxLength={900}
@@ -104,7 +104,7 @@ export default function SupportPage() {
               <button
                 type="submit"
                 className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={sending || !message.trim() || !csrfToken}
+                disabled={sending || !message.trim() || !csrf_token}
               >
                 {sending ? t("sending") : t("send")}
               </button>

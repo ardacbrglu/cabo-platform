@@ -1,6 +1,6 @@
 "use client";
 // SECURITY REVIEW: This page handles wallet and payout UI. See comments below for security notes.
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { usecsrf_token } from "@/hooks/usecsrf_token";
 import { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { Wallet2, BarChart2, Lock, Banknote, Loader2, CheckCircle, XCircle, X, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -50,7 +50,7 @@ function exportToCSV(sales, date, t) {
 }
 
 export default function WalletPage() {
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
   const t = useTranslation();
   const [loading, setLoading] = useState(true);
   const [balance, setBalance] = useState(0);
@@ -159,7 +159,7 @@ export default function WalletPage() {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
-        "x-csrf-token": csrfToken
+        "x-csrf-token": csrf_token
       },
       body: JSON.stringify({ iban, bankName, realName })
     }).then(async (res) => {
@@ -182,7 +182,7 @@ export default function WalletPage() {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
-        "x-csrf-token": csrfToken
+        "x-csrf-token": csrf_token
       },
       body: JSON.stringify({ requestPayout: true })
     });
@@ -208,7 +208,7 @@ export default function WalletPage() {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
-        "x-csrf-token": csrfToken
+        "x-csrf-token": csrf_token
       },
       body: JSON.stringify({ cancelRequest: true, requestId })
     });
@@ -227,7 +227,7 @@ export default function WalletPage() {
 
   const fetchDetails = async (requestId, pageNum = 1) => {
     // 1) CSRF token hazır değilse fetch’e hiç kalkışmayalım
-    if (!csrfToken) {
+    if (!csrf_token) {
       console.warn("CSRF token henüz alınmadı, detayları çekilmiyor.");
       return;
     }
@@ -238,7 +238,7 @@ export default function WalletPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken
+          'x-csrf-token': csrf_token
         },
         body: JSON.stringify({ requestId, page: pageNum, pageSize: 10 })
       });
@@ -270,7 +270,7 @@ export default function WalletPage() {
 
   function openDetails(requestId) {
     // Burada da yine token kontrolü koyabilirsiniz
-    if (!csrfToken) return;
+    if (!csrf_token) return;
     fetchDetails(requestId, 1);
   }
 

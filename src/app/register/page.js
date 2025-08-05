@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
-import CSRFTokenInput from '@/components/CSRFTokenInput';
-import { useCsrfToken } from '@/hooks/useCsrfToken';
+import usecsrf_token from '@/components/usecsrf_token';
+import { usecsrf_token } from '@/hooks/usecsrf_token';
 import dynamic from "next/dynamic";
 import { signIn } from "next-auth/react";
 
@@ -81,7 +81,7 @@ const translations = {
 };
 
 export default function RegisterPage() {
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
   const router = useRouter();
   const { locale, ready } = useLocale();
   const [name, setName] = useState('');
@@ -154,7 +154,7 @@ const handleSubmit = async (e) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-csrf-token': csrfToken || '',
+        'x-csrf-token': csrf_token || '',
         'accept-language': locale || 'en',
       },
       body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
@@ -317,7 +317,7 @@ const handleSubmit = async (e) => {
           <Captcha onChange={setCaptcha} lang={locale} />
           {/* NOTE: Captcha is required for all registrations. Good for bot prevention. */}
 
-          <CSRFTokenInput />
+          <usecsrf_token />
           {/* NOTE: CSRF token is included in all sensitive requests. Good practice. */}
 
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}

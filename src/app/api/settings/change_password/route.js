@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import prisma from '@/lib/prisma';
-import { validateCsrfToken } from '@/lib/csrf';
+import { validatecsrf_token } from '@/lib/csrf';
 import { checkRateLimit } from '@/lib/ratelimit';
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -22,7 +22,7 @@ const passwordSchema = z.object({
 export async function POST(req) {
   try {
     // 1) CSRF
-    await validateCsrfToken(req);
+    await validatecsrf_token(req);
 
     // 2) Auth
     const store = await cookies();

@@ -4,9 +4,9 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { validateCsrfToken } from "@/lib/csrf";
+import { validatecsrf_token } from "@/lib/csrf";
 
-// SECURITY REVIEW: This route uses validateCsrfToken for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+// SECURITY REVIEW: This route uses validatecsrf_token for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 // SECURITY REVIEW: This API handles wallet and payout logic. See comments below for security notes.
 
 function isValidIbanTR(iban) {
@@ -136,7 +136,7 @@ export async function POST(req) {
     const userId = await getUserIdSafe(req);
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    await validateCsrfToken(req);
+    await validatecsrf_token(req);
     // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing wallet operations.
     // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
 

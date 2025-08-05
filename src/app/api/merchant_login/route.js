@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+const JWT_SECRET = process.env.JWT_SECRET;
 const RATE_LIMIT_WINDOW = 60 * 1000;
 const RATE_LIMIT_COUNT = 8;
 

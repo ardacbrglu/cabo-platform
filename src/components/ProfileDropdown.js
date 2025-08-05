@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 import { useRouter } from "next/navigation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { usecsrf_token } from "@/hooks/usecsrf_token";
 import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
@@ -15,7 +15,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
   const [open, setOpen] = useState(false);
   const { user, setUser } = useUser();
   const router = useRouter();
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
   const dropdownRef = useRef();
   const t = useTranslation();
   const { ready } = useLocale();
@@ -42,7 +42,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
       method: 'POST',
       credentials: 'include',
       headers: {
-        'x-csrf-token': csrfToken || ''
+        'x-csrf-token': csrf_token || ''
       }
     });
     document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";

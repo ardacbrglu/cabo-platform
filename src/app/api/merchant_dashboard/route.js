@@ -12,7 +12,7 @@ import { csrf } from '@/lib/csrf';      // POST, PATCH için zorunlu
 // SECURITY REVIEW: This route uses the csrf middleware for POST and PATCH. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
 import { checkRateLimit } from '@/lib/ratelimit'; // IP tabanlı
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Basit XSS koruma + string trim (sadece saf metin için)
 function sanitizeString(str) {

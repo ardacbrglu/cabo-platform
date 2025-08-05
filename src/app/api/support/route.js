@@ -3,13 +3,13 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
-import { validateCsrfToken } from '@/lib/csrf';
+import { validatecsrf_token } from '@/lib/csrf';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { z } from 'zod';
 import { sanitizeHtml } from '@/lib/validation';
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
 
+const JWT_SECRET = process.env.JWT_SECRET;
 const supportSchema = z.object({
   message: z.string().min(1).max(900)
 });
@@ -17,7 +17,7 @@ const supportSchema = z.object({
 export async function POST(req) {
   try {
     // 1) CSRF koruması
-    await validateCsrfToken(req);
+    await validatecsrf_token(req);
 
     // 2) Kimlik doğrulama (JWT cookie)
     const cookieStore = cookies();

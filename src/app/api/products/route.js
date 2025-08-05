@@ -4,8 +4,8 @@ import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
-
+// JWT_SECRET kontrolü
+const JWT_SECRET = process.env.JWT_SECRET;
 export async function GET() {
   try {
     // Kullanıcı JWT'si ile kimlik belirleme (opsiyonel)

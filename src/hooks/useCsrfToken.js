@@ -1,8 +1,8 @@
-// src/hooks/useCsrfToken.js
+// src/hooks/usecsrf_token.js
 import { useEffect, useState } from 'react';
 
-export function useCsrfToken() {
-  const [csrfToken, setCsrfToken] = useState('');
+export function usecsrf_token() {
+  const [csrf_token, setcsrf_token] = useState('');
 
   useEffect(() => {
     async function getToken() {
@@ -11,7 +11,7 @@ export function useCsrfToken() {
         const text = await res.text();
         if (res.ok) {
           const data = JSON.parse(text);
-          setCsrfToken(data.csrfToken || '');
+          setcsrf_token(data.csrf_token || '');
         } else {
           console.error('CSRF endpoint failed:', text);
         }
@@ -22,5 +22,5 @@ export function useCsrfToken() {
     getToken();
   }, []);
 
-  return csrfToken;
+  return csrf_token;
 }

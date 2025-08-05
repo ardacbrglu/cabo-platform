@@ -6,7 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { useLocale } from "@/context/LocaleContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { usecsrf_token } from "@/hooks/usecsrf_token";
 
 const LANGUAGES = [
   { code: 'en', name: 'English' },
@@ -36,7 +36,7 @@ export default function SettingsPage() {
   const { locale, setLocale } = useLocale();
   const t = useTranslation();
   const isMobile = useIsMobile();
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
 
   const cardGap = isMobile ? "gap-6" : "gap-7";
   const cardClass = `
@@ -90,7 +90,7 @@ export default function SettingsPage() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-csrf-token": csrfToken
+        "x-csrf-token": csrf_token
       },
       body: JSON.stringify({
         name: profile.name,
@@ -112,7 +112,7 @@ export default function SettingsPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken
+          "x-csrf-token": csrf_token
         },
         body: JSON.stringify({
           current_password: profile.current_password,
@@ -247,7 +247,7 @@ export default function SettingsPage() {
         <button
           type="submit"
           onClick={handleSave}
-          disabled={!csrfToken}
+          disabled={!csrf_token}
           className="w-full max-w-xs py-3 font-bold text-lg bg-[#81d742] text-[#181818] rounded-lg shadow hover:bg-[#a9ff72] transition mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ marginBottom: "8px" }}
         >

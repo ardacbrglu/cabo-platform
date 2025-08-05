@@ -4,8 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLocale } from '@/context/LocaleContext';
-import { useCsrfToken } from '@/hooks/useCsrfToken';
-import CSRFTokenInput from '@/components/CSRFTokenInput';
+import { usecsrf_token } from '@/hooks/usecsrf_token';
+import usecsrf_token from '@/components/usecsrf_token';
 import PublicLayout from '@/components/PublicLayout';
 
 const translations = {
@@ -64,7 +64,7 @@ const translations = {
 export default function MerchantLoginPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -93,7 +93,7 @@ export default function MerchantLoginPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken || ''
+          'x-csrf-token': csrf_token || ''
         },
         body: JSON.stringify({ email, password }),
       });
@@ -158,7 +158,7 @@ export default function MerchantLoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            <CSRFTokenInput />
+            <usecsrf_token />
             <input
               type="email"
               placeholder={t('emailPlaceholder')}

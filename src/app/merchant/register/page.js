@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { usecsrf_token } from "@/hooks/usecsrf_token";
 import dynamic from "next/dynamic";
 // import { signIn } from "next-auth/react"; // Google ile giriş tamamen devre dışı
 
@@ -83,7 +83,7 @@ const translations = {
 
 export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
-  const csrfToken = useCsrfToken();
+  const csrf_token = usecsrf_token();
 
   const [form, setForm] = useState({
     name: "",
@@ -148,7 +148,7 @@ export default function MerchantRegisterPage() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-csrf-token": csrfToken || "",
+        "x-csrf-token": csrf_token || "",
         "accept-language": locale || "en"
       },
       body: JSON.stringify({

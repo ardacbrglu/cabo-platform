@@ -4,7 +4,7 @@ import { useUser } from "@/context/UserContext";
 import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { useTranslation } from "@/hooks/useTranslation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { usecsrf_token } from "@/hooks/usecsrf_token";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) {
@@ -20,7 +20,7 @@ function getQuotastatus(product) {
 export default function MerchantDashboardPage() {
   const t = useTranslation();
   const { user, setUser } = useUser();
-  const csrfToken = useCsrfToken(); // ← CSRF token hook
+  const csrf_token = usecsrf_token(); // ← CSRF token hook
 
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
@@ -66,7 +66,7 @@ export default function MerchantDashboardPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, // ← ← ← CSRF token ekleniyor!
+          "x-csrf-token": csrf_token, // ← ← ← CSRF token ekleniyor!
         },
         credentials: "include",
         body: JSON.stringify(form),
@@ -95,7 +95,7 @@ export default function MerchantDashboardPage() {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, // ← ← ← PATCH'te de CSRF!
+          "x-csrf-token": csrf_token, // ← ← ← PATCH'te de CSRF!
         },
         body: JSON.stringify({ productId, action }),
       });
@@ -145,7 +145,7 @@ export default function MerchantDashboardPage() {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, // ← ← ← PATCH'te de CSRF!
+          "x-csrf-token": csrf_token, // ← ← ← PATCH'te de CSRF!
         },
         body: JSON.stringify({
           productId: editingProductId,

@@ -4,8 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY";
-
+const JWT_SECRET = process.env.JWT_SECRET;
 // Kullanıcı kimliğini JWT'den çeker
 async function getUserIdFromToken() {
   const cookieStore = await cookies();
