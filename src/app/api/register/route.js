@@ -58,17 +58,18 @@ export const POST = csrf(async (req) => {
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
+    // IP-based rate limiting (anti-spam)
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`register_${ip}`, 8, 60 * 1000)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
     const { name, email, password, termsAccepted, captcha } = await req.json();
-
     if (!termsAccepted || !name || !email || !password || !captcha) {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
 
+    // Google reCAPTCHA
     const { data: captchaData } = await axios.post(
       `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
     );
@@ -89,6 +90,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.password }, { status: 400 });
     }
 
+    // Check if user is registered with Google (social login)
     const googleAccount = await prisma.account.findFirst({
       where: { provider: 'google', user: { email: cleanEmail } }
     });
@@ -96,15 +98,15 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.googleReg }, { status: 409 });
     }
 
+    // Existing user logic
     const existing = await prisma.user.findFirst({ where: { email: cleanEmail } });
 
     if (existing) {
       if (existing.status === 'active') {
-        // Hesap zaten aktifse, yeni kayıt engellenir. Şifre sıfırlama önerilir.
         return Response.json({ success: false, message: msg.alreadyActive }, { status: 409 });
       }
 
-      // Daha önce kayıtlı ama aktivasyonu bekliyor
+      // User is pending (not activated yet)
       const now = new Date();
       const lastSent = existing.lastActivationRequestAt || new Date(0);
       const isToday = now.toDateString() === lastSent.toDateString();
@@ -114,8 +116,8 @@ export const POST = csrf(async (req) => {
         return Response.json({ success: false, message: msg.limitExceeded }, { status: 429 });
       }
 
+      // Overwrite old activation token, bump count, update time
       const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
-
       await prisma.user.update({
         where: { id: existing.id },
         data: {
@@ -132,10 +134,11 @@ export const POST = csrf(async (req) => {
         return Response.json({ success: false, message: "Activation email could not be sent." }, { status: 500 });
       }
 
+      // Success, even if user already existed but was pending
       return Response.json({ success: true, message: msg.success }, { status: 200 });
     }
 
-    // ✅ Yeni kullanıcı kaydı
+    // New user registration
     const hashed = await bcrypt.hash(password, 10);
     const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 

@@ -128,52 +128,75 @@ export default function RegisterPage() {
   };
 
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess(`${t('success')} (${email})`);
-;
 
-    if (!name || !email || !password) {
-      setError(t('required'));
-      return;
-    }
-    if (!terms) {
-      setError(t('termsReq'));
-      return;
-    }
-    if (!captcha) {
-      setError(t('captchaReq'));
-      return;
-    }
 
-    setLoading(true);
-    try {
-      const res = await fetch('/api/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken || '',
-          'accept-language': locale || 'en',
-        },
-        body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setSuccess(`${t('success')} (${email})`);
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setError('');
+  setSuccess('');
+
+  if (!name || !email || !password) {
+    setError(t('required'));
+    return;
+  }
+  if (!terms) {
+    setError(t('termsReq'));
+    return;
+  }
+  if (!captcha) {
+    setError(t('captchaReq'));
+    return;
+  }
+
+  setLoading(true);
+  try {
+    const res = await fetch('/api/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken || '',
+        'accept-language': locale || 'en',
+      },
+      body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      setSuccess(
+        // ✅ Eğer daha önce kayıtlıydı ve mail tekrar atıldıysa da bu mesajı göster!
+        `${t('success')} (${email})`
+      );
+      setError('');
+      handleSuccessRedirect();
+    } else {
+      // Eğer backend pending kullanıcıya mail gönderdi ise
+      if (
+        data.message &&
+        (data.message.includes('check your email') ||
+          data.message.includes('Aktivasyon') ||
+          data.message.includes('activation') ||
+          data.message.includes('e-posta') ||
+          data.message.includes('inbox'))
+      ) {
+        setSuccess(`${data.message} (${email})`);
+        setError('');
         handleSuccessRedirect();
       } else {
         setError(data.message || t('failed'));
+        setSuccess('');
       }
-    } catch {
-      setError(t('server'));
-    } finally {
-      setLoading(false);
     }
-    // NOTE: Registration form is protected by CSRF token and captcha. Good practice.
-    // WARNING: No client-side password strength check. Consider adding a password strength meter for better UX and security.
-    // WARNING: No client-side email format validation beyond input type. Consider using a library for stricter validation.
-  };
+  } catch {
+    setError(t('server'));
+    setSuccess('');
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+
+
+
 
   return (
     <PublicLayout>
