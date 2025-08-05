@@ -303,7 +303,7 @@ export default function RegisterPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !terms || !captcha}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition"
           >
             {loading ? (locale === 'tr' ? 'Kaydediliyor...' : 'Registering...') : t('registerBtn')}
