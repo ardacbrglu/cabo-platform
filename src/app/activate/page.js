@@ -1,5 +1,3 @@
-'use client';
-
 import ActivatedPage from './Activated';
 import ContentWrapper from './Content';
 
