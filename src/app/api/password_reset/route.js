@@ -1,42 +1,39 @@
-export const dynamic = "force-dynamic";
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import { sendPasswordResetEmail } from '@/lib/mailer';
-import { randomBytes } from 'crypto';
-
-const RESET_EXPIRY_MINUTES = 15;
+import { v4 as uuidv4 } from 'uuid';
+import { addMinutes } from 'date-fns';
 
 export const POST = csrf(async (req) => {
   try {
     const { email } = await req.json();
     if (!email) {
-      return Response.json({ success: false, message: "Email required." }, { status: 400 });
+      return Response.json({ success: false, message: "E-posta gerekli." }, { status: 400 });
     }
     const cleanEmail = email.trim().toLowerCase();
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
-    if (!user || !user.passwordHash) {
-      // **Kullanıcı yoksa veya sosyal login-only ise, yine de "success" dön!**
+    if (!user) {
+      // Kullanıcıyı ifşa etme (her durumda success dön)
       return Response.json({ success: true, message: "If user exists, password reset email sent." });
     }
 
-    // **Token oluştur ve User tablosunda sakla**
-    const token = randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + RESET_EXPIRY_MINUTES * 60 * 1000);
+    // Token oluştur ve veritabanına kaydet (tek kullanımlık)
+    const token = uuidv4();
+    const expires = addMinutes(new Date(), 15);
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
         resetToken: token,
-        resetTokenExpiry: expires
+        resetTokenExpiry: expires,
       }
     });
 
-    // **Mail gönder**
     await sendPasswordResetEmail(user.email, token);
 
     return Response.json({ success: true, message: "If user exists, password reset email sent." });
   } catch (err) {
-    console.error("RESET PASSWORD REQUEST ERROR:", err);
-    return Response.json({ success: false, message: "Server error." }, { status: 500 });
+    console.error("RESET REQUEST ERROR:", err);
+    return Response.json({ success: false, message: "Error sending password reset email." }, { status: 500 });
   }
 });

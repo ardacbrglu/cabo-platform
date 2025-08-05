@@ -18,12 +18,12 @@ export default function PasswordResetPage() {
   const csrfToken = useCsrfToken();
   const router = useRouter();
   const params = useSearchParams();
+  const token = params.get("token");
 
-  // --- CRITICAL FIX: useEffect ile step'i güncelle ---
+  // Eğer link ile gelmişse, otomatik confirm stepe geç
   useEffect(() => {
-    const token = params.get("token");
     if (token) setStep("confirm");
-  }, [params]);
+  }, [token]);
 
   // EMAIL İLE RESET TOKEN İSTEĞİ
   const handleRequest = async (e) => {
@@ -73,8 +73,6 @@ export default function PasswordResetPage() {
     }
     setLoading(true);
     try {
-      // Token query param'dan alınacak
-      const token = params.get("token");
       const res = await fetch("/api/password_reset/confirm", {
         method: "POST",
         headers: {
