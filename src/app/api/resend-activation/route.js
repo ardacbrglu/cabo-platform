@@ -5,13 +5,11 @@ import jwt from "jsonwebtoken";
 import { sendActivationEmail } from "@/lib/mailer";
 import { csrf } from "@/lib/csrf";
 
-// Güvenlik kontrolü
 if (!process.env.JWT_SECRET) {
   throw new Error("❌ JWT_SECRET is not defined in environment variables.");
 }
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Çoklu dil destekli mesajlar
 const messages = {
   en: {
     invalid: "Invalid request.",
@@ -65,7 +63,6 @@ export const POST = csrf(async (req) => {
     // Yeni aktivasyon token oluştur
     const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
-    // Veritabanını güncelle (eski token geçersizleşir)
     await prisma.user.update({
       where: { email: cleanEmail },
       data: {
@@ -75,7 +72,6 @@ export const POST = csrf(async (req) => {
       },
     });
 
-    // Aktivasyon e-postası gönder
     try {
       await sendActivationEmail(cleanEmail, newToken);
     } catch (err) {
