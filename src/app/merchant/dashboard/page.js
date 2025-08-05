@@ -5,6 +5,8 @@ import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
+// CSRF TOKEN USAGE REVIEW:
+// WARNING: The hook returns 'csrf_token' (snake_case), but the variable here should be named 'csrfToken' (camelCase) for consistency with the rest of the codebase.
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) {
@@ -21,6 +23,7 @@ export default function MerchantDashboardPage() {
   const t = useTranslation();
   const { user, setUser } = useUser();
   const csrfToken = useCsrfToken(); // ← CSRF token hook
+  // WARNING: In the rest of this file, you use 'csrf_token' instead of 'csrfToken'. This is inconsistent and can cause bugs.
 
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
@@ -66,7 +69,7 @@ export default function MerchantDashboardPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrf_token, // ← ← ← CSRF token ekleniyor!
+          "x-csrf-token": csrfToken, 
         },
         credentials: "include",
         body: JSON.stringify(form),
@@ -95,7 +98,7 @@ export default function MerchantDashboardPage() {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrf_token, // ← ← ← PATCH'te de CSRF!
+          "x-csrf-token": csrfToken, 
         },
         body: JSON.stringify({ productId, action }),
       });
@@ -145,7 +148,7 @@ export default function MerchantDashboardPage() {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrf_token, // ← ← ← PATCH'te de CSRF!
+          "x-csrf-token": csrfToken, 
         },
         body: JSON.stringify({
           productId: editingProductId,
