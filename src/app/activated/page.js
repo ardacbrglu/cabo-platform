@@ -1,6 +1,4 @@
 'use client';
-export const dynamic = 'force-dynamic';
-
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import { useSearchParams, useRouter } from 'next/navigation';
