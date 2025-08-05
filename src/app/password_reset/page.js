@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
@@ -17,12 +17,12 @@ export default function PasswordResetPage() {
   const csrfToken = useCsrfToken();
   const router = useRouter();
   const params = useSearchParams();
-  const token = params.get("token");
 
-  // Eğer link ile gelmişse, otomatik confirm stepe geç
-  useState(() => {
+  // --- CRITICAL FIX: useEffect ile step'i güncelle ---
+  useEffect(() => {
+    const token = params.get("token");
     if (token) setStep("confirm");
-  }, [token]);
+  }, [params]);
 
   // EMAIL İLE RESET TOKEN İSTEĞİ
   const handleRequest = async (e) => {
@@ -72,6 +72,8 @@ export default function PasswordResetPage() {
     }
     setLoading(true);
     try {
+      // Token query param'dan alınacak
+      const token = params.get("token");
       const res = await fetch("/api/password_reset/confirm", {
         method: "POST",
         headers: {
