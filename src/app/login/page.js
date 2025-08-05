@@ -160,7 +160,7 @@ export default function LoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            <CSRFTokenInput/>
+            
 
             <input
               type="email"

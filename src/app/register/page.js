@@ -316,8 +316,8 @@ const handleSubmit = async (e) => {
           <Captcha onChange={setCaptcha} lang={locale} />
           {/* NOTE: Captcha is required for all registrations. Good for bot prevention. */}
 
-          <usecsrf_token />
-          {/* NOTE: CSRF token is included in all sensitive requests. Good practice. */}
+          
+          
 
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
           {success && <div className="text-green-400 text-base md:text-lg text-center">{success}</div>}
