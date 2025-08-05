@@ -1,4 +1,5 @@
-import ActivatedPage from './Activated';
+//activate/page.js
+import ActivatedPage from '@/app/Activated/page';
 import ContentWrapper from './Content';
 
 export const metadata = {

@@ -1,3 +1,4 @@
+//Activated/page.js
 'use client';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
