@@ -80,7 +80,7 @@ const translations = {
 };
 
 export default function RegisterPage() {
-  const csrf_token = usecsrf_token();
+  const csrfToken = useCsrfToken();
   const router = useRouter();
   const { locale, ready } = useLocale();
   const [name, setName] = useState('');
