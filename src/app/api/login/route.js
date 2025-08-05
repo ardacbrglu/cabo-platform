@@ -3,6 +3,12 @@ export const dynamic = "force-dynamic";
 import { csrf } from '@/lib/csrf';
 
 // SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+// SECURITY REVIEW: Passwords are compared using bcrypt, which is good. Make sure passwords are always hashed and never logged.
+// SECURITY REVIEW: JWT_SECRET is required and throws if missing, which is good. Ensure JWT_SECRET is strong and rotated periodically.
+// SECURITY REVIEW: Rate limiting is implemented per IP. Consider adding per-user rate limiting and account lockout after repeated failures.
+// SECURITY REVIEW: Account lockout is implemented. Make sure lockout state cannot be bypassed by changing IP or other tricks.
+// SECURITY REVIEW: Error messages are generic, which is good to avoid leaking user existence. Always avoid detailed error messages for authentication.
+// SECURITY REVIEW: Consider logging failed login attempts for monitoring and alerting on brute-force attacks.
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -48,6 +54,7 @@ const messages = {
 
 export const POST = csrf(async (req) => {
   // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
+  // SECURITY REVIEW: Ensure that the request body is validated and sanitized to prevent injection attacks.
   try {
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
     const locale = lang.startsWith("tr") ? "tr" : "en";

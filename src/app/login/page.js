@@ -63,6 +63,12 @@ const translations = {
 };
 
 export default function LoginPage() {
+  // SECURITY REVIEW: This login form uses CSRFTokenInput and fetches the CSRF token, which is good.
+  // SECURITY REVIEW: Password input uses type="password" and disables autocomplete for security.
+  // SECURITY REVIEW: Error messages are shown to the user, but avoid leaking sensitive info (e.g., whether an email exists).
+  // SECURITY REVIEW: Google login uses next-auth, which is a secure standard. Make sure callback URLs are validated.
+  // SECURITY REVIEW: Consider adding reCAPTCHA or similar bot protection to prevent automated login attempts.
+  // SECURITY REVIEW: Consider rate limiting login attempts on the frontend to slow down brute-force attacks.
   const router = useRouter();
   const { locale, ready } = useLocale();
   const csrfToken = useCsrfToken();
@@ -104,6 +110,7 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+  // SECURITY REVIEW: Ensure that sensitive errors are not exposed to the user. Log errors server-side for monitoring.
 
   const handleGoogleLogin = async () => {
     setLoading(true);
