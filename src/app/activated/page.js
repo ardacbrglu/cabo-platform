@@ -1,5 +1,5 @@
-//Activated/page.js
 'use client';
+
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -13,7 +13,7 @@ const translations = {
     activatedNote: "You can now log in and start using Cabo.",
     failed: "Activation Failed",
     failedMsg: "Your activation link is invalid or expired.",
-    failedNote: "Please try registering again or contact support if the issue persists."
+    failedNote: "Please try registering again or contact support if the issue persists.",
   },
   tr: {
     activated: "Hesap Aktifleştirildi!",
@@ -21,7 +21,7 @@ const translations = {
     activatedNote: "Artık giriş yapabilir ve Cabo'yu kullanmaya başlayabilirsiniz.",
     failed: "Aktivasyon Başarısız",
     failedMsg: "Aktivasyon linkiniz geçersiz veya süresi dolmuş.",
-    failedNote: "Lütfen tekrar kayıt olun veya sorun devam ederse destekle iletişime geçin."
+    failedNote: "Lütfen tekrar kayıt olun veya sorun devam ederse destekle iletişime geçin.",
   }
 };
 

@@ -32,7 +32,7 @@ export async function GET(req) {
         emailVerified: new Date(),
         activationToken: null,
         activationRequestedCount: 0,
-        lastActivationRequestAt: null
+        lastActivationRequestAt: null,
       },
     });
 
