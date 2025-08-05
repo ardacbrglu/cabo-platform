@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -62,11 +62,6 @@ const translations = {
 };
 
 export default function LoginPage() {
-  // SECURITY REVIEW: This login form uses useCsrfToken and fetches the CSRF token, which is good.
-  // SECURITY REVIEW: Password input uses type="password" and disables autocomplete for security.
-  // SECURITY REVIEW: Google login uses next-auth, which is a secure standard. Make sure callback URLs are validated.
-  // SECURITY REVIEW: Consider adding reCAPTCHA or similar bot protection to prevent automated login attempts.(mantikli ise ekleyelim)
-  // SECURITY REVIEW: Consider rate limiting login attempts on the frontend to slow down brute-force attacks.(gerek var ise ekleyelim)
   const router = useRouter();
   const { locale, ready } = useLocale();
   const csrfToken = useCsrfToken();
@@ -92,7 +87,8 @@ export default function LoginPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken || ''
+          'x-csrf-token': csrfToken || '',
+          'accept-language': locale || 'en'
         },
         body: JSON.stringify({ email, password }),
       });
@@ -100,7 +96,16 @@ export default function LoginPage() {
       if (res.ok && data.success) {
         router.push('/dashboard');
       } else {
-        setError(data.message || t('errorFill'));
+        // Google ile şifre belirleme ihtiyacı özel mesajı
+        if (
+          data.message === t('setPassword') ||
+          data.message === translations.tr.setPassword ||
+          data.message === translations.en.setPassword
+        ) {
+          setError("set-password");
+        } else {
+          setError(data.message || t('errorFill'));
+        }
       }
     } catch {
       setError(t('serverError'));
@@ -108,7 +113,6 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
-  // SECURITY REVIEW: Ensure that sensitive errors are not exposed to the user. Log errors server-side for monitoring.
 
   const handleGoogleLogin = async () => {
     setLoading(true);
@@ -130,12 +134,8 @@ export default function LoginPage() {
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
               {t('infoTitle')}
             </h2>
-            <p className="text-gray-300 text-lg mb-4">
-              {t('infoDesc')}
-            </p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t('infoStrong')}
-            </p>
+            <p className="text-gray-300 text-lg mb-4">{t('infoDesc')}</p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t('infoStrong')}</p>
             <ul
               className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
               style={{ maxWidth: 340 }}
@@ -160,8 +160,6 @@ export default function LoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            
-
             <input
               type="email"
               placeholder={t('emailPlaceholder')}
@@ -195,20 +193,22 @@ export default function LoginPage() {
               </button>
             </div>
 
-            {/* Hata mesajı, Google user için ayrı butonlu */}
+
             {error && (
               <div className="text-red-500 text-base text-center">
-                {error === t('setPassword') || error === translations.tr.setPassword || error === translations.en.setPassword ? (
+                {error === "set-password" ? (
                   <>
                     {t('setPassword')}
                     <br />
-                    <Link href="/password_reset" className="text-[#81d742] underline ml-1 hover:text-[#b3ffb3]">
+                    <Link href="/create_password" className="text-[#81d742] underline ml-1 hover:text-[#b3ffb3]">
                       {t('setPasswordLink')}
                     </Link>
                   </>
                 ) : error}
               </div>
             )}
+
+
 
             <button
               type="submit"
@@ -230,7 +230,6 @@ export default function LoginPage() {
               disabled={loading}
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full"
             >
-              {/* Google SVG LOGO */}
               <span className="w-6 h-6 mr-1 inline-block align-middle">
                 <svg width="24" height="24" viewBox="0 0 48 48">
                   <g>
@@ -253,7 +252,6 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
-
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {

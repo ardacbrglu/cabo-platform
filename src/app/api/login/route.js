@@ -1,14 +1,6 @@
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
-
-// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security(gerek var ise dusunelim, mevcut sistem yeterliyse gerek yok.).
-// SECURITY REVIEW: Passwords are compared using bcrypt, which is good. Make sure passwords are always hashed and never logged.
-// SECURITY REVIEW: JWT_SECRET is required and throws if missing, which is good. Ensure JWT_SECRET is strong and rotated periodically.
-// SECURITY REVIEW: Rate limiting is implemented per IP. Consider adding per-user rate limiting and account lockout after repeated failures.
-// SECURITY REVIEW: Account lockout is implemented. Make sure lockout state cannot be bypassed by changing IP or other tricks.
-// SECURITY REVIEW: Error messages are generic, which is good to avoid leaking user existence. Always avoid detailed error messages for authentication.
-// SECURITY REVIEW: Consider logging failed login attempts for monitoring and alerting on brute-force attacks.
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -53,13 +45,12 @@ const messages = {
 };
 
 export const POST = csrf(async (req) => {
-  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
-  // SECURITY REVIEW: Ensure that the request body is validated and sanitized to prevent injection attacks.
   try {
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
     const locale = lang.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
+    // Rate limit (IP tabanlı)
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
@@ -75,28 +66,38 @@ export const POST = csrf(async (req) => {
 
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
 
-    // Sabit bir hata mesajı kullanılarak user enum. engelleniyor
+    // Kullanıcı yoksa generic error
     if (!user) {
+      // Her zaman generic mesaj, kullanıcı bilgisi sızdırılmaz
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Account lock kontrolü (örnek: status = locked + lockUntil zamanı varsa)
-    if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
-      return Response.json({ success: false, message: msg.locked }, { status: 403 });
-    }
-
+    // Satıcı ise
     if (user.role === 'merchant') {
       return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
 
-    if (!user.passwordHash) {
+    // Hesap lock kontrolü
+    if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
+      return Response.json({ success: false, message: msg.locked }, { status: 403 });
+    }
+
+    // Parola yoksa (Google ile kaydolmuş veya hiç şifre belirlenmemiş)
+    // Burada "pending" durumdaki Google user'ın şifre belirlemesi gerektiği mesajı döner
+    if (!user.passwordHash || user.passwordHash === "") {
       return Response.json({ success: false, message: msg.google }, { status: 401 });
     }
 
+    // Aktif değilse (pending/rejected)
+    if (user.status !== "active") {
+      return Response.json({ success: false, message: msg.inactive }, { status: 403 });
+    }
+
+    // Şifre kontrolü
     const isValid = await bcrypt.compare(password, user.passwordHash);
 
-    // Şifre hatalıysa, giriş denemeleri sayısını artır
     if (!isValid) {
+      // Hatalı girişte deneme sayısı artırılır
       await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -111,7 +112,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Başarılı girişte hatalı deneme sayısını sıfırla
+    // Başarılı girişte failedAttempts ve lockUntil sıfırlanır
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -120,10 +121,7 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    if (user.status !== 'active') {
-      return Response.json({ success: false, message: msg.inactive }, { status: 403 });
-    }
-
+    // JWT oluştur ve HttpOnly cookie olarak dön
     const token = jwt.sign(
       {
         userId: user.id,
@@ -149,7 +147,9 @@ export const POST = csrf(async (req) => {
     }), { status: 200, headers });
 
   } catch (err) {
-    console.error("LOGIN ERROR:", err.message);
-    return Response.json({ success: false, message: messages.tr.fail }, { status: 500 });
+    console.error("LOGIN ERROR:", err);
+    // Hata mesajı locale'ye uygun, user'a bilgi sızdırmadan
+    const locale = req.headers.get("accept-language")?.startsWith("tr") ? "tr" : "en";
+    return Response.json({ success: false, message: messages[locale].fail }, { status: 500 });
   }
 });

@@ -1,16 +1,15 @@
 "use client";
-// SECURITY REVIEW: This page handles user registration UI. See comments below for security notes.
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import PublicLayout from '@/components/PublicLayout';
-import { useLocale } from '@/context/LocaleContext';
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import PublicLayout from "@/components/PublicLayout";
+import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
 import { signIn } from "next-auth/react";
 
-// Captcha dinamik import (SSR fix)
+// SSR hatasını önlemek için captcha componentini dinamik yükle
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const translations = {
@@ -43,7 +42,8 @@ const translations = {
     server: "Server error. Please try again later.",
     or: "or",
     googleBtn: "Sign up with Google",
-    emailSent: "Activation email sent to"
+    emailSent: "Activation email sent to",
+    mailfail: "Activation email could not be sent. Please try again later.",
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -74,8 +74,8 @@ const translations = {
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
     or: "veya",
     googleBtn: "Google ile kayıt ol",
-    emailSent: "Aktivasyon e-postası gönderildi:"
-
+    emailSent: "Aktivasyon e-postası gönderildi:",
+    mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen tekrar deneyin.",
   }
 };
 
@@ -83,35 +83,31 @@ export default function RegisterPage() {
   const csrfToken = useCsrfToken();
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [terms, setTerms] = useState(false);
-  const [captcha, setCaptcha] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [captcha, setCaptcha] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-  // NOTE: All sensitive state is kept in React state. Never expose sensitive data in the UI or logs.
 
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
 
   const handleSuccessRedirect = () => {
-    setTimeout(() => router.push('/login'), 1800);
+    setTimeout(() => router.push("/login"), 1800);
   };
 
-  
   // Google ile kayıt/giriş
   const handleGoogleSignIn = async () => {
-    setError('');
-    // Terms zorunlu
+    setError("");
     if (!terms) {
-      setError(t('termsReq'));
+      setError(t("termsReq"));
       return;
     }
-    // Captcha zorunlu
     if (!captcha) {
-      setError(t('captchaReq'));
+      setError(t("captchaReq"));
       return;
     }
     setLoading(true);
@@ -123,79 +119,71 @@ export default function RegisterPage() {
         : "Google sign-in failed.");
     }
     setLoading(false);
-    // NOTE: Google sign-in is protected by terms and captcha checks. Good practice.
   };
 
+  // Manuel kayıt submit
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
 
-
-
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError('');
-  setSuccess('');
-
-  if (!name || !email || !password) {
-    setError(t('required'));
-    return;
-  }
-  if (!terms) {
-    setError(t('termsReq'));
-    return;
-  }
-  if (!captcha) {
-    setError(t('captchaReq'));
-    return;
-  }
-
-  setLoading(true);
-  try {
-    const res = await fetch('/api/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-csrf-token': csrfToken || '',
-        'accept-language': locale || 'en',
-      },
-      body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      setSuccess(
-        // ✅ Eğer daha önce kayıtlıydı ve mail tekrar atıldıysa da bu mesajı göster!
-        `${t('success')} (${email})`
-      );
-      setError('');
-      handleSuccessRedirect();
-    } else {
-      // Eğer backend pending kullanıcıya mail gönderdi ise
-      if (
-        data.message &&
-        (data.message.includes('check your email') ||
-          data.message.includes('Aktivasyon') ||
-          data.message.includes('activation') ||
-          data.message.includes('e-posta') ||
-          data.message.includes('inbox'))
-      ) {
-        setSuccess(`${data.message} (${email})`);
-        setError('');
-        handleSuccessRedirect();
-      } else {
-        setError(data.message || t('failed'));
-        setSuccess('');
-      }
+    if (!name || !email || !password) {
+      setError(t("required"));
+      return;
     }
-  } catch {
-    setError(t('server'));
-    setSuccess('');
-  } finally {
-    setLoading(false);
-  }
-};
+    if (!terms) {
+      setError(t("termsReq"));
+      return;
+    }
+    if (!captcha) {
+      setError(t("captchaReq"));
+      return;
+    }
 
-
-
-
-
+    setLoading(true);
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken || "",
+          "accept-language": locale || "en",
+        },
+        body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
+      });
+      const data = await res.json();
+      // Backend'den gelen tüm hata mesajlarını göster
+      if (res.ok && data.success) {
+        setSuccess(`${t("success")} (${email})`);
+        setError("");
+        handleSuccessRedirect();
+      } else if (data && data.message) {
+        // Pending user’a tekrar aktivasyon maili durumu
+        if (
+          data.message.includes("check your email") ||
+          data.message.includes("Aktivasyon") ||
+          data.message.includes("activation") ||
+          data.message.includes("e-posta") ||
+          data.message.includes("inbox")
+        ) {
+          setSuccess(`${data.message} (${email})`);
+          setError("");
+          handleSuccessRedirect();
+        } else {
+          setError(data.message || t("failed"));
+          setSuccess("");
+        }
+      } else {
+        setError(t("failed"));
+        setSuccess("");
+      }
+    } catch {
+      setError(t("server"));
+      setSuccess("");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <PublicLayout>
@@ -204,27 +192,23 @@ const handleSubmit = async (e) => {
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t('infoTitle')}
+              {t("infoTitle")}
             </h2>
-            <p className="text-gray-300 text-lg mb-4">
-              {t('infoDesc')}
-            </p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t('infoStrong')}
-            </p>
+            <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
             <ul
               className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
               style={{ maxWidth: 340 }}
             >
-              <li>{t('li1')}</li>
-              <li>{t('li2')}</li>
-              <li>{t('li3')}</li>
-              <li>{t('li4')}</li>
+              <li>{t("li1")}</li>
+              <li>{t("li2")}</li>
+              <li>{t("li3")}</li>
+              <li>{t("li4")}</li>
             </ul>
             <div className="text-gray-400 text-sm">
-              {t('faq')}{' '}
+              {t("faq")}{" "}
               <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-                {t('faqLink')}
+                {t("faqLink")}
               </Link>
             </div>
           </div>
@@ -237,12 +221,12 @@ const handleSubmit = async (e) => {
           autoComplete="off"
         >
           <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">
-            {t('title')}
+            {t("title")}
           </h3>
 
           <div className="w-full">
             <label htmlFor="name" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t('username')}
+              {t("username")}
             </label>
             <input
               id="name"
@@ -252,8 +236,7 @@ const handleSubmit = async (e) => {
               autoCorrect="off"
               value={name}
               onChange={e => setName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
-              // NOTE: Username is restricted to alphanumeric and underscores. Good for basic sanitization.
-              placeholder={t('usernamePH')}
+              placeholder={t("usernamePH")}
               minLength={3}
               maxLength={32}
               required
@@ -263,7 +246,7 @@ const handleSubmit = async (e) => {
 
           <div className="w-full">
             <label htmlFor="email" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t('email')}
+              {t("email")}
             </label>
             <input
               id="email"
@@ -273,8 +256,7 @@ const handleSubmit = async (e) => {
               autoCorrect="off"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              // WARNING: No client-side email format validation beyond input type. Consider using a library for stricter validation.
-              placeholder={t('emailPH')}
+              placeholder={t("emailPH")}
               required
               className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
             />
@@ -282,7 +264,7 @@ const handleSubmit = async (e) => {
 
           <div className="w-full">
             <label htmlFor="password" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t('password')}
+              {t("password")}
             </label>
             <input
               id="password"
@@ -290,8 +272,7 @@ const handleSubmit = async (e) => {
               autoComplete="new-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              // WARNING: No client-side password strength check. Consider adding a password strength meter for better UX and security.
-              placeholder={t('passwordPH')}
+              placeholder={t("passwordPH")}
               minLength={8}
               required
               className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base md:text-lg placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
@@ -308,33 +289,28 @@ const handleSubmit = async (e) => {
               className="accent-[#81d742] h-5 w-5"
             />
             <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
-              {t('terms')}
+              {t("terms")}
             </label>
           </div>
 
           {/* reCAPTCHA */}
           <Captcha onChange={setCaptcha} lang={locale} />
-          {/* NOTE: Captcha is required for all registrations. Good for bot prevention. */}
-
-          
-          
 
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
           {success && <div className="text-green-400 text-base md:text-lg text-center">{success}</div>}
-          {/* WARNING: Avoid displaying raw server error messages to users. Sanitize error output if needed. */}
 
           <button
             type="submit"
             disabled={loading || !terms || !captcha}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition"
           >
-            {loading ? (locale === 'tr' ? 'Kaydediliyor...' : 'Registering...') : t('registerBtn')}
+            {loading ? (locale === "tr" ? "Kaydediliyor..." : "Registering...") : t("registerBtn")}
           </button>
 
           {/* Google ile kayıt/login */}
           <div className="w-full flex items-center justify-between my-3">
             <span className="flex-1 h-px bg-[#232323]"></span>
-            <span className="px-2 text-gray-400 text-sm">{t('or')}</span>
+            <span className="px-2 text-gray-400 text-sm">{t("or")}</span>
             <span className="flex-1 h-px bg-[#232323]"></span>
           </div>
 
@@ -345,20 +321,17 @@ const handleSubmit = async (e) => {
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-white text-[#111] rounded-lg hover:bg-[#e0ffe0] border border-[#232323] transition flex items-center justify-center gap-2"
           >
             <img src="/google.svg" alt="Google" className="w-6 h-6 mr-1" />
-            {t('googleBtn')}
+            {t("googleBtn")}
           </button>
 
-
-
           <div className="text-sm md:text-base text-gray-400 text-center">
-            {t('already')}{' '}
+            {t("already")}{" "}
             <Link href="/login" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-              {t('loginLink')}
+              {t("loginLink")}
             </Link>
           </div>
         </form>
       </div>
-
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space {

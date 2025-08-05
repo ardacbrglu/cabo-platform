@@ -1,33 +1,41 @@
+export const dynamic = "force-dynamic";
+import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 
-export async function POST(req) {
+export const POST = csrf(async (req) => {
   try {
-    const { token, newPassword } = await req.json();
-    if (!token || !newPassword) {
-      return Response.json({ success: false, message: "Eksik bilgi." }, { status: 400 });
+    const { token, password } = await req.json();
+    if (!token || !password) {
+      return Response.json({ success: false, message: "Missing data." }, { status: 400 });
     }
-    const record = await prisma.password_reset_token.findUnique({ where: { token } });
-    if (!record || record.used || record.expires_at < new Date()) {
-      return Response.json({ success: false, message: "Token geçersiz veya süresi dolmuş." }, { status: 400 });
+    if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
+      return Response.json({ success: false, message: "Password too weak." }, { status: 400 });
     }
-    const user = await prisma.user.findUnique({ where: { user_id: record.user_id } });
+    const user = await prisma.user.findFirst({
+      where: {
+        resetToken: token,
+        resetTokenExpiry: { gt: new Date() }
+      }
+    });
     if (!user) {
-      return Response.json({ success: false, message: "Kullanıcı bulunamadı." }, { status: 404 });
+      return Response.json({ success: false, message: "Token invalid or expired." }, { status: 400 });
     }
-    // Şifre hashle ve kaydet
-    const hashed = await bcrypt.hash(newPassword, 10);
+    // Şifreyi hashle, reset tokenı sil
+    const hashed = await bcrypt.hash(password, 10);
     await prisma.user.update({
-      where: { user_id: user.user_id },
-      data: { password_hash: hashed }
+      where: { id: user.id },
+      data: {
+        passwordHash: hashed,
+        resetToken: null,
+        resetTokenExpiry: null,
+        failedAttempts: 0,
+        lockUntil: null
+      }
     });
-    // Tokenı kullanılmış yap
-    await prisma.password_reset_token.update({
-      where: { token },
-      data: { used: true }
-    });
-    return Response.json({ success: true, message: "Şifre başarıyla değiştirildi." });
+    return Response.json({ success: true, message: "Password successfully changed." });
   } catch (err) {
-    return Response.json({ success: false, message: "Hata oluştu." }, { status: 500 });
+    console.error("RESET PASSWORD CONFIRM ERROR:", err);
+    return Response.json({ success: false, message: "Server error." }, { status: 500 });
   }
-}
+});

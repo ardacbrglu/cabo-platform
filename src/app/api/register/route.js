@@ -1,12 +1,12 @@
 export const dynamic = "force-dynamic";
 
-import { csrf } from '@/lib/csrf';
-import prisma from '@/lib/prisma';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { checkRateLimit } from '@/lib/ratelimit';
-import axios from 'axios';
-import { sendActivationEmail } from '@/lib/mailer';
+import { csrf } from "@/lib/csrf";
+import prisma from "@/lib/prisma";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { checkRateLimit } from "@/lib/ratelimit";
+import axios from "axios";
+import { sendActivationEmail } from "@/lib/mailer";
 
 if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not defined.");
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -33,6 +33,7 @@ const messages = {
     googleReg: "This email is registered with Google. Please sign in with Google.",
     limitExceeded: "Activation email already sent 3 times today. Please try again tomorrow.",
     alreadyActive: "This email is already registered and activated. Try logging in or resetting your password.",
+    mailfail: "Activation email could not be sent. Please try again later.",
   },
   tr: {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
@@ -44,16 +45,18 @@ const messages = {
     uniq: "Bu e-posta zaten kayıtlı. Aktivasyon tamamlanmadıysa, e-postanızı kontrol edin.",
     terms: "Kullanım ve gizlilik şartlarını kabul etmelisiniz.",
     captcha: "Doğrulama başarısız oldu. Lütfen tekrar deneyin.",
-    success: "Kayıt başarılı! Hesabınızı aktifleştirmek için e-posta kutunuzu kontrol edin.",
+    success: "Kayıt başarılı! Hesabınızı aktifleştirmek için e-postanızı kontrol edin.",
     fail: "Kayıt başarısız. Lütfen tekrar deneyin.",
     googleReg: "Bu e-posta Google ile kayıtlı. Lütfen Google ile giriş yapın.",
     limitExceeded: "Aktivasyon e-postası bugün 3 kez gönderildi. Lütfen yarın tekrar deneyin.",
     alreadyActive: "Bu e-posta zaten kayıtlı ve aktif. Giriş yapabilir veya şifrenizi sıfırlayabilirsiniz.",
+    mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen tekrar deneyin.",
   }
 };
 
 export const POST = csrf(async (req) => {
   try {
+    // Locale belirle
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
@@ -64,19 +67,27 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
+    // Request body'den alanlar
     const { name, email, password, termsAccepted, captcha } = await req.json();
     if (!termsAccepted || !name || !email || !password || !captcha) {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
 
-    // Google reCAPTCHA
-    const { data: captchaData } = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
-    );
-    if (!captchaData.success) {
+    // Google reCAPTCHA kontrolü
+    let captchaOk = false;
+    try {
+      const { data: captchaData } = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET_KEY}&response=${captcha}`
+      );
+      captchaOk = captchaData.success;
+    } catch (err) {
+      console.error("Captcha verification error:", err);
+    }
+    if (!captchaOk) {
       return Response.json({ success: false, message: msg.captcha }, { status: 400 });
     }
 
+    // Temizlik & validasyonlar
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
@@ -90,7 +101,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.password }, { status: 400 });
     }
 
-    // Check if user is registered with Google (social login)
+    // Google hesabı var mı?
     const googleAccount = await prisma.account.findFirst({
       where: { provider: 'google', user: { email: cleanEmail } }
     });
@@ -98,15 +109,13 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.googleReg }, { status: 409 });
     }
 
-    // Existing user logic
+    // Mevcut kullanıcı kontrolü
     const existing = await prisma.user.findFirst({ where: { email: cleanEmail } });
-
     if (existing) {
       if (existing.status === 'active') {
         return Response.json({ success: false, message: msg.alreadyActive }, { status: 409 });
       }
-
-      // User is pending (not activated yet)
+      // pending kullanıcı için activation mail gönderimi limiti
       const now = new Date();
       const lastSent = existing.lastActivationRequestAt || new Date(0);
       const isToday = now.toDateString() === lastSent.toDateString();
@@ -116,57 +125,57 @@ export const POST = csrf(async (req) => {
         return Response.json({ success: false, message: msg.limitExceeded }, { status: 429 });
       }
 
-      // Overwrite old activation token, bump count, update time
+      // Token oluşturup güncelle, tekrar mail gönder
       const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: {
-          activationToken: newToken,
-          lastActivationRequestAt: now,
-          activationRequestedCount: count + 1
-        }
-      });
-
       try {
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            activationToken: newToken,
+            lastActivationRequestAt: now,
+            activationRequestedCount: count + 1
+          }
+        });
         await sendActivationEmail(cleanEmail, newToken);
       } catch (emailErr) {
         console.error("EMAIL RESEND ERROR:", emailErr);
-        return Response.json({ success: false, message: "Activation email could not be sent." }, { status: 500 });
+        return Response.json({ success: false, message: msg.mailfail }, { status: 500 });
       }
-
-      // Success, even if user already existed but was pending
       return Response.json({ success: true, message: msg.success }, { status: 200 });
     }
 
-    // New user registration
+    // Yeni kullanıcı oluştur
     const hashed = await bcrypt.hash(password, 10);
     const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
-    await prisma.user.create({
-      data: {
-        name: cleanName,
-        email: cleanEmail,
-        passwordHash: hashed,
-        role: "affiliate",
-        status: "pending",
-        termsAccepted: true,
-        activationToken: token,
-        activationRequestedCount: 1,
-        lastActivationRequestAt: new Date()
-      }
-    });
-
     try {
+      await prisma.user.create({
+        data: {
+          name: cleanName,
+          email: cleanEmail,
+          passwordHash: hashed,
+          role: "affiliate",
+          status: "pending",
+          termsAccepted: true,
+          activationToken: token,
+          activationRequestedCount: 1,
+          lastActivationRequestAt: new Date()
+        }
+      });
       await sendActivationEmail(cleanEmail, token);
-    } catch (emailErr) {
-      console.error("EMAIL SEND ERROR:", emailErr);
-      return Response.json({ success: false, message: "Activation email could not be sent." }, { status: 500 });
+    } catch (err) {
+      console.error("USER CREATE ERROR:", err);
+      return Response.json({ success: false, message: msg.fail }, { status: 500 });
     }
 
     return Response.json({ success: true, message: msg.success }, { status: 200 });
 
   } catch (err) {
     console.error("REGISTER ERROR:", err);
-    return Response.json({ success: false, message: messages["tr"].fail }, { status: 500 });
+    // Hem locale'ye uygun, hem hata logunu kaybetme
+    const langHeader = req.headers.get("accept-language") || "";
+    const locale = langHeader.startsWith("tr") ? "tr" : "en";
+    const msg = messages[locale];
+    return Response.json({ success: false, message: msg.fail }, { status: 500 });
   }
 });
