@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
 // import { signIn } from "next-auth/react"; // Google ile giriş tamamen devre dışı
 

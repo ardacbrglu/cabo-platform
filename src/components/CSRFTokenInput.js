@@ -1,6 +1,6 @@
 'use client';
 import React from "react";
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function usecsrf_token() {
   const csrf_token = usecsrf_token();

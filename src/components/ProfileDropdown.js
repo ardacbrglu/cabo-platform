@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 import { useRouter } from "next/navigation";
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";

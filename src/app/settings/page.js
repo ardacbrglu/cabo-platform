@@ -6,7 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { useLocale } from "@/context/LocaleContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const LANGUAGES = [
   { code: 'en', name: 'English' },

@@ -1,6 +1,6 @@
 "use client";
 // SECURITY REVIEW: This page handles wallet and payout UI. See comments below for security notes.
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import { Wallet2, BarChart2, Lock, Banknote, Loader2, CheckCircle, XCircle, X, ChevronLeft, ChevronRight } from 'lucide-react';

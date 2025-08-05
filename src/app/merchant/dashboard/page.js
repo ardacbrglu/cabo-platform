@@ -4,7 +4,7 @@ import { useUser } from "@/context/UserContext";
 import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { useTranslation } from "@/hooks/useTranslation";
-import { usecsrf_token } from "@/hooks/usecsrf_token";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) {
