@@ -16,8 +16,6 @@ model User {
   role                 Role                 @default(affiliate)
   languagePreference   String               @default("en") @db.VarChar(10)
   currencyCode         String               @default("EUR") @db.Char(3)
-  resetToken           String?              @db.VarChar(255)
-  resetTokenExpiry     DateTime?            @db.DateTime(0)
   createdAt            DateTime             @default(now()) @db.DateTime(0)
   bankName             String?              @db.VarChar(100)
   iban                 String?              @db.VarChar(34)
@@ -30,10 +28,16 @@ model User {
   flagReason           String?              @db.VarChar(255)
   realUserFullname     String?              @db.VarChar(100)
   termsAccepted        Boolean              @default(false)
+
   activationToken      String?              @db.VarChar(255)
+  activationRequestedCount Int              @default(0)
+  lastActivationRequestAt  DateTime?
+  resetToken           String?              @db.VarChar(255)
+  resetTokenExpiry     DateTime?            @db.DateTime(0)
+
   salesAsMerchant      AffiliateUserSale[]  @relation("AffiliateUserSale_merchantIdToUsers")
   salesAsAffiliate     AffiliateUserSale[]  @relation("AffiliateUserSale_userIdToUsers")
-  affiliateLinks      AffiliateLink[]
+  affiliateLinks       AffiliateLink[]
   contactMessages      ContactMessage[]
   merchantProducts     MerchantProduct[]    @relation("MerchantProducts")
   notifications        Notification[]

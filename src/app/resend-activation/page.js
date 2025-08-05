@@ -1,5 +1,5 @@
 import React from "react";
-import Content from "./content";
+import Content from './Content'; // ✅ doğru
 
 export const metadata = {
   title: "Resend Activation - Cabo",
