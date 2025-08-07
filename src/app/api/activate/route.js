@@ -1,57 +1,57 @@
-// SORUMLULUK: Kayıt endpointi, rate limit ve IP loglaması ile email tabanlı brute-force koruması sağlar.
 export const dynamic = "force-dynamic";
-
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { checkRateLimit, logApiEvent } from "@/lib/ratelimit"; // Rate limit ve log fonksiyonları ayrı dosyada!
-import { sendActivationEmail } from "@/lib/mailer";
+import { checkRateLimit, logApiEvent } from "@/lib/ratelimit";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export async function POST(req) {
+export async function GET(req) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") || "unknown";
   const ua = req.headers.get("user-agent") || "unknown";
+  const url = new URL(req.url);
+  const token = url.searchParams.get("token");
 
-  // 1. Rate limit: IP başına dakikada 8 yeni kayıt denemesi
-  if (!(await checkRateLimit(`register_${ip}`, 8, 60_000))) {
-    await logApiEvent({ endpoint: "register", ip, ua, event: "ratelimit" });
-    return NextResponse.json({ error: "Too many requests. Please wait." }, { status: 429 });
+  // 1. Rate limit: IP başına dakikada 10 aktivasyon denemesi
+  if (!(await checkRateLimit(`activate_${ip}`, 10, 60_000))) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "ratelimit" });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
   }
 
-  const { name, email, password } = await req.json();
-  if (!name || !email || !password) {
-    await logApiEvent({ endpoint: "register", ip, ua, event: "missing_fields" });
-    return NextResponse.json({ error: "Please fill all fields." }, { status: 400 });
+  if (!token) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "no_token" });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
   }
 
-  // 2. Email brute-force koruması (email başına kayıt spamı)
-  if (!(await checkRateLimit(`register_email_${email}`, 4, 60_000))) {
-    await logApiEvent({ endpoint: "register", ip, ua, event: "email_ratelimit", email });
-    return NextResponse.json({ error: "Too many attempts for this email. Try later." }, { status: 429 });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const email = decoded.email;
+
+    // Token hijacking/logical brute-force: DB'deki activationToken ile eşleşiyor mu?
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, status: true, activationToken: true }
+    });
+
+    if (!user || user.status === "active" || user.activationToken !== token) {
+      await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email });
+      return NextResponse.redirect(new URL("/activated?error=1", req.url));
+    }
+
+    await prisma.user.update({
+      where: { email },
+      data: {
+        status: "active",
+        emailVerified: new Date(),
+        activationToken: null
+      },
+    });
+
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "activated", email });
+
+    return NextResponse.redirect(new URL("/activated", req.url));
+  } catch (err) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "jwt_error", error: String(err) });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
   }
-
-  // 3. Kullanıcı varsa brute-force logu
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing && existing.status === "active") {
-    await logApiEvent({ endpoint: "register", ip, ua, event: "already_registered", email });
-    return NextResponse.json({ error: "Already registered." }, { status: 409 });
-  }
-
-  // 4. Hash + token + DB save
-  const hashed = await bcrypt.hash(password, 10);
-  const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: "1d" });
-
-  await prisma.user.upsert({
-    where: { email },
-    update: { name, passwordHash: hashed, activationToken: token, status: "pending" },
-    create: { name, email, passwordHash: hashed, activationToken: token, status: "pending" }
-  });
-
-  await sendActivationEmail(email, token);
-
-  await logApiEvent({ endpoint: "register", ip, ua, event: "register_success", email });
-
-  return NextResponse.json({ ok: true });
 }
