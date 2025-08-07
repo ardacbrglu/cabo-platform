@@ -112,7 +112,7 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      await signIn("google", { callbackUrl: "/dashboard" });
+      await signIn("google", { callbackUrl: "/check-google-signin" });
     } catch {
       setError(locale === "tr"
         ? "Google ile giriş başarısız oldu."

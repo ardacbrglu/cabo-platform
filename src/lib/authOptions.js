@@ -1,3 +1,4 @@
+// /lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -5,10 +6,8 @@ import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
-// JWT_SECRET kontrolü (fallback kaldırıldı)
-if (!process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not defined!");
-}
+// .env zorunlulukları
+if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET environment variable is not defined!");
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const MAX_failedAttempts = 5;
@@ -22,12 +21,10 @@ export function getTokenFromRequest(req) {
   if (authHeader && authHeader.startsWith("Bearer ")) {
     return authHeader.split(" ")[1];
   }
-
   if (cookieHeader) {
     const match = cookieHeader.match(/cabo_token=([^;]+)/);
     return match ? match[1] : null;
   }
-
   return null;
 }
 
@@ -35,7 +32,7 @@ export function getTokenFromRequest(req) {
 export function verifyToken(token) {
   try {
     return jwt.verify(token, JWT_SECRET);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -55,7 +52,6 @@ export const authOptions = {
       },
       async authorize(credentials) {
         if (!credentials.email || !credentials.password) return null;
-
         const cleanEmail = credentials.email.trim().toLowerCase();
 
         const user = await prisma.user.findUnique({
@@ -65,35 +61,29 @@ export const authOptions = {
 
         // Hesap kilitli mi kontrolü
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
-          return null; // Locked
+          return null;
         }
 
         // Parola doğrulama
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
 
         if (!isValid) {
-          // Hatalı deneme sayısını artır ve gerekirse kilitle
           await prisma.user.update({
             where: { id: user.id },
             data: {
-              failedAttempts: {
-                increment: 1,
-              },
-              lockUntil: user.failedAttempts + 1 >= MAX_failedAttempts
-                ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
-                : user.lockUntil,
+              failedAttempts: { increment: 1 },
+              lockUntil:
+                user.failedAttempts + 1 >= MAX_failedAttempts
+                  ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
+                  : user.lockUntil,
             },
           });
           return null;
         }
 
-        // Giriş başarılıysa deneme sayaçlarını sıfırla
         await prisma.user.update({
           where: { id: user.id },
-          data: {
-            failedAttempts: 0,
-            lockUntil: null,
-          },
+          data: { failedAttempts: 0, lockUntil: null },
         });
 
         if (user.status !== "active") return null;
@@ -109,7 +99,7 @@ export const authOptions = {
     }),
   ],
   pages: {
-    signIn: "/login",
+    signIn: "/login", // Manuel girişte login sayfası
   },
   session: {
     strategy: "jwt",
@@ -117,6 +107,7 @@ export const authOptions = {
   },
   callbacks: {
     async jwt({ token, user }) {
+      // Kullanıcıdan gelen bilgiler JWT'ye eklenir
       if (user) {
         token.sub = user.id;
         token.email = user.email;
@@ -126,6 +117,7 @@ export const authOptions = {
       return token;
     },
     async session({ session, token }) {
+      // Oturum açınca JWT'deki id ve role session'a eklenir
       if (session.user && token?.sub) {
         session.user.id = token.sub;
         session.user.role = token.role;
@@ -133,11 +125,11 @@ export const authOptions = {
       }
       return session;
     },
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
+      // GOOGLE İLE KAYIT AKIŞI
       if (account?.provider === "google" && user?.email) {
-        const existing = await prisma.user.findUnique({
-          where: { email: user.email },
-        });
+        // Kullanıcı DB'de yoksa oluştur
+        const existing = await prisma.user.findUnique({ where: { email: user.email } });
 
         if (!existing) {
           await prisma.user.create({
@@ -146,18 +138,20 @@ export const authOptions = {
               email: user.email,
               passwordHash: "",
               termsAccepted: true,
-              status: "active",
+              status: "pending", // Şifre oluşturma ekranına zorla!
               role: "affiliate",
               emailVerified: new Date(),
+              // languagePreference: profile?.locale?.toLowerCase() || "en", // Profilde varsa dil set edilebilir
             },
           });
         }
 
+        // PENDING ise girişe izin verme → create-password’a yönlendirilecek
         if (existing?.status === "pending") {
-          return false; // Onaysız kullanıcı giriş yapamaz
+          return false;
         }
       }
-
+      // Diğer her durumda giriş yapılabilir
       return true;
     },
   },

@@ -1,7 +1,3 @@
-// ✅ app/api/activate/route.js
-// Kullanıcı aktivasyon işlemlerini güvenli şekilde yürütür.
-// Token doğrulaması yapar, kullanıcıyı aktif eder, loglar.
-
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -18,61 +14,51 @@ export async function GET(req) {
   const url = new URL(req.url);
   const token = url.searchParams.get("token");
 
-  // 🔐 1. Rate limit: IP başına dakikada 10 deneme
+  // 1. Rate limit
   if (!(await checkRateLimit(`activate_${ip}`, 10, 60_000))) {
     await logApiEvent({ endpoint: "activate", ip, ua, event: "ratelimit" });
-    return NextResponse.redirect(new URL("/activated?error=1", req.url));
+    return NextResponse.json({ success: false, error: "ratelimit" }, { status: 429 });
   }
 
-  // ❌ 2. Token eksikse
+  // 2. Token eksikse
   if (!token) {
     await logApiEvent({ endpoint: "activate", ip, ua, event: "no_token" });
-    return NextResponse.redirect(new URL("/activated?error=1", req.url));
+    return NextResponse.json({ success: false, error: "notoken" }, { status: 400 });
   }
 
   try {
-    // 🔐 3. JWT decode et (imzayı kontrol et)
+    // 3. JWT doğrulama
     const decoded = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
 
-    // 🔐 4. DB'de hem email hem token birebir eşleşen kullanıcıyı bul
+    // 4. DB'de eşleşen kullanıcı
     const user = await prisma.user.findFirst({
-      where: {
-        email,
-        activationToken: token,
-        status: "pending", // sadece bekleyen kullanıcılar
-      },
+      where: { email, activationToken: token, status: "pending" },
       select: { id: true }
     });
 
-    // ❌ Kullanıcı bulunamazsa veya token geçersizse
     if (!user) {
       await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email });
-      return NextResponse.redirect(new URL("/activated?error=1", req.url));
+      return NextResponse.json({ success: false, error: "invalid" }, { status: 404 });
     }
 
-    // ✅ 5. Kullanıcıyı aktif hale getir
+    // 5. Kullanıcıyı aktif et
     await prisma.user.update({
       where: { id: user.id },
       data: {
         status: "active",
         emailVerified: new Date(),
-        activationToken: null, // Token tek kullanımlık, iptal edilir
-      },
+        activationToken: null
+      }
     });
 
     await logApiEvent({ endpoint: "activate", ip, ua, event: "activated", email });
 
-    return NextResponse.redirect(new URL("/activated", req.url));
+    return NextResponse.json({ success: true }, { status: 200 });
   } catch (err) {
-    // ❌ JWT doğrulama hatası
     await logApiEvent({
-      endpoint: "activate",
-      ip,
-      ua,
-      event: "jwt_error",
-      error: String(err)
+      endpoint: "activate", ip, ua, event: "jwt_error", error: String(err)
     });
-    return NextResponse.redirect(new URL("/activated?error=1", req.url));
+    return NextResponse.json({ success: false, error: "jwt", details: String(err) }, { status: 400 });
   }
 }
