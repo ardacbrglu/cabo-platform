@@ -2,17 +2,14 @@
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
-import { useLocale } from "@/context/LocaleContext"; // senin context'in
+import { useLocale } from "@/context/LocaleContext";
 
 export default function CheckGoogleSignin() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const params = useSearchParams();
-  // 1. Öncelik: URL'de varsa onu kullan, yoksa Context'ten al
   const urlLang = params.get("lang");
-  // Context ile uyumlu
   const { locale } = useLocale();
-
   const lang = urlLang || locale || "en";
 
   useEffect(() => {

@@ -1,6 +1,3 @@
-// SORUMLULUK: Google ile kayıt sonrası veya pending kullanıcıda, şifre oluşturma ekranı. Sadece passwordHash=null & status=pending kullanıcıya erişim verilir.
-// Diğerleri login'e yönlendirilir. CSRF, rate limit ve tüm kontroller güvenli şekilde entegre.
-
 'use client';
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -20,9 +17,9 @@ const t = {
     mismatch: "Passwords do not match.",
     short: "Password must be at least 8 characters, with letters and numbers.",
     required: "Please fill all fields.",
-    success: "Password set! You can now log in.",
+    success: "Password set! Redirecting...",
     server: "Server error. Please try again.",
-    forbidden: "This page is only for pending users who registered with Google.",
+    forbidden: "This page is only for users who registered with Google and haven't set a password.",
   },
   tr: {
     title: "Şifreni Belirle",
@@ -36,9 +33,9 @@ const t = {
     mismatch: "Şifreler uyuşmuyor.",
     short: "Şifre en az 8 karakter olmalı, harf ve rakam içermeli.",
     required: "Lütfen tüm alanları doldurun.",
-    success: "Şifre oluşturuldu! Artık giriş yapabilirsin.",
+    success: "Şifre oluşturuldu! Yönlendiriliyorsunuz...",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
-    forbidden: "Bu sayfa sadece Google ile kaydolan ve şifresi olmayan kullanıcılar içindir.",
+    forbidden: "Bu sayfa sadece Google ile kaydolup henüz şifre oluşturmayanlar içindir.",
   }
 };
 
@@ -54,12 +51,11 @@ export default function CreatePasswordPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // User'ı getir. Eğer uygun değilse login'e at.
     fetch("/api/me")
       .then(res => res.json())
       .then(data => {
-        // Sadece status 'pending' && passwordHash null olanlar erişebilir!
-        if (!data || !data.email || data.status !== "pending" || data.passwordHash) {
+        // Sadece passwordHash olmayan kullanıcılar erişebilir!
+        if (!data || !data.email || data.passwordHash) {
           setError(t[locale].forbidden);
           setTimeout(() => router.replace("/login"), 2000);
         } else {
@@ -105,7 +101,7 @@ export default function CreatePasswordPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setSuccess(t[locale].success);
-        setTimeout(() => router.replace("/login"), 1800);
+        setTimeout(() => router.replace("/dashboard"), 1200); // Direkt dashboard
       } else {
         setError(data.message || t[locale].server);
       }

@@ -127,7 +127,7 @@ export default function LoginContent() {
     setLoading(true);
     setError('');
     try {
-      await signIn("google", { callbackUrl: "/dashboard" });
+      await signIn("google", { callbackUrl: "/check-google-signin" });
     } catch {
       setError(t('googleSignInError'));
     }

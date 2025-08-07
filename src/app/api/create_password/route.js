@@ -1,5 +1,3 @@
-// SORUMLULUK: Yalnızca status: "pending" ve passwordHash: null kullanıcıya şifre belirletir. Rate limit, CSRF, brute-force ve hijacking korumalı.
-
 export const dynamic = "force-dynamic";
 import { csrf } from "@/lib/csrf";
 import prisma from "@/lib/prisma";
@@ -28,11 +26,11 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: "Password too weak." }, { status: 400 });
     }
 
-    // User'ı bul ve statusunu kontrol et
+    // User'ı bul ve passwordHash yoksa devam et
     const user = await prisma.user.findUnique({
       where: { email: payload.email }
     });
-    if (!user || user.status !== "pending" || user.passwordHash) {
+    if (!user || user.passwordHash) {
       return Response.json({ success: false, message: "Invalid user or already set." }, { status: 400 });
     }
 
@@ -42,7 +40,7 @@ export const POST = csrf(async (req) => {
       where: { email: payload.email },
       data: {
         passwordHash: hashed,
-        status: "active",
+        status: "active",      // her ihtimale karşı aktif yap
         failedAttempts: 0,
         lockUntil: null
       }
