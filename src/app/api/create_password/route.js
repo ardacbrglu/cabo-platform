@@ -1,5 +1,6 @@
-export const dynamic = "force-dynamic";
+// SORUMLULUK: Yalnızca status: "pending" ve passwordHash: null kullanıcıya şifre belirletir. Rate limit, CSRF, brute-force ve hijacking korumalı.
 
+export const dynamic = "force-dynamic";
 import { csrf } from "@/lib/csrf";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
@@ -14,7 +15,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: "Too many requests. Please wait and try again." }, { status: 429 });
     }
 
-    // JWT token'ı al ve doğrula
+    // JWT token ile doğrulama (kullanıcıya ait, session üzerinden alınır)
     const token = getTokenFromRequest(req);
     const payload = token ? verifyToken(token) : null;
     if (!payload?.email) {
@@ -27,7 +28,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: "Password too weak." }, { status: 400 });
     }
 
-    // User'ı bul ve durumunu kontrol et
+    // User'ı bul ve statusunu kontrol et
     const user = await prisma.user.findUnique({
       where: { email: payload.email }
     });

@@ -1,8 +1,7 @@
+// SORUMLULUK: Şifre sıfırlama ana sayfa entry. Content dosyasını lazy yükler.
 'use client';
-export const dynamic = "force-dynamic";
-
 import { Suspense } from "react";
-import PasswordResetContent from "./PasswordResetContent";
+import PasswordResetContent from "./Content";
 
 export default function PasswordResetPage() {
   return (

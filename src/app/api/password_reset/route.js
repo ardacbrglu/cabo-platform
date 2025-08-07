@@ -1,3 +1,6 @@
+// SORUMLULUK: Kullanıcı email ile reset linki ister. Her zaman generic mesaj döner.
+// Rate limit, CSRF, brute-force ve token hijacking korumalı.
+
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
@@ -5,8 +8,8 @@ import prisma from '@/lib/prisma';
 import { v4 as uuidv4 } from 'uuid';
 import { sendPasswordResetEmail } from '@/lib/mailer';
 import { addMinutes } from 'date-fns';
+import { checkRateLimit } from '@/lib/ratelimit';
 
-// Hata mesajları çok dilli
 const messages = {
   en: {
     required: "Email is required.",
@@ -22,16 +25,13 @@ const messages = {
   }
 };
 
-import { checkRateLimit } from '@/lib/ratelimit';
-
 export const POST = csrf(async (req) => {
   try {
-    // Dil algılama
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
-    // IP Rate limit (dakikada 5)
+    // IP Rate limit
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`pwreset_req_${ip}`, 5, 60 * 1000)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
@@ -44,10 +44,9 @@ export const POST = csrf(async (req) => {
     }
     const cleanEmail = email.trim().toLowerCase();
 
-    // User kontrolü
+    // User kontrolü (gizli)
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
     if (!user) {
-      // Kullanıcıyı ifşa etme, her durumda success dön
       return Response.json({ success: true, message: msg.sent });
     }
 
@@ -70,7 +69,7 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    // Mail gönder (hata olursa catch'e düşer)
+    // Mail gönder
     await sendPasswordResetEmail(user.email, token);
 
     return Response.json({ success: true, message: msg.sent });

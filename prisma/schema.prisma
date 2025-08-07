@@ -8,72 +8,78 @@ datasource db {
 }
 
 model User {
-  id                   Int                  @id @default(autoincrement())
-  name                 String               @db.VarChar(100)
-  email                String               @unique @db.VarChar(255)
-  emailVerified        DateTime?            @db.DateTime(0)
-  passwordHash         String?              @db.VarChar(255)
-  role                 Role                 @default(affiliate)
-  languagePreference   String               @default("en") @db.VarChar(10)
-  currencyCode         String               @default("EUR") @db.Char(3)
-  createdAt            DateTime             @default(now()) @db.DateTime(0)
-  bankName             String?              @db.VarChar(100)
-  iban                 String?              @db.VarChar(34)
-  phoneNumber          String?              @db.VarChar(25)
-  image                String?              @db.Text
-  status               Userstatus           @default(pending)
-  failedAttempts       Int                  @default(0)
-  lockUntil            DateTime? 
-  isFlagged            Boolean              @default(false)
-  flagReason           String?              @db.VarChar(255)
-  realUserFullname     String?              @db.VarChar(100)
-  termsAccepted        Boolean              @default(false)
+  id                 Int        @id @default(autoincrement())
+  name               String     @db.VarChar(100)
+  email              String     @unique @db.VarChar(255)
+  emailVerified      DateTime?  @db.DateTime(0)
+  passwordHash       String?    @db.VarChar(255)
+  role               Role       @default(affiliate)
+  languagePreference String     @default("en") @db.VarChar(10)
+  currencyCode       String     @default("EUR") @db.Char(3)
+  createdAt          DateTime   @default(now()) @db.DateTime(0)
+  bankName           String?    @db.VarChar(100)
+  iban               String?    @db.VarChar(34)
+  phoneNumber        String?    @db.VarChar(25)
+  image              String?    @db.Text
+  status             Userstatus @default(pending)
+  failedAttempts     Int        @default(0)
+  lockUntil          DateTime?
+  isFlagged          Boolean    @default(false)
+  flagReason         String?    @db.VarChar(255)
+  realUserFullname   String?    @db.VarChar(100)
+  termsAccepted      Boolean    @default(false)
 
-  activationToken      String?              @db.VarChar(255)
-  activationRequestedCount Int              @default(0)
+  activationToken          String?              @db.VarChar(255)
+  activationRequestedCount Int                  @default(0)
   lastActivationRequestAt  DateTime?
-  resetToken           String?              @db.VarChar(255)
-  resetTokenExpiry     DateTime?            @db.DateTime(0)
+  passwordResetTokens      PasswordResetToken[] // <-- Şifre sıfırlama token ilişkisi
 
-  salesAsMerchant      AffiliateUserSale[]  @relation("AffiliateUserSale_merchantIdToUsers")
-  salesAsAffiliate     AffiliateUserSale[]  @relation("AffiliateUserSale_userIdToUsers")
-  affiliateLinks       AffiliateLink[]
-  contactMessages      ContactMessage[]
-  merchantProducts     MerchantProduct[]    @relation("MerchantProducts")
-  notifications        Notification[]
-  payoutRequestItems   PayoutRequestItem[]
-  payoutRequests       PayoutRequest[]
-  accounts             Account[]
-  sessions             Session[]
+  salesAsMerchant    AffiliateUserSale[] @relation("AffiliateUserSale_merchantIdToUsers")
+  salesAsAffiliate   AffiliateUserSale[] @relation("AffiliateUserSale_userIdToUsers")
+  affiliateLinks     AffiliateLink[]
+  contactMessages    ContactMessage[]
+  merchantProducts   MerchantProduct[]   @relation("MerchantProducts")
+  notifications      Notification[]
+  payoutRequestItems PayoutRequestItem[]
+  payoutRequests     PayoutRequest[]
+  accounts           Account[]
+  sessions           Session[]
+
   @@map("users")
 }
 
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id])
 
+  @@index([userId])
+}
 
 model Account {
-  id                 Int      @id @default(autoincrement())
-  userId             Int
-  type               String
-  provider           String
-  providerAccountId  String
-  refreshToken       String?  @db.Text
-  accessToken        String?  @db.Text
-  expiresAt          Int?
-  tokenType          String?
-  scope              String?
-  idToken            String?  @db.Text
-  sessionState       String?
-  oauthTokenSecret   String?  @db.Text
-  oauthToken         String?  @db.Text
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                Int     @id @default(autoincrement())
+  userId            Int
+  type              String
+  provider          String
+  providerAccountId String
+  refreshToken      String? @db.Text
+  accessToken       String? @db.Text
+  expiresAt         Int?
+  tokenType         String?
+  scope             String?
+  idToken           String? @db.Text
+  sessionState      String?
+  oauthTokenSecret  String? @db.Text
+  oauthToken        String? @db.Text
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([provider, providerAccountId])
   @@index([userId])
   @@map("accounts")
 }
-
-
-
-
 
 model Session {
   id           Int      @id @default(autoincrement())
@@ -81,55 +87,59 @@ model Session {
   userId       Int
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
   @@map("sessions")
 }
 
 model VerificationToken {
-  identifier String @db.VarChar(255)
-  token      String @db.VarChar(255)
+  identifier String   @db.VarChar(255)
+  token      String   @db.VarChar(255)
   expires    DateTime
+
   @@unique([identifier, token])
   @@map("verification_tokens")
 }
 
 model AffiliateLink {
-  linkId           Int                 @id @default(autoincrement())
-  userId           Int
-  productId        Int
-  token            String              @unique @db.VarChar(64)
-  createdAt        DateTime            @default(now()) @db.DateTime(0)
-  isVisible        Boolean             @default(true)
-  expiresAt        DateTime?
+  linkId             Int                 @id @default(autoincrement())
+  userId             Int
+  productId          Int
+  token              String              @unique @db.VarChar(64)
+  createdAt          DateTime            @default(now()) @db.DateTime(0)
+  isVisible          Boolean             @default(true)
+  expiresAt          DateTime?
   affiliateUserSales AffiliateUserSale[] @relation("LinkSales")
-  product          MerchantProduct     @relation(fields: [productId], references: [productId])
-  user             User                @relation(fields: [userId], references: [id])
-  clicks           Click[]
+  product            MerchantProduct     @relation(fields: [productId], references: [productId])
+  user               User                @relation(fields: [userId], references: [id])
+  clicks             Click[]
+
   @@index([userId])
   @@index([productId])
   @@map("affiliateLinks")
 }
 
 model AffiliateUserSale {
-  saleId           Int                      @id @default(autoincrement())
-  orderId          String                   @db.VarChar(100)
-  userId           Int
-  merchantId       Int
-  productId        Int
-  amount           Decimal                  @db.Decimal(19, 4)
-  quantity         Int                      @default(1)
-  commissionAffiliate   Decimal             @db.Decimal(19, 4)
-  commissionPlatform    Decimal             @db.Decimal(19, 4)
-  status           AffiliateUserSalestatus  @default(pending)
-  convertedAt      DateTime                 @default(now()) @db.DateTime(0)
-  payoutItemId     Int?
-  updatedAt        DateTime?                @default(now()) @db.DateTime(0)
-  affiliateLinkId  Int?
-  affiliateLink    AffiliateLink?           @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
-  merchantProduct  MerchantProduct          @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
-  merchant         User                     @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
-  affiliate        User                     @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
-  platformEarnings PlatformEarning[]
+  saleId              Int                     @id @default(autoincrement())
+  orderId             String                  @db.VarChar(100)
+  userId              Int
+  merchantId          Int
+  productId           Int
+  amount              Decimal                 @db.Decimal(19, 4)
+  quantity            Int                     @default(1)
+  commissionAffiliate Decimal                 @db.Decimal(19, 4)
+  commissionPlatform  Decimal                 @db.Decimal(19, 4)
+  status              AffiliateUserSalestatus @default(pending)
+  convertedAt         DateTime                @default(now()) @db.DateTime(0)
+  payoutItemId        Int?
+  updatedAt           DateTime?               @default(now()) @db.DateTime(0)
+  affiliateLinkId     Int?
+  affiliateLink       AffiliateLink?          @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
+  merchantProduct     MerchantProduct         @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
+  merchant            User                    @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
+  affiliate           User                    @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
+  platformEarnings    PlatformEarning[]
+
   @@unique([orderId, productId], map: "order_product_unique")
   @@index([userId])
   @@index([merchantId])
@@ -140,83 +150,88 @@ model AffiliateUserSale {
 }
 
 model Click {
-  clickId        Int           @id @default(autoincrement())
-  linkId         Int
-  ipAddress      String?       @db.VarChar(45)
-  userAgent      String?       @db.Text
-  referrer       String?       @db.Text
-  clickedAt      DateTime      @default(now()) @db.DateTime(0)
-  affiliateLink  AffiliateLink @relation(fields: [linkId], references: [linkId], map: "clicks_ibfk_1")
+  clickId       Int           @id @default(autoincrement())
+  linkId        Int
+  ipAddress     String?       @db.VarChar(45)
+  userAgent     String?       @db.Text
+  referrer      String?       @db.Text
+  clickedAt     DateTime      @default(now()) @db.DateTime(0)
+  affiliateLink AffiliateLink @relation(fields: [linkId], references: [linkId], map: "clicks_ibfk_1")
+
   @@index([linkId])
   @@map("clicks")
 }
 
 model ContactMessage {
-  messageId      Int      @id @default(autoincrement())
-  userId         Int?
-  name           String?  @db.VarChar(100)
-  email          String?  @db.VarChar(255)
-  message        String   @db.Text
-  submittedAt    DateTime @default(now()) @db.DateTime(0)
-  user           User?    @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
+  messageId   Int      @id @default(autoincrement())
+  userId      Int?
+  name        String?  @db.VarChar(100)
+  email       String?  @db.VarChar(255)
+  message     String   @db.Text
+  submittedAt DateTime @default(now()) @db.DateTime(0)
+  user        User?    @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
+
   @@index([userId])
   @@map("contactMessages")
 }
 
 model MerchantProduct {
-  productId            Int                    @id @default(autoincrement())
-  merchantId           Int
-  name                 String                 @db.VarChar(255)
-  description          String?                @db.Text
-  imageUrl             String                 @db.Text
-  merchantUrl          String                 @db.Text
-  commissionRate       Decimal                @db.Decimal(5, 2)
-  isActive             Boolean                @default(true)
-  totalClicks          Int                    @default(0)
-  totalPurchases       Int                    @default(0)
-  createdAt            DateTime               @default(now()) @db.DateTime(0)
-  price                Decimal?               @default(20.00) @db.Decimal(10, 2)
-  activatedByAdmin     Boolean                @default(false)
-  maxSalesLimit        Int?                   @default(100)
-  productCode          String                 @unique @db.VarChar(64)
-  affiliateUserSales   AffiliateUserSale[]
-  affiliateLinks      AffiliateLink[]
-  merchant             User                   @relation("MerchantProducts", fields: [merchantId], references: [id], map: "merchantProducts_ibfk_1")
-  payoutRequestItems   PayoutRequestItem[]
+  productId          Int                 @id @default(autoincrement())
+  merchantId         Int
+  name               String              @db.VarChar(255)
+  description        String?             @db.Text
+  imageUrl           String              @db.Text
+  merchantUrl        String              @db.Text
+  commissionRate     Decimal             @db.Decimal(5, 2)
+  isActive           Boolean             @default(true)
+  totalClicks        Int                 @default(0)
+  totalPurchases     Int                 @default(0)
+  createdAt          DateTime            @default(now()) @db.DateTime(0)
+  price              Decimal?            @default(20.00) @db.Decimal(10, 2)
+  activatedByAdmin   Boolean             @default(false)
+  maxSalesLimit      Int?                @default(100)
+  productCode        String              @unique @db.VarChar(64)
+  affiliateUserSales AffiliateUserSale[]
+  affiliateLinks     AffiliateLink[]
+  merchant           User                @relation("MerchantProducts", fields: [merchantId], references: [id], map: "merchantProducts_ibfk_1")
+  payoutRequestItems PayoutRequestItem[]
+
   @@index([merchantId])
   @@map("merchantProducts")
 }
 
 model Notification {
-  id         Int              @id @default(autoincrement())
-  userId     Int
-  type       NotificationType @default(info)
-  message    String           @db.Text
-  link       String?          @db.VarChar(255)
-  createdAt  DateTime         @default(now()) @db.DateTime(0)
-  read       Boolean          @default(false)
-  isDeleted  Boolean          @default(false)
-  user       User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  type      NotificationType @default(info)
+  message   String           @db.Text
+  link      String?          @db.VarChar(255)
+  createdAt DateTime         @default(now()) @db.DateTime(0)
+  read      Boolean          @default(false)
+  isDeleted Boolean          @default(false)
+  user      User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
+
   @@index([userId])
   @@map("notifications")
 }
 
 model PayoutRequest {
-  requestId            Int                  @id @default(autoincrement())
-  userId               Int
-  amountTotal          Decimal              @db.Decimal(19, 4)
-  status               Payoutstatus         @default(pending)
-  requestedAt          DateTime?            @default(now()) @db.DateTime(0)
-  paidAt               DateTime?            @db.DateTime(0)
-  bankName             String?              @db.VarChar(100)
-  iban                 String?              @db.VarChar(34)
-  platformPaid         Boolean              @default(false)
-  platformPaidAt       DateTime?            @db.DateTime(0)
-  realUserFullname     String?              @db.VarChar(100)
-  rejectedReason       String?              @db.VarChar(255)
-  updatedAt            DateTime?            @default(now()) @db.DateTime(0)
-  payoutRequestItems   PayoutRequestItem[]
-  user                 User                 @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
+  requestId          Int                 @id @default(autoincrement())
+  userId             Int
+  amountTotal        Decimal             @db.Decimal(19, 4)
+  status             Payoutstatus        @default(pending)
+  requestedAt        DateTime?           @default(now()) @db.DateTime(0)
+  paidAt             DateTime?           @db.DateTime(0)
+  bankName           String?             @db.VarChar(100)
+  iban               String?             @db.VarChar(34)
+  platformPaid       Boolean             @default(false)
+  platformPaidAt     DateTime?           @db.DateTime(0)
+  realUserFullname   String?             @db.VarChar(100)
+  rejectedReason     String?             @db.VarChar(255)
+  updatedAt          DateTime?           @default(now()) @db.DateTime(0)
+  payoutRequestItems PayoutRequestItem[]
+  user               User                @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
+
   @@index([userId])
   @@map("payoutRequests")
 }
@@ -239,6 +254,7 @@ model PayoutRequestItem {
   payoutRequest       PayoutRequest            @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
   user                User                     @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
   merchantProduct     MerchantProduct?         @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
+
   @@index([merchantId])
   @@index([requestId])
   @@index([productId])
@@ -257,13 +273,14 @@ model PayoutRequestLog {
 }
 
 model Currency {
-  code              String              @id @db.Char(3)
-  symbol            String              @db.VarChar(5)
-  minorUnit         Int
-  updatedAt         DateTime            @default(now()) @db.DateTime(0)
-  baseRates         ExchangeRate[]      @relation("baseCurrency")
-  targetRates       ExchangeRate[]      @relation("targetCurrency")
-  platformEarnings  PlatformEarning[]
+  code             String            @id @db.Char(3)
+  symbol           String            @db.VarChar(5)
+  minorUnit        Int
+  updatedAt        DateTime          @default(now()) @db.DateTime(0)
+  baseRates        ExchangeRate[]    @relation("baseCurrency")
+  targetRates      ExchangeRate[]    @relation("targetCurrency")
+  platformEarnings PlatformEarning[]
+
   @@map("currencies")
 }
 
@@ -275,27 +292,29 @@ model ExchangeRate {
   validTo           DateTime @db.DateTime(0)
   baseCurrencyRel   Currency @relation("baseCurrency", fields: [baseCurrency], references: [code], map: "exchange_rates_ibfk_1")
   targetCurrencyRel Currency @relation("targetCurrency", fields: [targetCurrency], references: [code], map: "exchange_rates_ibfk_2")
+
   @@id([baseCurrency, targetCurrency, validFrom])
   @@index([targetCurrency])
   @@map("exchange_rates")
 }
 
 model PlatformEarning {
-  earningId         Int              @id @default(autoincrement())
+  earningId         Int               @id @default(autoincrement())
   saleId            Int
-  amount            Decimal          @db.Decimal(19, 4)
-  currencyCode      String           @default("EUR") @db.Char(3)
-  loggedAt          DateTime         @default(now()) @db.DateTime(0)
+  amount            Decimal           @db.Decimal(19, 4)
+  currencyCode      String            @default("EUR") @db.Char(3)
+  loggedAt          DateTime          @default(now()) @db.DateTime(0)
   affiliateUserSale AffiliateUserSale @relation(fields: [saleId], references: [saleId], map: "platform_earnings_ibfk_1")
-  currency          Currency         @relation(fields: [currencyCode], references: [code], map: "platform_earnings_ibfk_2")
+  currency          Currency          @relation(fields: [currencyCode], references: [code], map: "platform_earnings_ibfk_2")
+
   @@index([currencyCode])
   @@index([saleId])
 }
 
 model PlatformConfig {
-  keyName    String    @id @db.VarChar(100)
-  value      String    @db.Text
-  updatedAt  DateTime? @default(now()) @db.DateTime(0)
+  keyName   String    @id @db.VarChar(100)
+  value     String    @db.Text
+  updatedAt DateTime? @default(now()) @db.DateTime(0)
 }
 
 // ENUMS
@@ -335,4 +354,15 @@ enum NotificationType {
   info
   support_reply
   important
+}
+
+model ApiLog {
+  id        Int      @id @default(autoincrement())
+  endpoint  String
+  ip        String
+  ua        String
+  event     String
+  email     String?
+  error     String?
+  createdAt DateTime @default(now())
 }

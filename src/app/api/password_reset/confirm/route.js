@@ -1,10 +1,13 @@
+// SORUMLULUK: Token ve yeni şifre ile şifreyi sıfırlar. Token bir kere kullanılır ve süresi kontrol edilir.
+// Rate limit, brute-force, CSRF korumalı.
+
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { checkRateLimit } from '@/lib/ratelimit';
 
-// Çok dilli hata mesajları
 const messages = {
   en: {
     invalid: "Token invalid or expired.",
@@ -28,16 +31,13 @@ const messages = {
   }
 };
 
-import { checkRateLimit } from '@/lib/ratelimit';
-
 export const POST = csrf(async (req) => {
   try {
-    // Dil algılama
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
-    // IP Rate limit (dakikada 5)
+    // IP Rate limit
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`pwreset_confirm_${ip}`, 5, 60 * 1000)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });

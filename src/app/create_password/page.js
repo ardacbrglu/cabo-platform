@@ -1,11 +1,12 @@
-'use client';
+// SORUMLULUK: Google ile kayıt sonrası veya pending kullanıcıda, şifre oluşturma ekranı. Sadece passwordHash=null & status=pending kullanıcıya erişim verilir.
+// Diğerleri login'e yönlendirilir. CSRF, rate limit ve tüm kontroller güvenli şekilde entegre.
 
+'use client';
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import PublicLayout from "@/components/PublicLayout";
 
-// Multi-locale destekli çeviri
 const t = {
   en: {
     title: "Set Your Password",
@@ -21,6 +22,7 @@ const t = {
     required: "Please fill all fields.",
     success: "Password set! You can now log in.",
     server: "Server error. Please try again.",
+    forbidden: "This page is only for pending users who registered with Google.",
   },
   tr: {
     title: "Şifreni Belirle",
@@ -36,6 +38,7 @@ const t = {
     required: "Lütfen tüm alanları doldurun.",
     success: "Şifre oluşturuldu! Artık giriş yapabilirsin.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
+    forbidden: "Bu sayfa sadece Google ile kaydolan ve şifresi olmayan kullanıcılar içindir.",
   }
 };
 
@@ -51,21 +54,25 @@ export default function CreatePasswordPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // /api/me ile kullanıcıyı getir. Eğer passwordHash boş değilse veya status active değilse login'e at.
+    // User'ı getir. Eğer uygun değilse login'e at.
     fetch("/api/me")
       .then(res => res.json())
       .then(data => {
+        // Sadece status 'pending' && passwordHash null olanlar erişebilir!
         if (!data || !data.email || data.status !== "pending" || data.passwordHash) {
-          router.replace("/login");
+          setError(t[locale].forbidden);
+          setTimeout(() => router.replace("/login"), 2000);
         } else {
           setUser(data);
           setLocale((data.languagePreference || "en").toLowerCase().startsWith("tr") ? "tr" : "en");
         }
       })
       .catch(() => {
-        router.replace("/login");
+        setError(t[locale].server);
+        setTimeout(() => router.replace("/login"), 2000);
       });
-  }, [router]);
+    // eslint-disable-next-line
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -98,7 +105,7 @@ export default function CreatePasswordPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setSuccess(t[locale].success);
-        setTimeout(() => router.replace("/login"), 2000);
+        setTimeout(() => router.replace("/login"), 1800);
       } else {
         setError(data.message || t[locale].server);
       }
@@ -109,8 +116,20 @@ export default function CreatePasswordPage() {
     }
   };
 
+  if (error && !user) {
+    return (
+      <PublicLayout>
+        <div className="py-24 text-center text-red-400 text-xl">{error}</div>
+      </PublicLayout>
+    );
+  }
+
   if (!user) {
-    return <PublicLayout><div className="py-24 text-center text-gray-300 text-xl">Loading...</div></PublicLayout>;
+    return (
+      <PublicLayout>
+        <div className="py-24 text-center text-gray-300 text-xl">Loading...</div>
+      </PublicLayout>
+    );
   }
 
   return (

@@ -1,70 +1,59 @@
-'use client';
-import PublicLayout from '@/components/PublicLayout';
-import { useLocale } from '@/context/LocaleContext';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, Suspense } from 'react';
+// SORUMLULUK: Aktivasyon endpointi, brute-force ve token hijacking korumalı, IP ve user-agent loglar.
+// JWT token'ın expiry'si zorunlu!
+export const dynamic = "force-dynamic";
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import jwt from "jsonwebtoken";
+import { checkRateLimit, logApiEvent } from "@/lib/ratelimit";
 
-const translations = {
-  en: {
-    activated: "Account Activated!",
-    activatedMsg: "Your account is now active. Redirecting to login...",
-    activatedNote: "You can now log in and start using Cabo.",
-    failed: "Activation Failed",
-    failedMsg: "Your activation link is invalid or expired.",
-    failedNote: "Please try registering again or contact support if the issue persists.",
-  },
-  tr: {
-    activated: "Hesap Aktifleştirildi!",
-    activatedMsg: "Hesabınız aktifleştirildi. Giriş sayfasına yönlendiriliyorsunuz...",
-    activatedNote: "Artık giriş yapabilir ve Cabo'yu kullanmaya başlayabilirsiniz.",
-    failed: "Aktivasyon Başarısız",
-    failedMsg: "Aktivasyon linkiniz geçersiz veya süresi dolmuş.",
-    failedNote: "Lütfen tekrar kayıt olun veya sorun devam ederse destekle iletişime geçin.",
+const JWT_SECRET = process.env.JWT_SECRET;
+
+export async function GET(req) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") || "unknown";
+  const ua = req.headers.get("user-agent") || "unknown";
+  const url = new URL(req.url);
+  const token = url.searchParams.get("token");
+
+  // 1. Rate limit: IP başına dakikada 10 aktivasyon denemesi
+  if (!(await checkRateLimit(`activate_${ip}`, 10, 60_000))) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "ratelimit" });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
   }
-};
 
-function ActivatedContent() {
-  const params = useSearchParams();
-  const router = useRouter();
-  const { locale, ready } = useLocale();
-  const t = (key) => translations[locale]?.[key] || translations.en[key];
+  if (!token) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "no_token" });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
+  }
 
-  const isError = params.get("error");
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const email = decoded.email;
 
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      router.push("/login");
-    }, 3000);
-    return () => clearTimeout(timeout);
-  }, [router]);
+    // Token hijacking/logical brute-force: DB'deki activationToken ile eşleşiyor mu?
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, status: true, activationToken: true }
+    });
 
-  if (!ready) return null;
+    if (!user || user.status === "active" || user.activationToken !== token) {
+      await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email });
+      return NextResponse.redirect(new URL("/activated?error=1", req.url));
+    }
 
-  return (
-    <div className="flex flex-col justify-center items-center min-h-[60vh] text-white text-center px-6">
-      {isError ? (
-        <>
-          <h1 className="text-3xl font-bold mb-4">{t('failed')}</h1>
-          <p className="text-red-400 text-lg mb-4">{t('failedMsg')}</p>
-          <p className="text-gray-400 text-sm">{t('failedNote')}</p>
-        </>
-      ) : (
-        <>
-          <h1 className="text-3xl font-bold mb-4">{t('activated')}</h1>
-          <p className="text-green-400 text-lg mb-4">{t('activatedMsg')}</p>
-          <p className="text-gray-400 text-sm">{t('activatedNote')}</p>
-        </>
-      )}
-    </div>
-  );
-}
+    await prisma.user.update({
+      where: { email },
+      data: {
+        status: "active",
+        emailVerified: new Date(),
+        activationToken: null
+      },
+    });
 
-export default function ActivatedPage() {
-  return (
-    <PublicLayout>
-      <Suspense fallback={null}>
-        <ActivatedContent />
-      </Suspense>
-    </PublicLayout>
-  );
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "activated", email });
+
+    return NextResponse.redirect(new URL("/activated", req.url));
+  } catch (err) {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "jwt_error", error: String(err) });
+    return NextResponse.redirect(new URL("/activated?error=1", req.url));
+  }
 }

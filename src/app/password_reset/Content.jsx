@@ -1,11 +1,48 @@
+// SORUMLULUK: Şifre sıfırlama formu ve yeni şifre belirleme formunu gösterir (token varsa yeni şifre, yoksa email).
 'use client';
-export const dynamic = "force-dynamic";
-
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
+const t = {
+  en: {
+    forgot: "Forgot your password?",
+    enterEmail: "Enter your email",
+    send: "Send Reset Email",
+    sending: "Sending...",
+    emailSent: "If user exists, password reset email sent.",
+    setNew: "Set a new password",
+    newPw: "New password",
+    repeatPw: "Repeat new password",
+    save: "Set Password",
+    saving: "Saving...",
+    required: "Please fill all fields.",
+    mismatch: "Passwords do not match.",
+    weak: "Password must be at least 8 chars, with letters and numbers.",
+    invalid: "Token invalid or expired.",
+    server: "Server error. Please try again.",
+    success: "Password successfully changed. Redirecting...",
+  },
+  tr: {
+    forgot: "Şifreni mi unuttun?",
+    enterEmail: "E-postanı gir",
+    send: "Sıfırlama maili gönder",
+    sending: "Gönderiliyor...",
+    emailSent: "Kullanıcı varsa şifre sıfırlama e-postası gönderildi.",
+    setNew: "Yeni şifre belirle",
+    newPw: "Yeni şifre",
+    repeatPw: "Yeni şifre (tekrar)",
+    save: "Şifreyi Kaydet",
+    saving: "Kaydediliyor...",
+    required: "Lütfen tüm alanları doldurun.",
+    mismatch: "Şifreler uyuşmuyor.",
+    weak: "Şifre en az 8 karakter ve harf/rakam içermeli.",
+    invalid: "Token geçersiz veya süresi dolmuş.",
+    server: "Sunucu hatası. Lütfen tekrar deneyin.",
+    success: "Şifre başarıyla değiştirildi. Yönlendiriliyorsunuz...",
+  }
+};
 
 export default function PasswordResetContent() {
   const [step, setStep] = useState("request"); // "request" | "confirm"
@@ -20,12 +57,14 @@ export default function PasswordResetContent() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
+  const locale = typeof window !== "undefined" && navigator.language.startsWith("tr") ? "tr" : "en";
+  const trans = t[locale];
 
   useEffect(() => {
     if (token) setStep("confirm");
   }, [token]);
 
-  // EMAIL İLE RESET TOKEN İSTEĞİ
+  // E-MAIL İLE RESET TOKEN İSTEĞİ
   const handleRequest = async (e) => {
     e.preventDefault();
     setError("");
@@ -37,17 +76,18 @@ export default function PasswordResetContent() {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": csrfToken || "",
+          "accept-language": locale,
         },
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccess("If user exists, password reset email sent.");
+        setSuccess(trans.emailSent);
       } else {
-        setError(data.message || "Failed to send reset email.");
+        setError(data.message || trans.server);
       }
     } catch {
-      setError("Server error.");
+      setError(trans.server);
     } finally {
       setLoading(false);
     }
@@ -60,15 +100,15 @@ export default function PasswordResetContent() {
     setSuccess("");
 
     if (!pw || !pw2) {
-      setError("Please fill all fields.");
+      setError(trans.required);
       return;
     }
     if (pw !== pw2) {
-      setError("Passwords do not match.");
+      setError(trans.mismatch);
       return;
     }
     if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) {
-      setError("Password must be at least 8 characters, with letters and numbers.");
+      setError(trans.weak);
       return;
     }
     setLoading(true);
@@ -78,18 +118,19 @@ export default function PasswordResetContent() {
         headers: {
           "Content-Type": "application/json",
           "x-csrf-token": csrfToken || "",
+          "accept-language": locale,
         },
         body: JSON.stringify({ token, password: pw }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccess("Password successfully changed. Redirecting...");
+        setSuccess(trans.success);
         setTimeout(() => router.replace("/login"), 2000);
       } else {
-        setError(data.message || "Failed to reset password.");
+        setError(data.message || trans.server);
       }
     } catch {
-      setError("Server error.");
+      setError(trans.server);
     } finally {
       setLoading(false);
     }
@@ -101,11 +142,11 @@ export default function PasswordResetContent() {
         <div className="w-full max-w-md bg-[#161a16] border border-[#252925] rounded-2xl shadow-xl p-10">
           {step === "request" ? (
             <>
-              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">Forgot your password?</h2>
+              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.forgot}</h2>
               <form onSubmit={handleRequest} className="flex flex-col gap-4">
                 <input
                   type="email"
-                  placeholder="Enter your email"
+                  placeholder={trans.enterEmail}
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
@@ -118,17 +159,17 @@ export default function PasswordResetContent() {
                   disabled={loading}
                   className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
                 >
-                  {loading ? "Sending..." : "Send Reset Email"}
+                  {loading ? trans.sending : trans.send}
                 </button>
               </form>
             </>
           ) : (
             <>
-              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">Set a new password</h2>
+              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.setNew}</h2>
               <form onSubmit={handleConfirm} className="flex flex-col gap-4">
                 <input
                   type="password"
-                  placeholder="New password"
+                  placeholder={trans.newPw}
                   value={pw}
                   onChange={e => setPw(e.target.value)}
                   required
@@ -136,7 +177,7 @@ export default function PasswordResetContent() {
                 />
                 <input
                   type="password"
-                  placeholder="Repeat new password"
+                  placeholder={trans.repeatPw}
                   value={pw2}
                   onChange={e => setPw2(e.target.value)}
                   required
@@ -149,7 +190,7 @@ export default function PasswordResetContent() {
                   disabled={loading}
                   className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
                 >
-                  {loading ? "Saving..." : "Set Password"}
+                  {loading ? trans.saving : trans.save}
                 </button>
               </form>
             </>
