@@ -1,3 +1,6 @@
+// ✅ app/api/register/route.js
+// Sorumluluk: Kullanıcı kaydı (manuel) işlemini güvenli şekilde yapar, rate limit, captcha, CSRF, duplicate & Google hesabı kontrolü, activationToken işlemleri ve loglama içerir.
+
 export const dynamic = "force-dynamic";
 
 import { csrf } from "@/lib/csrf";
@@ -123,9 +126,9 @@ export const POST = csrf(async (req) => {
       if (count >= 3) {
         return Response.json({ success: false, message: msg.limitExceeded }, { status: 429 });
       }
-      // TOKEN: Sadece burada oluşturuluyor, önce DB'ye overwrite ediliyor!
+      // TOKEN: Burada yeni token overwrite edilir, önce DB'ye yazılır, sonra mail atılır!
       const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
-      await prisma.user.update({
+      const updateResult = await prisma.user.update({
         where: { id: existing.id },
         data: {
           activationToken: newToken,
@@ -133,9 +136,14 @@ export const POST = csrf(async (req) => {
           activationRequestedCount: count + 1
         }
       });
-      // DB'ye yazıldıktan sonra MAİL!
+      console.log("EXISTING USER UPDATE:", {
+        id: updateResult.id,
+        email: updateResult.email,
+        activationToken: updateResult.activationToken
+      });
       try {
         await sendActivationEmail(cleanEmail, newToken);
+        console.log("ACTIVATION EMAIL SENT (resend):", cleanEmail, newToken);
       } catch (emailErr) {
         console.error("EMAIL RESEND ERROR:", emailErr);
         return Response.json({ success: false, message: msg.mailfail }, { status: 500 });
@@ -143,11 +151,11 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: true, message: msg.success }, { status: 200 });
     }
 
-    // YENİ KULLANICI (Aynı mantık: önce create, sonra mail)
+    // YENİ KULLANICI: önce create, sonra mail!
     const hashed = await bcrypt.hash(password, 10);
     const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
-    await prisma.user.create({
+    const createdUser = await prisma.user.create({
       data: {
         name: cleanName,
         email: cleanEmail,
@@ -160,9 +168,15 @@ export const POST = csrf(async (req) => {
         lastActivationRequestAt: new Date()
       }
     });
-    // DB'ye yazıldıktan sonra MAİL!
+    console.log("YENİ USER CREATE:", {
+      id: createdUser.id,
+      email: createdUser.email,
+      activationToken: createdUser.activationToken
+    });
+
     try {
       await sendActivationEmail(cleanEmail, token);
+      console.log("ACTIVATION EMAIL SENT (new):", cleanEmail, token);
     } catch (err) {
       console.error("USER CREATE ERROR:", err);
       return Response.json({ success: false, message: msg.fail }, { status: 500 });
