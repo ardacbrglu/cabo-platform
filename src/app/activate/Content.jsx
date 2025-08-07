@@ -32,6 +32,9 @@ export default function ActivateContent() {
         if (data.success) {
           setStatus('success');
           setTimeout(() => router.replace('/activated'), 2000);
+        } else if (data.alreadyActive) {
+          setStatus('success');
+          setTimeout(() => router.replace('/activated'), 2000);
         } else {
           setStatus('error');
           // Hatalara göre farklı mesaj da gösterebilirsin

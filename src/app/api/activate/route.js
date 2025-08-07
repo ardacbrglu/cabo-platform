@@ -37,7 +37,16 @@ export async function GET(req) {
       select: { id: true }
     });
 
+    // 4b. Eğer kullanıcı bulunamazsa ama zaten aktifse, "alreadyActive" olarak başarılı dön
     if (!user) {
+      const alreadyActive = await prisma.user.findFirst({
+        where: { email, status: "active" },
+        select: { id: true }
+      });
+      if (alreadyActive) {
+        await logApiEvent({ endpoint: "activate", ip, ua, event: "already_active", email });
+        return NextResponse.json({ success: true, alreadyActive: true }, { status: 200 });
+      }
       await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email });
       return NextResponse.json({ success: false, error: "invalid" }, { status: 404 });
     }

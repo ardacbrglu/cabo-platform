@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
@@ -63,20 +62,12 @@ export default function Page() {
   const router = useRouter();
   const { locale, ready } = useLocale();
   const csrfToken = useCsrfToken();
-  const params = useSearchParams();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
-
-  useEffect(() => {
-    const autoEmail = params.get("email");
-    const from = params.get("from");
-    if (autoEmail) setEmail(autoEmail);
-    if (from === "activated") setJustActivated(true);
-  }, [params]);
 
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
