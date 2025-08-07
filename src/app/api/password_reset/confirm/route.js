@@ -33,6 +33,7 @@ const messages = {
 
 export const POST = csrf(async (req) => {
   try {
+    // Kullanıcının tercih ettiği dil veya accept-language başlığından dil seç.
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
@@ -53,7 +54,13 @@ export const POST = csrf(async (req) => {
 
     // Token kontrolü
     const record = await prisma.passwordResetToken.findUnique({ where: { token } });
-    if (!record || record.used || record.expiresAt < new Date()) {
+    if (!record) {
+      return Response.json({ success: false, message: msg.invalid }, { status: 400 });
+    }
+    if (record.used) {
+      return Response.json({ success: false, message: msg.used }, { status: 400 });
+    }
+    if (record.expiresAt < new Date()) {
       return Response.json({ success: false, message: msg.invalid }, { status: 400 });
     }
 

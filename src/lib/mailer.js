@@ -40,23 +40,30 @@ export async function sendActivationEmail(to, token) {
 }
 
 // ✅ Şifre sıfırlama maili gönderimi
-export async function sendPasswordResetEmail(to, token) {
-  // Link sadece password reset için → /password_reset?token=...
-  const resetUrl = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/password_reset?token=${token}`;
+export async function sendPasswordResetEmail(to, token, language = "en") {
+  // Link → /password_reset?token=...&lang=tr
+  const resetUrl = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/password_reset?token=${token}&lang=${language}`;
 
   try {
     await transporter.sendMail({
       from: process.env.FROM_EMAIL || 'Cabo <no-reply@localhost>',
       to,
-      subject: "Reset your Cabo password",
+      subject: language === "tr" ? "Cabo şifreni sıfırla" : "Reset your Cabo password",
       html: `
         <div style="font-family: Arial, sans-serif; background-color: #111; padding: 20px; border-radius: 10px; color: #fff;">
-          <h2 style="color: #f39c12;">Password Reset</h2>
-          <p>You requested a password reset. Click the button below to continue:</p>
+          <h2 style="color: #f39c12;">${language === "tr" ? "Şifre Sıfırlama" : "Password Reset"}</h2>
+          <p>${language === "tr"
+              ? "Şifrenizi sıfırlamak için aşağıdaki butona tıklayın:"
+              : "You requested a password reset. Click the button below to continue:"}
+          </p>
           <a href="${resetUrl}" target="_blank" style="display:inline-block; padding: 12px 24px; background-color: #f39c12; color: #111; border-radius: 8px; text-decoration: none; font-weight: bold;">
-            Reset My Password
+            ${language === "tr" ? "Şifremi Sıfırla" : "Reset My Password"}
           </a>
-          <p style="margin-top: 20px; color: #aaa;">This link will expire in 15 minutes. If you didn’t request this, you can ignore this email.</p>
+          <p style="margin-top: 20px; color: #aaa;">${
+            language === "tr"
+              ? "Bu bağlantı 15 dakika içinde geçerliliğini yitirir. Bu isteği siz yapmadıysanız, bu e-postayı görmezden gelebilirsiniz."
+              : "This link will expire in 15 minutes. If you didn’t request this, you can ignore this email."
+          }</p>
           <p style="color: #666;">— Cabo Security Team</p>
         </div>
       `,
@@ -67,3 +74,4 @@ export async function sendPasswordResetEmail(to, token) {
     throw new Error("Failed to send reset email");
   }
 }
+

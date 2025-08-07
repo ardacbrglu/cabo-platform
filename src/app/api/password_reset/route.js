@@ -28,8 +28,8 @@ const messages = {
 export const POST = csrf(async (req) => {
   try {
     const langHeader = req.headers.get("accept-language") || "";
-    const locale = langHeader.startsWith("tr") ? "tr" : "en";
-    const msg = messages[locale];
+    const acceptLang = langHeader.startsWith("tr") ? "tr" : "en";
+    const msg = messages[acceptLang];
 
     // IP Rate limit
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
@@ -69,8 +69,9 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    // Mail gönder
-    await sendPasswordResetEmail(user.email, token);
+    // DİLİ KULLANICIDAN ÇEK → linkte lang parametresi olarak ata!
+    const language = user.languagePreference || acceptLang;
+    await sendPasswordResetEmail(user.email, token, language);
 
     return Response.json({ success: true, message: msg.sent });
   } catch (err) {

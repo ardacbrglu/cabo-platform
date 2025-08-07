@@ -57,7 +57,8 @@ export default function PasswordResetContent() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
-  const locale = typeof window !== "undefined" && navigator.language.startsWith("tr") ? "tr" : "en";
+  const langParam = params.get("lang");
+  const locale =(langParam && ["en", "tr"].includes(langParam)) ? langParam: (typeof window !== "undefined" && navigator.language.startsWith("tr") ? "tr" : "en");
   const trans = t[locale];
 
   useEffect(() => {

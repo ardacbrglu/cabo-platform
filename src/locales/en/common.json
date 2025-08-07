@@ -296,6 +296,11 @@
   "activation.invalid": "Invalid activation token.",
   "activation.error": "❌ An error occurred. Please try again.",
   "activation.loginLink": "Go to login page",
-  "activating": "Activating your account..."
+  "activating": "Activating your account...",
+  "activatingAccount": "Your account is being verified...",
+  "activationSuccess": "Activation successful! You can now log in.",
+  "activationFailed": "Activation failed or the link is invalid.",
+  "redirectingToLogin": "Redirecting to login page..."
 }
+
 
