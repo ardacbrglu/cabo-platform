@@ -1,3 +1,6 @@
+// GÜVENLİ, PROD-READY LOGIN ENDPOINTİ (SADECE MANUEL LOGIN İÇİN)
+// Google login için NextAuth (next-auth/react) kullanılır
+
 export const dynamic = "force-dynamic";
 
 import { csrf } from '@/lib/csrf';
@@ -7,9 +10,7 @@ import jwt from 'jsonwebtoken';
 import { checkRateLimit } from '@/lib/ratelimit';
 
 const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not defined!");
-}
+if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is not defined!");
 
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 dakika
 const RATE_LIMIT_COUNT = 6;
@@ -22,7 +23,7 @@ const messages = {
     fill: "Please enter your email and password.",
     invalid: "Incorrect email or password.",
     merchant: "Merchants cannot log in here.",
-    google: "You signed up with Google. Please set a password to log in.",
+    google: "You signed up with Google. Please use Google login.",
     inactive: "Your account has not been activated yet.",
     locked: "Too many failed attempts. Please try again later.",
     success: "Login successful!",
@@ -34,7 +35,7 @@ const messages = {
     fill: "Lütfen e-posta ve şifrenizi girin.",
     invalid: "E-posta veya şifre yanlış.",
     merchant: "Satıcı hesapları buradan giriş yapamaz.",
-    google: "Google ile kayıt oldunuz. Giriş yapabilmek için şifre belirleyin.",
+    google: "Google ile kayıt oldunuz. Lütfen Google ile giriş yapın.",
     inactive: "Hesabınız henüz aktifleştirilmedi.",
     locked: "Çok fazla hatalı deneme. Lütfen daha sonra tekrar deneyin.",
     success: "Giriş başarılı!",
@@ -46,15 +47,18 @@ const messages = {
 
 export const POST = csrf(async (req) => {
   try {
+    // --- Dil belirleme ---
     const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
     const locale = lang.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
+    // --- Rate limit ---
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
+    // --- Girdi kontrolü ---
     const { email, password } = await req.json();
     if (!email || !password) {
       return Response.json({ success: false, message: msg.fill }, { status: 400 });
@@ -63,27 +67,33 @@ export const POST = csrf(async (req) => {
     const cleanEmail = email.trim().toLowerCase();
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
 
+    // --- Kullanıcı bulunamazsa generic hata ---
     if (!user) {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
+    // --- Merchant ise giriş engellenir ---
     if (user.role === 'merchant') {
       return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
 
+    // --- Hesap kilitli mi? ---
     if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
       return Response.json({ success: false, message: msg.locked }, { status: 403 });
     }
 
-    // 🚫 Şifre belirlenmemiş Google kullanıcıları sadece Google login ile girebilir
+    // --- Şifre belirlenmemişse (Google ile kayıt olup şifresi olmayanlar) ---
     if (!user.passwordHash || user.passwordHash === "") {
+      // Burada Google ile login yapması gerektiği açıkça belirtilir
       return Response.json({ success: false, message: msg.google }, { status: 401 });
     }
 
+    // --- Hesap aktif değilse giriş engellenir ---
     if (user.status !== "active") {
       return Response.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
+    // --- Şifre kontrolü ---
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
       await prisma.user.update({
@@ -100,7 +110,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Başarılı giriş
+    // --- Başarılı girişte kilitlenme ve hata sayısı sıfırlanır ---
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -109,6 +119,7 @@ export const POST = csrf(async (req) => {
       }
     });
 
+    // --- JWT oluşturulup HttpOnly cookie olarak ayarlanır ---
     const token = jwt.sign(
       {
         userId: user.id,

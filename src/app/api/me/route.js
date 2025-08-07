@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
 
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { checkRateLimit } from '@/lib/ratelimit';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/authOptions";
+import { cookies } from "next/headers";
+import jwt from "jsonwebtoken";
+import prisma from "@/lib/prisma";
+import { NextResponse } from "next/server";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -19,21 +21,26 @@ export async function GET(req) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
     }
 
-    // 2) Cookie'den JWT oku
-    const cookieStore = cookies();
-    const token = cookieStore.get('cabo_token')?.value;
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // 2) Önce NextAuth session'ı kontrol et
+    let userId = null;
+    const session = await getServerSession(authOptions);
+
+    if (session && session.user && session.user.id) {
+      userId = session.user.id;
+    } else {
+      // 3) Manuel JWT (cabo_token) ile kontrol et
+      const cookieStore = cookies();
+      const token = cookieStore.get('cabo_token')?.value;
+      if (token) {
+        try {
+          const payload = jwt.verify(token, JWT_SECRET);
+          userId = payload.userId;
+        } catch {
+          // invalid token, userId null kalır
+        }
+      }
     }
 
-    // 3) JWT doğrula ve kullanıcı ID’sini al
-    let payload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const userId = payload.userId;
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -49,7 +56,7 @@ export async function GET(req) {
         status: true,
         languagePreference: true,
         currencyCode: true,
-        passwordHash: true, // create_password sayfası için gerekli!
+        // passwordHash: true, // sadece şifre oluşturma için gerekiyorsa aç
       }
     });
     if (!user) {
