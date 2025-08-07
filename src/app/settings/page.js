@@ -2,64 +2,72 @@
 
 import { useState, useEffect, useRef } from "react";
 import Layout from "@/components/Layout";
+import CustomSelect from "@/components/CustomSelect";
 import { useUser } from "@/context/UserContext";
 import { useLocale } from "@/context/LocaleContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
-const LANGUAGES = [
-  { code: 'en', name: 'English' },
-  { code: 'tr', name: 'Türkçe' }
-];
-
-const CURRENCIES = [
-  { code: 'EUR', symbol: '€', name: 'Euro' },
-  { code: 'TRY', symbol: '₺', name: 'Türk Lirası' },
-  { code: 'USD', symbol: '$', name: 'US Dollar' },
-];
-
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
+  const [currencies, setCurrencies] = useState([
+    { value: 'TRY', label: 'Türk Lirası (₺)' }
+  ]);
   const [profile, setProfile] = useState({
     name: "",
     email: "",
-    languagePreference: "en",
-    currencyCode: "EUR",
+    languagePreference: "tr",
+    currencyCode: "TRY",
     current_password: "",
     new_password: "",
     new_password_repeat: ""
   });
   const [message, setMessage] = useState("");
   const msgRef = useRef(null);
-  const { user } = useUser();
-  const { locale, setLocale } = useLocale();
+  const { setLocale } = useLocale();
   const t = useTranslation();
   const isMobile = useIsMobile();
   const csrfToken = useCsrfToken();
 
-  const cardGap = isMobile ? "gap-6" : "gap-7";
-  const cardClass = `
-    flex-1 min-w-[220px] max-w-[380px]
-    bg-[#191919] rounded-2xl shadow-md border border-[#232323]
-    flex flex-col gap-3 px-6 pb-7 pt-6
-    mx-auto
-  `;
+  // Language options
+  const languageOptions = [
+    { value: 'tr', label: 'Türkçe' },
+    { value: 'en', label: 'English' }
+  ];
 
+  // İlk yüklemede user ve currencyleri çek
   useEffect(() => {
-    fetch("/api/me")
-      .then((r) => r.json())
-      .then((data) => {
-        setProfile(prev => ({
-          ...prev,
-          name: data.name || "",
-          email: data.email || "",
-          languagePreference: data.languagePreference || "en",
-          currencyCode: data.currencyCode || "EUR",
-        }));
-        setLocale(data.languagePreference || "en");
-        setLoading(false);
-      });
+    async function fetchAll() {
+      // Currency tablon boşsa fallback: TRY
+      let cur = [{ value: 'TRY', label: 'Türk Lirası (₺)' }];
+      try {
+        const res = await fetch("/api/currencies");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.currencies) && data.currencies.length > 0)
+            cur = data.currencies.map(c => ({
+              value: c.code,
+              label: `${c.symbol ? c.symbol + " " : ""}${c.name || c.code}`
+            }));
+        }
+      } catch { /* fallback kullan */ }
+      setCurrencies(cur);
+
+      // Kullanıcı profilini çek
+      const resp = await fetch("/api/me");
+      const data = await resp.json();
+      setProfile(prev => ({
+        ...prev,
+        name: data.name || "",
+        email: data.email || "",
+        languagePreference: data.languagePreference || "tr",
+        currencyCode: data.currencyCode || "TRY",
+      }));
+      setLocale(data.languagePreference || "tr");
+      setLoading(false);
+    }
+    fetchAll();
     // eslint-disable-next-line
   }, []);
 
@@ -71,14 +79,9 @@ export default function SettingsPage() {
     }
   }, [message]);
 
-  function handleChange(e) {
-    setProfile(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
-    if (e.target.name === "languagePreference") {
-      setLocale(e.target.value);
-    }
+  function handleChange(field, value) {
+    setProfile(prev => ({ ...prev, [field]: value }));
+    if (field === "languagePreference") setLocale(value);
   }
 
   async function handleSave(e) {
@@ -90,7 +93,7 @@ export default function SettingsPage() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-csrf-token": csrf_token
+        "x-csrf-token": csrfToken
       },
       body: JSON.stringify({
         name: profile.name,
@@ -102,7 +105,6 @@ export default function SettingsPage() {
 
     // Şifre alanı doluysa şifre güncelleme
     let passwordMsg = "";
-    // Hibrit/Gmail ile gelenler current_password boş bırakabilir!
     if (profile.new_password && profile.new_password_repeat) {
       if (profile.new_password !== profile.new_password_repeat) {
         setMessage(t("passwordNoMatch"));
@@ -112,7 +114,7 @@ export default function SettingsPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrf_token
+          "x-csrf-token": csrfToken
         },
         body: JSON.stringify({
           current_password: profile.current_password,
@@ -161,6 +163,14 @@ export default function SettingsPage() {
     );
   }
 
+  const cardGap = isMobile ? "gap-6" : "gap-7";
+  const cardClass = `
+    flex-1 min-w-[220px] max-w-[380px]
+    bg-[#191919] rounded-2xl shadow-md border border-[#232323]
+    flex flex-col gap-3 px-6 pb-7 pt-6
+    mx-auto
+  `;
+
   return (
     <Layout>
       <main className={`flex flex-col items-center w-full max-w-3xl mx-auto flex-1 justify-center mt-8 ${isMobile ? 'gap-6' : 'gap-8'} px-2`}>
@@ -173,32 +183,22 @@ export default function SettingsPage() {
               type="text"
               name="name"
               value={profile.name}
-              onChange={handleChange}
+              onChange={e => handleChange("name", e.target.value)}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
               required
             />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
-            <select
-              name="languagePreference"
+            <CustomSelect
+              options={languageOptions}
               value={profile.languagePreference}
-              onChange={handleChange}
-              className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
-            >
-              {LANGUAGES.map(lang => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
+              onChange={v => handleChange("languagePreference", v)}
+            />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currency")}</label>
-            <select
-              name="currencyCode"
+            <CustomSelect
+              options={currencies}
               value={profile.currencyCode}
-              onChange={handleChange}
-              className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
-            >
-              {CURRENCIES.map(cur => (
-                <option key={cur.code} value={cur.code}>{cur.name} ({cur.symbol})</option>
-              ))}
-            </select>
+              onChange={v => handleChange("currencyCode", v)}
+            />
             {message && (
               <div ref={msgRef} className="text-[#81d742] font-semibold mt-3 text-center max-w-2xl transition-opacity duration-500">
                 {message}
@@ -213,7 +213,7 @@ export default function SettingsPage() {
               type="password"
               name="current_password"
               value={profile.current_password}
-              onChange={handleChange}
+              onChange={e => handleChange("current_password", e.target.value)}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
               autoComplete="current-password"
               placeholder={t("currentPasswordPlaceholder") || ""}
@@ -223,7 +223,7 @@ export default function SettingsPage() {
               type="password"
               name="new_password"
               value={profile.new_password}
-              onChange={handleChange}
+              onChange={e => handleChange("new_password", e.target.value)}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
               autoComplete="new-password"
               placeholder={t("newPasswordPlaceholder") || ""}
@@ -233,7 +233,7 @@ export default function SettingsPage() {
               type="password"
               name="new_password_repeat"
               value={profile.new_password_repeat}
-              onChange={handleChange}
+              onChange={e => handleChange("new_password_repeat", e.target.value)}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
               autoComplete="new-password"
               placeholder={t("repeatNewPasswordPlaceholder") || ""}
@@ -247,7 +247,7 @@ export default function SettingsPage() {
         <button
           type="submit"
           onClick={handleSave}
-          disabled={!csrf_token}
+          disabled={!csrfToken}
           className="w-full max-w-xs py-3 font-bold text-lg bg-[#81d742] text-[#181818] rounded-lg shadow hover:bg-[#a9ff72] transition mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ marginBottom: "8px" }}
         >
