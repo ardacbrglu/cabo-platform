@@ -1,5 +1,8 @@
+import prisma from "@/lib/prisma";
+
 const memory = {};
-// SECURITY REVIEW: In-memory rate limiting is not suitable for distributed/multi-instance deployments. Use Redis or another centralized store in production.
+// WARNING: In-memory rate limiting is not distributed-safe! 
+// For real production, switch to Redis/memcached.
 
 export function checkRateLimit(key, limit = 5, windowMs = 60000) {
   const now = Date.now();
@@ -8,5 +11,23 @@ export function checkRateLimit(key, limit = 5, windowMs = 60000) {
   if (memory[key].length >= limit) return false;
   memory[key].push(now);
   return true;
-  // WARNING: Rate limiting by key only. Ensure keys are not user-controllable to avoid bypass. Consider per-user/device rate limits for sensitive actions.
+}
+
+// Production-ready, Prisma API log fonksiyonu
+export async function logApiEvent({ endpoint, ip, ua, event, email = null, error = null }) {
+  try {
+    await prisma.apiLog.create({
+      data: {
+        endpoint,
+        ip,
+        ua,
+        event,
+        email,
+        error,
+      }
+    });
+  } catch (err) {
+    // Log hatası burada apiyi kırmaz, sadece konsolda görünür
+    console.error("API Log Error:", err);
+  }
 }
