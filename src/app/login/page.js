@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import { useCsrfToken } from "@/hooks/useCsrfToken";
@@ -65,11 +65,20 @@ export default function LoginPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
   const csrfToken = useCsrfToken();
+  const params = useSearchParams();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [justActivated, setJustActivated] = useState(false);
+
+  useEffect(() => {
+    const autoEmail = params.get("email");
+    const from = params.get("from");
+    if (autoEmail) setEmail(autoEmail);
+    if (from === "activated") setJustActivated(true);
+  }, [params]);
 
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
@@ -159,6 +168,14 @@ export default function LoginPage() {
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
             {t('title')}
           </h3>
+          {/* Başarı mesajı */}
+          {justActivated && (
+            <div className="text-green-400 text-base text-center mb-2">
+              {locale === "tr"
+                ? "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz."
+                : "Your account has been activated! You can now log in."}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
             <input
               type="email"
@@ -193,7 +210,6 @@ export default function LoginPage() {
               </button>
             </div>
 
-
             {error && (
               <div className="text-red-500 text-base text-center">
                 {error === "set-password" ? (
@@ -207,8 +223,6 @@ export default function LoginPage() {
                 ) : error}
               </div>
             )}
-
-
 
             <button
               type="submit"

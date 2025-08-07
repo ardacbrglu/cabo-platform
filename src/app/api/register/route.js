@@ -56,24 +56,24 @@ const messages = {
 
 export const POST = csrf(async (req) => {
   try {
-    // Locale belirle
+    // Locale
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
-    // IP-based rate limiting (anti-spam)
+    // Rate limit
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`register_${ip}`, 8, 60 * 1000)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
-    // Request body'den alanlar
+    // Get and validate request
     const { name, email, password, termsAccepted, captcha } = await req.json();
     if (!termsAccepted || !name || !email || !password || !captcha) {
       return Response.json({ success: false, message: msg.required }, { status: 400 });
     }
 
-    // Google reCAPTCHA kontrolü
+    // reCAPTCHA check
     let captchaOk = false;
     try {
       const { data: captchaData } = await axios.post(
@@ -87,7 +87,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.captcha }, { status: 400 });
     }
 
-    // Temizlik & validasyonlar
+    // Validate email, name, password
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
@@ -101,7 +101,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.password }, { status: 400 });
     }
 
-    // Google hesabı var mı?
+    // Google hesabı varsa
     const googleAccount = await prisma.account.findFirst({
       where: { provider: 'google', user: { email: cleanEmail } }
     });
@@ -109,33 +109,32 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.googleReg }, { status: 409 });
     }
 
-    // Mevcut kullanıcı kontrolü
+    // EXISTING USER LOGIC (pending user için atomic overwrite + mail, active ise exit)
     const existing = await prisma.user.findFirst({ where: { email: cleanEmail } });
     if (existing) {
       if (existing.status === 'active') {
         return Response.json({ success: false, message: msg.alreadyActive }, { status: 409 });
       }
-      // pending kullanıcı için activation mail gönderimi limiti
+      // Sadece gün içinde en fazla 3 aktivasyon maili limiti
       const now = new Date();
       const lastSent = existing.lastActivationRequestAt || new Date(0);
       const isToday = now.toDateString() === lastSent.toDateString();
       const count = isToday ? existing.activationRequestedCount || 0 : 0;
-
       if (count >= 3) {
         return Response.json({ success: false, message: msg.limitExceeded }, { status: 429 });
       }
-
-      // Token oluşturup güncelle, tekrar mail gönder
+      // TOKEN: Sadece burada oluşturuluyor, önce DB'ye overwrite ediliyor!
       const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          activationToken: newToken,
+          lastActivationRequestAt: now,
+          activationRequestedCount: count + 1
+        }
+      });
+      // DB'ye yazıldıktan sonra MAİL!
       try {
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: {
-            activationToken: newToken,
-            lastActivationRequestAt: now,
-            activationRequestedCount: count + 1
-          }
-        });
         await sendActivationEmail(cleanEmail, newToken);
       } catch (emailErr) {
         console.error("EMAIL RESEND ERROR:", emailErr);
@@ -144,35 +143,34 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: true, message: msg.success }, { status: 200 });
     }
 
-    // Yeni kullanıcı oluştur
+    // YENİ KULLANICI (Aynı mantık: önce create, sonra mail)
     const hashed = await bcrypt.hash(password, 10);
     const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
+    await prisma.user.create({
+      data: {
+        name: cleanName,
+        email: cleanEmail,
+        passwordHash: hashed,
+        role: "affiliate",
+        status: "pending",
+        termsAccepted: true,
+        activationToken: token,
+        activationRequestedCount: 1,
+        lastActivationRequestAt: new Date()
+      }
+    });
+    // DB'ye yazıldıktan sonra MAİL!
     try {
-      await prisma.user.create({
-        data: {
-          name: cleanName,
-          email: cleanEmail,
-          passwordHash: hashed,
-          role: "affiliate",
-          status: "pending",
-          termsAccepted: true,
-          activationToken: token,
-          activationRequestedCount: 1,
-          lastActivationRequestAt: new Date()
-        }
-      });
       await sendActivationEmail(cleanEmail, token);
     } catch (err) {
       console.error("USER CREATE ERROR:", err);
       return Response.json({ success: false, message: msg.fail }, { status: 500 });
     }
-
     return Response.json({ success: true, message: msg.success }, { status: 200 });
 
   } catch (err) {
     console.error("REGISTER ERROR:", err);
-    // Hem locale'ye uygun, hem hata logunu kaybetme
     const langHeader = req.headers.get("accept-language") || "";
     const locale = langHeader.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];

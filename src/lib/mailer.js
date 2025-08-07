@@ -12,8 +12,9 @@ const transporter = nodemailer.createTransport({
 
 // ✅ Hesap aktivasyon maili gönderimi
 export async function sendActivationEmail(to, token, language = "en") {
-  // Link sadece aktivasyon için → /activate?token=...&lang=en
-  const url = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/activate?token=${token}&lang=${language}`;
+  // Link → /activate?token=...&lang=en&email=...
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL;
+  const url = `${baseUrl}/activate?token=${token}&lang=${language}&email=${encodeURIComponent(to)}`;
 
   try {
     await transporter.sendMail({
@@ -30,7 +31,7 @@ export async function sendActivationEmail(to, token, language = "en") {
               ? "Hesabını aktifleştirmek için aşağıdaki butona tıklayabilirsin:"
               : "To activate your account, click the button below:"}
           </p>
-          <a href="${url}" target="_blank" style="display:inline-block; padding: 12px 24px; background-color: #81d742; color: #111; border-radius: 8px; text-decoration: none; font-weight: bold;">
+          <a href="${url}" style="display:inline-block; padding: 12px 24px; background-color: #81d742; color: #111; border-radius: 8px; text-decoration: none; font-weight: bold;">
             ${language === "tr" ? "Hesabımı Aktifleştir" : "Activate Your Account"}
           </a>
           <p style="margin-top: 20px; color: #aaa;">
@@ -52,7 +53,8 @@ export async function sendActivationEmail(to, token, language = "en") {
 // ✅ Şifre sıfırlama maili gönderimi
 export async function sendPasswordResetEmail(to, token, language = "en") {
   // Link → /password_reset?token=...&lang=tr
-  const resetUrl = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/password_reset?token=${token}&lang=${language}`;
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL;
+  const resetUrl = `${baseUrl}/password_reset?token=${token}&lang=${language}`;
 
   try {
     await transporter.sendMail({
@@ -69,7 +71,7 @@ export async function sendPasswordResetEmail(to, token, language = "en") {
               ? "Şifreni sıfırlamak için aşağıdaki butona tıkla:"
               : "You requested a password reset. Click the button below to continue:"}
           </p>
-          <a href="${resetUrl}" target="_blank" style="display:inline-block; padding: 12px 24px; background-color: #f39c12; color: #111; border-radius: 8px; text-decoration: none; font-weight: bold;">
+          <a href="${resetUrl}" style="display:inline-block; padding: 12px 24px; background-color: #f39c12; color: #111; border-radius: 8px; text-decoration: none; font-weight: bold;">
             ${language === "tr" ? "Şifremi Sıfırla" : "Reset My Password"}
           </a>
           <p style="margin-top: 20px; color: #aaa;">
