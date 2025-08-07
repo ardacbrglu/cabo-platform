@@ -1,8 +1,9 @@
+// lib/ratelimit.js
 import prisma from "@/lib/prisma";
 
+// Simple in-memory rate limit (for demo/development)
+// Production: Use Redis!
 const memory = {};
-// WARNING: In-memory rate limiting is not distributed-safe! 
-// For real production, switch to Redis/memcached.
 
 export function checkRateLimit(key, limit = 5, windowMs = 60000) {
   const now = Date.now();
@@ -13,21 +14,12 @@ export function checkRateLimit(key, limit = 5, windowMs = 60000) {
   return true;
 }
 
-// Production-ready, Prisma API log fonksiyonu
 export async function logApiEvent({ endpoint, ip, ua, event, email = null, error = null }) {
   try {
     await prisma.apiLog.create({
-      data: {
-        endpoint,
-        ip,
-        ua,
-        event,
-        email,
-        error,
-      }
+      data: { endpoint, ip, ua, event, email, error }
     });
   } catch (err) {
-    // Log hatası burada apiyi kırmaz, sadece konsolda görünür
     console.error("API Log Error:", err);
   }
 }
