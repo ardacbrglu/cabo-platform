@@ -13,7 +13,8 @@ const transporter = nodemailer.createTransport({
 // ✅ Hesap aktivasyon maili gönderimi
 export async function sendActivationEmail(to, token) {
   // Link sadece aktivasyon için → /activate?token=... 
-  const url = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/activate?token=${token}`;
+  const url = `${process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL}/activate?token=${token}&lang=${user.languagePreference || 'en'}`;
+
   try {
     await transporter.sendMail({
       from: process.env.FROM_EMAIL || 'Cabo <no-reply@localhost>',

@@ -303,8 +303,13 @@
   "activation.invalid": "Aktivasyon bağlantısı geçersiz.",
   "activation.error": "❌ Bir hata oluştu. Lütfen tekrar deneyin.",
   "activation.loginLink": "Giriş Sayfasına Git",
-  "activating": "Hesabınız aktifleştiriliyor..."
+  "activating": "Hesabınız aktifleştiriliyor...",
+  "activatingAccount": "Hesabınız doğrulanıyor...",
+  "activationSuccess": "Aktivasyon başarılı! Şimdi giriş yapabilirsiniz.",
+  "activationFailed": "Aktivasyon başarısız veya link geçersiz.",
+  "redirectingToLogin": "Giriş sayfasına yönlendiriliyorsunuz..."
 }
+
 
 
 
