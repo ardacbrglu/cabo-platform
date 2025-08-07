@@ -50,54 +50,42 @@ export const POST = csrf(async (req) => {
     const locale = lang.startsWith("tr") ? "tr" : "en";
     const msg = messages[locale];
 
-    // Rate limit (IP tabanlı)
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
     if (!checkRateLimit(`login_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW)) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
     const { email, password } = await req.json();
-
     if (!email || !password) {
       return Response.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
     const cleanEmail = email.trim().toLowerCase();
-
     const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
 
-    // Kullanıcı yoksa generic error
     if (!user) {
-      // Her zaman generic mesaj, kullanıcı bilgisi sızdırılmaz
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Satıcı ise
     if (user.role === 'merchant') {
       return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
 
-    // Hesap lock kontrolü
     if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
       return Response.json({ success: false, message: msg.locked }, { status: 403 });
     }
 
-    // Parola yoksa (Google ile kaydolmuş veya hiç şifre belirlenmemiş)
-    // Burada "pending" durumdaki Google user'ın şifre belirlemesi gerektiği mesajı döner
+    // 🚫 Şifre belirlenmemiş Google kullanıcıları sadece Google login ile girebilir
     if (!user.passwordHash || user.passwordHash === "") {
       return Response.json({ success: false, message: msg.google }, { status: 401 });
     }
 
-    // Aktif değilse (pending/rejected)
     if (user.status !== "active") {
       return Response.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
-    // Şifre kontrolü
     const isValid = await bcrypt.compare(password, user.passwordHash);
-
     if (!isValid) {
-      // Hatalı girişte deneme sayısı artırılır
       await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -112,7 +100,7 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Başarılı girişte failedAttempts ve lockUntil sıfırlanır
+    // Başarılı giriş
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -121,7 +109,6 @@ export const POST = csrf(async (req) => {
       }
     });
 
-    // JWT oluştur ve HttpOnly cookie olarak dön
     const token = jwt.sign(
       {
         userId: user.id,
@@ -148,7 +135,6 @@ export const POST = csrf(async (req) => {
 
   } catch (err) {
     console.error("LOGIN ERROR:", err);
-    // Hata mesajı locale'ye uygun, user'a bilgi sızdırmadan
     const locale = req.headers.get("accept-language")?.startsWith("tr") ? "tr" : "en";
     return Response.json({ success: false, message: messages[locale].fail }, { status: 500 });
   }

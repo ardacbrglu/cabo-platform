@@ -1,4 +1,5 @@
 // /lib/authOptions.js
+
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -59,14 +60,19 @@ export const authOptions = {
         });
         if (!user) return null;
 
-        // Hesap kilitli mi kontrolü
+        // Merchant ise giriş yapamaz
+        if (user.role === "merchant") return null;
+
+        // Şifre belirlenmemişse (Google ile kayıt olup henüz şifresi olmayanlar)
+        if (!user.passwordHash || user.passwordHash === "") return null;
+
+        // Hesap kilitli mi?
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
           return null;
         }
 
         // Parola doğrulama
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
-
         if (!isValid) {
           await prisma.user.update({
             where: { id: user.id },
@@ -81,13 +87,16 @@ export const authOptions = {
           return null;
         }
 
+        // Başarılı girişte lock ve attempt sıfırlama
         await prisma.user.update({
           where: { id: user.id },
           data: { failedAttempts: 0, lockUntil: null },
         });
 
+        // Hesap aktif değilse giriş izni yok
         if (user.status !== "active") return null;
 
+        // Giriş başarılı → user bilgileri dön
         return {
           id: user.id,
           name: user.name,
@@ -136,17 +145,16 @@ export const authOptions = {
             data: {
               name: user.name || "Google User",
               email: user.email,
-              passwordHash: "",
               termsAccepted: true,
-              status: "pending", // Şifre oluşturma ekranına zorla!
+              status: "active",
               role: "affiliate",
               emailVerified: new Date(),
-              // languagePreference: profile?.locale?.toLowerCase() || "en", // Profilde varsa dil set edilebilir
+              // languagePreference: profile?.locale?.toLowerCase() || "en",
             },
           });
         }
 
-        // PENDING ise girişe izin verme → create-password’a yönlendirilecek
+        // PENDING ise girişe izin verme
         if (existing?.status === "pending") {
           return false;
         }
