@@ -1,31 +1,32 @@
 // app/api/settings/update/route.js
-
 export const dynamic = "force-dynamic";
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
-import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { validatecsrf_token } from '@/lib/csrf';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { sanitizeHtml } from '@/lib/validation';
 
+// DİNAMİK: PlatformConfig ve Currencies
+async function getSupportedLanguages() {
+  const config = await prisma.platformConfig.findUnique({ where: { keyName: "languages" } });
+  try {
+    if (config && config.value) return JSON.parse(config.value);
+  } catch {}
+  return ["en", "tr"];
+}
+async function getSupportedCurrencies() {
+  const currencies = await prisma.currency.findMany();
+  return currencies.map(c => c.code);
+}
+
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("Missing JWT_SECRET");
 
-// 1) Gelen body için Zod şeması
-const updateSchema = z.object({
-  name:              z.string().min(2, "Name too short").max(100),
-  languagePreference: z.enum(['en','tr']),
-  currencyCode:       z.enum(['EUR','TRY','USD'])
-});
-
 export async function POST(req) {
   try {
-    // 2) CSRF koruması
     await validatecsrf_token(req);
-
-    // 3) Auth: Cookie → JWT
     const store = await cookies();
     const token = store.get('cabo_token')?.value;
     if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -34,23 +35,32 @@ export async function POST(req) {
     catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
     const userId = payload.userId;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    // 4) Rate-limit: max 5 güncelleme / dakika
     if (!checkRateLimit(`settings:update:${userId}`, 5, 60_000)) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
-    // 5) Body parse & validate
-    const parsed = updateSchema.parse(await req.json());
-    const nameClean = sanitizeHtml(parsed.name.trim());
+    const body = await req.json();
+    const { name, languagePreference, currencyCode } = body;
+    // Dinamik doğrulama:
+    const supportedLangs = await getSupportedLanguages();
+    const supportedCurrencies = await getSupportedCurrencies();
 
-    // 6) DB güncellemesi
+    if (
+      typeof name !== "string" ||
+      name.trim().length < 2 ||
+      !supportedLangs.includes(languagePreference) ||
+      !supportedCurrencies.includes(currencyCode)
+    ) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
+
+    const nameClean = sanitizeHtml(name.trim());
     await prisma.user.update({
       where: { id: userId },
       data: {
         name: nameClean,
-        languagePreference: parsed.languagePreference,
-        currencyCode: parsed.currencyCode
+        languagePreference,
+        currencyCode
       }
     });
 

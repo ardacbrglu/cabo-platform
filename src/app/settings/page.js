@@ -11,9 +11,8 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
-  const [currencies, setCurrencies] = useState([
-    { value: 'TRY', label: 'Türk Lirası (₺)' }
-  ]);
+  const [currencies, setCurrencies] = useState([]);
+  const [languages, setLanguages] = useState([]);
   const [profile, setProfile] = useState({
     name: "",
     email: "",
@@ -30,29 +29,35 @@ export default function SettingsPage() {
   const isMobile = useIsMobile();
   const csrfToken = useCsrfToken();
 
-  // Language options
-  const languageOptions = [
-    { value: 'tr', label: 'Türkçe' },
-    { value: 'en', label: 'English' }
-  ];
-
-  // İlk yüklemede user ve currencyleri çek
+  // İlk yüklemede dilleri ve para birimlerini dinamik çek
   useEffect(() => {
     async function fetchAll() {
-      // Currency tablon boşsa fallback: TRY
-      let cur = [{ value: 'TRY', label: 'Türk Lirası (₺)' }];
+      // Para birimi
+      let cur = [{ value: 'TRY', label: '₺ Türk Lirası' }];
       try {
         const res = await fetch("/api/currencies");
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.currencies) && data.currencies.length > 0)
-            cur = data.currencies.map(c => ({
-              value: c.code,
-              label: `${c.symbol ? c.symbol + " " : ""}${c.name || c.code}`
-            }));
+            cur = data.currencies;
         }
-      } catch { /* fallback kullan */ }
+      } catch {}
       setCurrencies(cur);
+
+      // Diller (DB'den)
+      let langs = [
+        { value: 'tr', label: 'Türkçe' },
+        { value: 'en', label: 'English' }
+      ];
+      try {
+        const res = await fetch("/api/languages");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.languages) && data.languages.length > 0)
+            langs = data.languages;
+        }
+      } catch {}
+      setLanguages(langs);
 
       // Kullanıcı profilini çek
       const resp = await fetch("/api/me");
@@ -61,10 +66,10 @@ export default function SettingsPage() {
         ...prev,
         name: data.name || "",
         email: data.email || "",
-        languagePreference: data.languagePreference || "tr",
-        currencyCode: data.currencyCode || "TRY",
+        languagePreference: data.languagePreference || langs[0]?.value || "tr",
+        currencyCode: data.currencyCode || cur[0]?.value || "TRY",
       }));
-      setLocale(data.languagePreference || "tr");
+      setLocale(data.languagePreference || langs[0]?.value || "tr");
       setLoading(false);
     }
     fetchAll();
@@ -189,7 +194,7 @@ export default function SettingsPage() {
             />
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
             <CustomSelect
-              options={languageOptions}
+              options={languages}
               value={profile.languagePreference}
               onChange={v => handleChange("languagePreference", v)}
             />
