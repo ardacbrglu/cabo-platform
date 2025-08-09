@@ -1,7 +1,15 @@
+// /hooks/useCsrfToken.js
 import { useEffect, useRef, useState, useCallback } from "react";
 
+/**
+ * SECURITY NOTES
+ * - CSRF token hem cookie’ye yazılır hem JSON ile döner.
+ * - Bu hook auto-refresh ile token’ı periyodik yeniler.
+ * - Sunucu { csrf_token } döner; olası uyum için { csrfToken } fallback de desteklenir.
+ */
+
 const CSRF_ENDPOINT = "/api/csrf/csrf-token";
-// Token cookie maxAge: 2 saat -> güvenli aralık: 90 dk'da bir yenile
+// Token cookie maxAge: 2 saat → güvenli: 90 dk'da bir yenile
 const REFRESH_MS = 90 * 60 * 1000;
 
 export function useCsrfToken() {
@@ -13,9 +21,9 @@ export function useCsrfToken() {
   const fetchToken = useCallback(async (signal) => {
     const res = await fetch(CSRF_ENDPOINT, {
       method: "GET",
-      credentials: "include", // cookie set edilsin
+      credentials: "include",
       headers: {
-        "accept": "application/json",
+        accept: "application/json",
         "cache-control": "no-cache",
       },
       signal,
@@ -26,9 +34,10 @@ export function useCsrfToken() {
       throw new Error(`CSRF endpoint failed: ${res.status} ${text}`);
     }
     const data = await res.json();
-    if (!data?.csrf_token) throw new Error("CSRF token missing in response");
+    const token = data?.csrf_token || data?.csrfToken;
+    if (!token) throw new Error("CSRF token missing in response");
 
-    setCsrfToken(data.csrf_token);
+    setCsrfToken(token);
     lastFetchedAt.current = Date.now();
     setReady(true);
   }, []);
@@ -47,18 +56,16 @@ export function useCsrfToken() {
     const ac = new AbortController();
     fetchToken(ac.signal).catch((err) => {
       console.error("CSRF token fetch error:", err);
-      // ready=false kalsın, çağıran taraf hatayı UI’da gösterebilir
+      // ready=false kalsın
     });
 
     // 90 dk'da bir otomatik yenile
     timerRef.current = setInterval(() => {
-      // Token hiç yoksa veya 90dk geçtiyse yenile
       if (!lastFetchedAt.current || Date.now() - lastFetchedAt.current >= REFRESH_MS) {
         refresh();
       }
-    }, 60 * 1000); // her 1 dakikada bir kontrol
+    }, 60 * 1000); // her 1 dk kontrol
 
-    // Sekme tekrar görünür olunca (long idle) ihtiyaten yenile
     const onVis = () => {
       if (document.visibilityState === "visible") {
         if (!lastFetchedAt.current || Date.now() - lastFetchedAt.current >= REFRESH_MS) {
@@ -77,3 +84,5 @@ export function useCsrfToken() {
 
   return { csrfToken, refresh, ready };
 }
+
+export default useCsrfToken;

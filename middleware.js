@@ -2,7 +2,13 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 
-// Kullanıcı (affiliate) alanları
+/**
+ * SECURITY NOTES
+ * - NextAuth JWT içindeki role/status alanlarına göre erişim kontrolü.
+ * - Sadece matcher'daki korumalı sayfalar yakalanır (API/public varlıklara dokunulmaz).
+ * - Custom JWT/cookie yok; sadece NextAuth session.
+ */
+
 const USER_ROUTES = [
   "/dashboard",
   "/wallet",
@@ -16,21 +22,24 @@ const USER_ROUTES = [
 
 export default withAuth(
   function middleware(req) {
-    const { pathname } = req.nextUrl;
+    const { pathname, search } = req.nextUrl;
     const token = req.nextauth?.token || null;
-    const role = token && token.role ? String(token.role) : undefined;
-    const status = token && token.status ? String(token.status) : undefined;
+    const role = token?.role ? String(token.role) : undefined;
+    const status = token?.status ? String(token.status) : undefined;
 
     const isUserArea = USER_ROUTES.some((r) => pathname.startsWith(r));
     const isMerchantArea = pathname.startsWith("/merchant");
     const isProtected = isUserArea || isMerchantArea;
 
-    // Oturumu olmayanı login'e at
+    // Oturumu olmayan → login
     if (!token && isProtected) {
-      return NextResponse.redirect(new URL("/login", req.url));
+      const url = new URL("/login", req.url);
+      // İstersen geri dönüş için from paramı eklenebilir
+      if (pathname && pathname !== "/login") url.searchParams.set("from", pathname + (search || ""));
+      return NextResponse.redirect(url);
     }
 
-    // Hesap aktif değilse (pending vs.) korumalı alanlara sokma
+    // Hesap aktif değilse korumalı alanlara sokma
     if (isProtected && status !== "active") {
       return NextResponse.redirect(new URL("/login", req.url));
     }
@@ -46,14 +55,14 @@ export default withAuth(
     return NextResponse.next();
   },
   {
-    // authorized=true -> middleware her zaman çalışsın; yönlendirmeyi içeride yapıyoruz.
+    // Token'ı her istekte çöz; yönlendirmeyi içeride yapıyoruz.
     callbacks: {
       authorized: () => true,
     },
   }
 );
 
-// Yalnızca korumalı yolları yakala (public asset/api'lere dokunma)
+// Sadece sayfa yönlerini yakala (API/public hariç)
 export const config = {
   matcher: [
     "/dashboard/:path*",

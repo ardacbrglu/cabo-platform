@@ -1,12 +1,22 @@
+// /lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
-// GÜVENLİK NOTU: Tüm env secret'lar zorunlu!
+/**
+ * SECURITY NOTES
+ * - Custom JWT/cookie yok; NextAuth tek oturum kaynağı.
+ * - Credentials.authorize: brute-force sayaçları ve status/role kapıları var.
+ * - Google: yeni affiliate kullanıcıyı aktif oluşturuyoruz; pending ise giriş reddedilir.
+ */
+
 if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET is not defined!");
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) throw new Error("Google OAuth env'leri eksik!");
+if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  throw new Error("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET is missing!");
+}
+// NEXTAUTH_URL prod'da zorunlu olmalı; local geliştirmede Next dev ayarlıyor.
 
 const MAX_FAILED_ATTEMPTS = 5;
 const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dk
@@ -15,12 +25,11 @@ export const authOptions = {
   adapter: PrismaAdapter(prisma),
 
   providers: [
-    // Google OAuth2 provider
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     }),
-    // Manuel giriş için e-posta/şifre provider
+
     CredentialsProvider({
       name: "Credentials",
       credentials: {
@@ -28,32 +37,33 @@ export const authOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        // GÜVENLİK NOTU: Input validation
-        if (!credentials.email || !credentials.password) return null;
-        const cleanEmail = credentials.email.trim().toLowerCase();
+        // Input kontrol
+        const email = credentials?.email?.trim().toLowerCase();
+        const password = credentials?.password || "";
+        if (!email || !password) return null;
 
-        // Kullanıcıyı çek
-        const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+        const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        // Merchant ise (normal kullanıcı girişi için) izin yok
+        // Merchant buradan giriş yapamaz
         if (user.role === "merchant") return null;
 
-        // Sadece şifre belirlemiş kullanıcılar login olabilir (Google-only olanları engelle)
-        if (!user.passwordHash || user.passwordHash === "") return null;
+        // Google-only kullanıcı (şifre yok) buradan giriş yapamaz
+        if (!user.passwordHash) return null;
 
         // Hesap kilitli mi?
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) return null;
 
-        // Parola doğrulama
-        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!isValid) {
+        // Parola doğrulama + brute-force sayaçları
+        const ok = await bcrypt.compare(password, user.passwordHash);
+        if (!ok) {
+          const nextFailed = (user.failedAttempts || 0) + 1;
           await prisma.user.update({
             where: { id: user.id },
             data: {
-              failedAttempts: { increment: 1 },
+              failedAttempts: nextFailed,
               lockUntil:
-                user.failedAttempts + 1 >= MAX_FAILED_ATTEMPTS
+                nextFailed >= MAX_FAILED_ATTEMPTS
                   ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
                   : user.lockUntil,
             },
@@ -61,16 +71,15 @@ export const authOptions = {
           return null;
         }
 
-        // Giriş başarılı → lock/attempt sıfırla
+        // Başarılı → sayaç sıfırla
         await prisma.user.update({
           where: { id: user.id },
           data: { failedAttempts: 0, lockUntil: null },
         });
 
-        // Hesap aktif değilse giriş izni yok
+        // Hesap aktif değilse login yok
         if (user.status !== "active") return null;
 
-        // Kullanıcı session objesi
         return {
           id: user.id,
           name: user.name,
@@ -82,22 +91,18 @@ export const authOptions = {
     }),
   ],
 
-  // Custom pages (login sayfası)
   pages: {
     signIn: "/login",
-    // error: "/auth/error", // (opsiyonel)
   },
 
-  // Session config (JWT tabanlı)
   session: {
     strategy: "jwt",
     maxAge: 60 * 60 * 24, // 1 gün
   },
 
-  // NextAuth Callback'leri
   callbacks: {
-    async jwt({ token, user }) {
-      // İlk girişte, JWT'ye custom field'lar eklenir
+    async jwt({ token, user, account, profile }) {
+      // İlk girişte user alanlarını JWT'ye yaz
       if (user) {
         token.sub = user.id;
         token.email = user.email;
@@ -107,7 +112,6 @@ export const authOptions = {
       return token;
     },
     async session({ session, token }) {
-      // Oturum açınca, JWT'deki veriler session.user'a aktarılır
       if (session.user && token?.sub) {
         session.user.id = token.sub;
         session.user.role = token.role;
@@ -116,9 +120,9 @@ export const authOptions = {
       return session;
     },
     async signIn({ user, account }) {
-      // Google ile login/signup akışı:
+      // Google akışı
       if (account?.provider === "google" && user?.email) {
-        // Kullanıcı yoksa oluştur (affiliate)
+        // Kullanıcı yoksa oluştur (affiliate, aktif)
         let existing = await prisma.user.findUnique({ where: { email: user.email } });
         if (!existing) {
           await prisma.user.create({
@@ -129,19 +133,16 @@ export const authOptions = {
               status: "active",
               role: "affiliate",
               emailVerified: new Date(),
-              // languagePreference: "en", // opsiyonel
             },
           });
         }
         existing = await prisma.user.findUnique({ where: { email: user.email } });
-        // Eğer "pending" durumdaysa giriş izni verme!
+        // pending ise izin verme
         if (existing?.status === "pending") return false;
       }
-      // Diğer tüm kontrollerden geçiyorsa → giriş izni ver
       return true;
     },
   },
 
-  // Secret
   secret: process.env.NEXTAUTH_SECRET,
 };

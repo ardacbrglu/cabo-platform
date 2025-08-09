@@ -6,10 +6,10 @@
 // - Accept-Language header'ını locale'e göre gönderir.
 // - Başarılı aktivasyon sonrası banner ( ?activated=1 ).
 // - Basit input doğrulama (email pattern), erişilebilirlik ve mobil uyum.
-
+//
 // SECURITY NOTE:
 // - State-changing isteklerde CSRF header zorunludur. Bu sayfa /api/login'e CSRF header gönderir.
-// - Google login NextAuth üzerinden yapılır; manuel login JWT cookie alır (HttpOnly, SameSite=Strict).
+// - Google login NextAuth üzerinden çalışır; manuel login NextAuth session cookie kurar (HttpOnly, SameSite=Strict).
 
 'use client';
 
@@ -81,7 +81,9 @@ export default function Page() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
-  const csrfToken = useCsrfToken();
+
+  // ✅ useCsrfToken doğru kullanım (destructure)
+  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const t = useMemo(() => {
     const lang = locale === 'tr' ? 'tr' : 'en';
@@ -105,7 +107,8 @@ export default function Page() {
     }
   }, [searchParams]);
 
-  if (!ready) return null;
+  // Locale veya CSRF hazır değilse render etmeyelim (yanlış 403 riskini azaltır)
+  if (!ready || !csrfReady) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
@@ -139,13 +142,12 @@ export default function Page() {
       if (res.ok && data?.success) {
         router.push('/dashboard');
       } else {
-        // Backend'den gelen mesajı önceliklendirelim
         const msg = data?.message;
 
-        // Google ile kayıt mesajını kullanıcı dilinde göster
+        // ✅ Backend "Google ile kayıt" mesajı için doğru karşılaştırma
         if (
-          msg === translations.en.setPassword ||
-          msg === translations.tr.setPassword
+          msg === translations.en.google ||
+          msg === translations.tr.google
         ) {
           setError(t('setPassword'));
         } else if (typeof msg === 'string' && msg.length > 0) {
