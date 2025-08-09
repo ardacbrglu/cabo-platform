@@ -1,20 +1,37 @@
-export const dynamic = "force-dynamic";
 // app/api/logout/route.js
-import { csrf } from '@/lib/csrf';
+export const dynamic = "force-dynamic";
 
-// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
+import { verifyCsrfToken } from "@/lib/csrf"; 
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import { NextResponse } from "next/server";
 
-const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
 
-export const POST = csrf(async (req) => {
-  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Set-Cookie': `cabo_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict${secureFlag}`
-    }
-  });
-});
+export async function POST(req) {
+  // 1. CSRF kontrolü
+  await verifyCsrfToken(req);
 
-// Eğer GET ile de logout’a izin verecekseniz, CSRF’le koruyun:
+  // 2. Kullanıcı oturumunu doğrula
+  const session = await getServerSession(authOptions);
+  if (!session) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  // 3. Response başlat
+  const res = NextResponse.json({ success: true });
+
+  // 4. Eğer cabo_token varsa, temizle
+  const caboToken = req.headers.get("cookie")?.match(/cabo_token=([^;]+)/);
+  if (caboToken) {
+    res.headers.set(
+      "Set-Cookie",
+      `cabo_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict${secureFlag}`
+    );
+  }
+
+  return res;
+}
+
+// GET ile de logout’a izin ver (opsiyonel)
 export const GET = POST;

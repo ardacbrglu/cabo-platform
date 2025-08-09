@@ -1,3 +1,4 @@
+// app/api/auth/[...nextauth]/route.js
 export const dynamic = "force-dynamic";
 
 import NextAuth from "next-auth";
@@ -7,23 +8,23 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
-if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET is not defined!");
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) throw new Error("Google OAuth env'leri eksik!");
+if (!process.env.NEXTAUTH_SECRET)
+  throw new Error("NEXTAUTH_SECRET is not defined!");
+if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET)
+  throw new Error("Google OAuth env'leri eksik!");
 
 const MAX_FAILED_ATTEMPTS = 5;
-const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dk
+const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dakika
 
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
 
   providers: [
-    // Google OAuth2 provider
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     }),
 
-    // Merchant & affiliate login (Credentials)
     CredentialsProvider({
       name: "Credentials",
       credentials: {
@@ -35,24 +36,31 @@ export const authOptions = {
         if (!credentials.email || !credentials.password) return null;
 
         const cleanEmail = credentials.email.trim().toLowerCase();
-        const loginType = credentials.loginType || "affiliate"; // default
+        const loginType = credentials.loginType || "affiliate";
 
-        const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+        const user = await prisma.user.findUnique({
+          where: { email: cleanEmail },
+        });
         if (!user) return null;
 
-        // Merchant login isteyenler için role kontrolü
+        // Merchant login kontrolü
         if (loginType === "merchant" && user.role !== "merchant") {
-          return null; // Merchant değilse giriş yok
+          return null;
         }
 
-        // Google-only hesaplar (password yoksa) giriş yapamaz
-        if (!user.passwordHash || user.passwordHash === "") return null;
+        // Google-only hesaplar (şifre yoksa) giriş yapamaz
+        if (!user.passwordHash) return null;
 
         // Hesap kilitli mi?
-        if (user.lockUntil && new Date(user.lockUntil) > new Date()) return null;
+        if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
+          return null;
+        }
 
         // Şifre doğrulama
-        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
+        const isValid = await bcrypt.compare(
+          credentials.password,
+          user.passwordHash
+        );
         if (!isValid) {
           await prisma.user.update({
             where: { id: user.id },
@@ -67,13 +75,13 @@ export const authOptions = {
           return null;
         }
 
-        // Giriş başarılı → lock/attempt sıfırla
+        // Başarılı giriş → sıfırla
         await prisma.user.update({
           where: { id: user.id },
           data: { failedAttempts: 0, lockUntil: null },
         });
 
-        // Sadece active hesaplar giriş yapabilir
+        // Sadece aktif hesaplar giriş yapabilir
         if (user.status !== "active") return null;
 
         return {
@@ -93,7 +101,7 @@ export const authOptions = {
 
   session: {
     strategy: "jwt",
-    maxAge: 60 * 60 * 24,
+    maxAge: 60 * 60 * 24, // 1 gün
   },
 
   callbacks: {
@@ -116,7 +124,9 @@ export const authOptions = {
     },
     async signIn({ user, account }) {
       if (account?.provider === "google" && user?.email) {
-        let existing = await prisma.user.findUnique({ where: { email: user.email } });
+        let existing = await prisma.user.findUnique({
+          where: { email: user.email },
+        });
         if (!existing) {
           await prisma.user.create({
             data: {
@@ -129,7 +139,9 @@ export const authOptions = {
             },
           });
         }
-        existing = await prisma.user.findUnique({ where: { email: user.email } });
+        existing = await prisma.user.findUnique({
+          where: { email: user.email },
+        });
         if (existing?.status === "pending") return false;
       }
       return true;
