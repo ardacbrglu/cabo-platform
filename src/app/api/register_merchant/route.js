@@ -1,10 +1,10 @@
+// app/api/register_merchant/route.js
 export const dynamic = "force-dynamic";
-import { csrf } from '@/lib/csrf';
 
-// SECURITY REVIEW: This route uses the csrf middleware. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
-import prisma from '@/lib/prisma';
-import bcrypt from 'bcryptjs';
-import { checkRateLimit } from '@/lib/ratelimit';
+import prisma from "@/lib/prisma";
+import bcrypt from "bcryptjs";
+import { withCsrfProtection } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
 const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
 
@@ -43,96 +43,149 @@ const messages = {
   }
 };
 
-export const POST = csrf(async (req) => {
-  // SECURITY REVIEW: All state-changing logic is protected by CSRF here. Keep this for all sensitive endpoints.
-  try {
-    // Locale
-    const lang = req.headers.get("accept-language")?.split(',')[0] || "en";
-    const locale = (lang && lang.startsWith("tr")) ? "tr" : "en";
-    const msg = messages[locale];
+export const POST = withCsrfProtection(async (req) => {
+  // Locale
+  const lang = req.headers.get("accept-language")?.split(",")[0] || "en";
+  const locale = lang && lang.startsWith("tr") ? "tr" : "en";
+  const msg = messages[locale];
 
-    // Rate limit
-    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
-    if (!checkRateLimit(`merchant_register_${ip}`, 5, 60 * 1000)) {
-      return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
-    }
-
-    // Input
-    const { name, email, password, phoneNumber, role, termsAccepted, captcha } = await req.json();
-
-    // Terms check
-    if (!termsAccepted) {
-      return Response.json({ success: false, message: msg.terms }, { status: 400 });
-    }
-    if (!name || !email || !password || !phoneNumber|| role !== "merchant") {
-      return Response.json({ success: false, message: msg.required }, { status: 400 });
-    }
-
-    // --- CAPTCHA DOĞRULAMA (fetch ile) ---
-    if (!captcha) {
-      return Response.json({ success: false, message: msg.captcha }, { status: 400 });
-    }
-    try {
-      const response = await fetch(
-        "https://www.google.com/recaptcha/api/siteverify",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `secret=${encodeURIComponent(RECAPTCHA_SECRET_KEY)}&response=${encodeURIComponent(captcha)}`
-        }
-      );
-      const captchaRes = await response.json();
-      if (!captchaRes.success) {
-        return Response.json({ success: false, message: msg.captcha }, { status: 400 });
-      }
-    } catch (captchaError) {
-      console.error('Captcha verification failed:', captchaError);
-      return Response.json({ success: false, message: msg.captcha }, { status: 400 });
-    }
-    // ------------------------
-
-    if (!emailRegex.test(email.trim().toLowerCase()))
-      return Response.json({ success: false, message: msg.email }, { status: 400 });
-    if (!nameRegex.test(name.trim()))
-      return Response.json({ success: false, message: msg.username }, { status: 400 });
-    if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password))
-      return Response.json({ success: false, message: msg.password }, { status: 400 });
-    if (!phoneRegex.test(phoneNumber.trim()))
-      return Response.json({ success: false, message: msg.phone }, { status: 400 });
-
-    // Duplicate check
-    const existing = await prisma.user.findFirst({
-      where: { email: email.trim().toLowerCase(), role: "merchant" }
+  // Rate limit (IP bazlı 5/dk)
+  const rlKey = makeRateLimitKey(req, { scope: "register_merchant" });
+  const { ok } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+  if (!ok) {
+    return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
     });
-    if (existing)
-      return Response.json({ success: false, message: msg.uniq }, { status: 409 });
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    await prisma.user.create({
-      data: {
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        passwordHash: hashedPassword,
-        phoneNumber: phoneNumber.trim(),
-        role: "merchant",
-        status: "pending",
-        termsAccepted: !!termsAccepted
-      }
-    });
-
-    // Log
-    console.info(`[MERCHANT_REGISTER][${ip}] ${email.trim().toLowerCase()} (${name.trim()})`);
-
-    return Response.json({
-      success: true,
-      message: msg.success
-    }, { status: 200 });
-
-  } catch (error) {
-    console.error("Merchant Register Error:", error);
-    const msg = messages.tr.fail;
-    return Response.json({ success: false, message: msg }, { status: 500 });
   }
+
+  // Body
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ success: false, message: msg.required }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const {
+    name,
+    email,
+    password,
+    phoneNumber,
+    // role,  // güvenlik: rolü client'tan almayacağız
+    termsAccepted,
+    captcha, // reCAPTCHA token
+  } = body || {};
+
+  // Terms kontrolü
+  if (!termsAccepted) {
+    return new Response(JSON.stringify({ success: false, message: msg.terms }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Zorunlu alanlar
+  if (!name || !email || !password || !phoneNumber) {
+    return new Response(JSON.stringify({ success: false, message: msg.required }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // CAPTCHA doğrulama
+  if (!captcha || !RECAPTCHA_SECRET_KEY) {
+    return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  try {
+    const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:
+        `secret=${encodeURIComponent(RECAPTCHA_SECRET_KEY)}` +
+        `&response=${encodeURIComponent(captcha)}`,
+    });
+    const captchaRes = await res.json();
+    if (!captchaRes?.success) {
+      return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  } catch {
+    return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Validation
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanName = String(name).trim();
+  const cleanPhone = String(phoneNumber).trim();
+  const pw = String(password);
+
+  if (!emailRegex.test(cleanEmail)) {
+    return new Response(JSON.stringify({ success: false, message: msg.email }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!nameRegex.test(cleanName)) {
+    return new Response(JSON.stringify({ success: false, message: msg.username }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) {
+    return new Response(JSON.stringify({ success: false, message: msg.password }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!phoneRegex.test(cleanPhone)) {
+    return new Response(JSON.stringify({ success: false, message: msg.phone }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Duplicate (aynı email ile zaten merchant var mı?)
+  const existing = await prisma.user.findFirst({
+    where: { email: cleanEmail, role: "merchant" },
+    select: { id: true },
+  });
+  if (existing) {
+    return new Response(JSON.stringify({ success: false, message: msg.uniq }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Hash
+  const passwordHash = await bcrypt.hash(pw, 10);
+
+  // Create (rolü server zorlar: "merchant")
+  await prisma.user.create({
+    data: {
+      name: cleanName,
+      email: cleanEmail,
+      passwordHash,
+      phoneNumber: cleanPhone,
+      role: "merchant",
+      status: "pending",
+      termsAccepted: !!termsAccepted,
+    },
+  });
+
+  return new Response(JSON.stringify({ success: true, message: msg.success }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 });

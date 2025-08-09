@@ -1,45 +1,65 @@
+// app/api/merchant/payout/details/route.js
 export const dynamic = "force-dynamic";
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
-import { validatecsrf_token } from "@/lib/csrf";
 
-// SECURITY REVIEW: This route uses validatecsrf_token for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
-import { checkRateLimit } from "@/lib/ratelimit";
+/**
+ * SECURITY NOTES (read me):
+ * - Auth: NextAuth session zorunlu; custom JWT yok.
+ * - RBAC: Sadece role==="merchant" erişir.
+ * - CSRF: Header(cookie) eşleşmesi zorunlu (x-csrf-token <-> csrf_token).
+ * - Rate limit: userId + scope anahtarı ile 10/dk.
+ * - PII/Secrets: affiliateLink.token gibi gizli alanlar DÖNMEZ.
+ * - Validation: Zod ile katı şema; itemIds max 100.
+ * - ORM: Sorgular merchantId === session.user.id ile kısıtlanır.
+ * - Caching: no-store.
+ */
+
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { z } from "zod";
-// SECURITY REVIEW: This API exposes merchant payout details. See comments below for security notes.
 
 const requestSchema = z.object({
-  itemIds: z.array(z.number().int().positive()).min(1),
+  itemIds: z.array(z.number().int().positive()).min(1).max(100),
 });
 
 export async function POST(req) {
-  // WARNING: Ensure only authenticated merchants can access payout details. Never expose sensitive info to unauthorized users.
   try {
-    // CSRF koruması
-    await validatecsrf_token(req);
-    // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing merchant payment operations.
-    // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
+    // 1) CSRF (header + cookie)
+    await validateCsrfToken(req);
 
-    // Auth & Rate Limit
-    const token = getTokenFromRequest(req);
-    const user = token ? verifyToken(token) : null;
-    if (!user || user.role !== "merchant") {
+    // 2) Session & RBAC
+    const session = await getServerSession(authOptions);
+    const user = session?.user;
+    if (!user?.id || user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    await checkRateLimit(req, user.userId, 10, 60_000, 'merchant-payout-details');
-    // WARNING: Always validate and sanitize userId from token. Never trust user input for sensitive queries.
 
-    // Input validation (zod)
-    const body = await req.json();
-    const { itemIds } = requestSchema.parse(body);
-    // NOTE: Input validation is done with zod. Good practice for preventing injection and type errors.
+    // 3) Rate limit (10 req/dk - user scoped)
+    const rlKey = makeRateLimitKey(req, { scope: "merchant-payout-details", userId: user.id });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
 
-    // Sadece merchant’a ait payout item'larını çek
+    // 4) Input validation
+    const body = await req.json().catch(() => ({}));
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    }
+    const { itemIds } = parsed.data;
+
+    // 5) İlgili merchant’a ait payout item’larını çek (sadece güvenli alanlar)
     const items = await prisma.payoutRequestItem.findMany({
       where: {
         itemId: { in: itemIds },
-        merchantId: user.userId,
+        merchantId: user.id,
       },
       select: {
         itemId: true,
@@ -52,98 +72,104 @@ export async function POST(req) {
             userId: true,
             realUserFullname: true,
             requestedAt: true,
-          }
-        }
-      }
+          },
+        },
+      },
     });
-    // WARNING: Only select fields that are safe to expose. Never return sensitive data (passwords, tokens, etc).
 
     if (!items.length) {
       return NextResponse.json({ error: "No payout items found" }, { status: 404 });
     }
 
-    // Her payout item için ilgili satışları topla
-    let sales = [];
+    // 6) Her item’ın ilişkili satışlarını topla (salt okunur; gizli alan yok)
+    const sales = [];
     for (const item of items) {
-      if (item.sourceSaleIds) {
-        const saleIds = item.sourceSaleIds.split(',').map(id => Number(id)).filter(Boolean);
-        const salesData = await prisma.affiliateUserSale.findMany({
-          where: { saleId: { in: saleIds } },
-          select: {
-            saleId: true,
-            orderId: true,
-            amount: true,
-            commissionAffiliate: true,
-            quantity: true,
-            status: true,
-            convertedAt: true,
-            productId: true,
-            affiliateLinkId: true,
-          },
+      if (!item.sourceSaleIds) continue;
+
+      const saleIds = item.sourceSaleIds
+        .split(",")
+        .map((id) => Number(id))
+        .filter((n) => Number.isInteger(n) && n > 0);
+
+      if (!saleIds.length) continue;
+
+      const salesData = await prisma.affiliateUserSale.findMany({
+        where: { saleId: { in: saleIds } },
+        select: {
+          saleId: true,
+          orderId: true,
+          amount: true,
+          commissionAffiliate: true,
+          quantity: true,
+          status: true,
+          convertedAt: true,
+          productId: true,
+          // DİKKAT: affiliateLinkId alıyoruz ama link.token DÖNMEYİZ.
+          affiliateLinkId: true,
+        },
+      });
+
+      // affiliateLink.token SIZDIRMA! (gerekirse sadece var/yok bayrağı)
+      for (const sale of salesData) {
+        sales.push({
+          ...sale,
+          itemId: item.itemId,
+          payout_status: item.status,
+          requested_at: item.payoutRequest?.requestedAt || null,
+          has_affiliate_link: Boolean(sale.affiliateLinkId),
         });
-        // affiliateLinkId’den token çek
-        for (const sale of salesData) {
-          let saleToken = null;
-          if (sale.affiliateLinkId) {
-            const link = await prisma.affiliateLink.findUnique({
-              where: { linkId: sale.affiliateLinkId },
-              select: { token: true }
-            });
-            saleToken = link?.token || "";
-          }
-          sales.push({
-            ...sale,
-            itemId: item.itemId,
-            payout_status: item.status,
-            requested_at: item.payoutRequest?.requestedAt,
-            token: saleToken,
-          });
-        }
       }
     }
-    // NOTE: Only expose non-sensitive sale details. Never include internal notes or admin-only data.
 
-    // Ürün isimlerini map’le
-    const productIds = [...new Set(sales.map(s => s.productId))];
+    // 7) Ürün adlarını map’le (sadece name)
+    const productIds = [...new Set(sales.map((s) => s.productId).filter(Boolean))];
     const products = productIds.length
       ? await prisma.merchantProduct.findMany({
           where: { productId: { in: productIds } },
-          select: { productId: true, name: true }
+          select: { productId: true, name: true },
         })
       : [];
-    const productMap = Object.fromEntries(products.map(p => [p.productId, p.name]));
-    // NOTE: Only expose product names, not internal product data.
+    const productMap = Object.fromEntries(products.map((p) => [p.productId, p.name]));
 
-    // Meta bilgileri (modal üstündeki bilgiler için)
+    // 8) Meta (tek request üst bilgisi gibi)
     const meta = {
       status: items[0]?.status || "",
-      total: items.reduce((sum, i) => sum + Number(i.amount), 0),
-      requestDate: items[0]?.payoutRequest?.requestedAt?.toISOString() || "",
+      total: items.reduce((sum, i) => sum + Number(i.amount || 0), 0),
+      requestDate: items[0]?.payoutRequest?.requestedAt?.toISOString?.() || "",
       affiliate_name: items[0]?.payoutRequest?.realUserFullname || "",
     };
 
-    // Sale detaylarını frontende hazırla
-    const details = sales.map(s => ({
+    // 9) Frontend’e sade, güvenli detaylar
+    const details = sales.map((s) => ({
       orderId: s.orderId,
       product_name: productMap[s.productId] || "",
-      amount: Number(s.amount),
-      commission: Number(s.commissionAffiliate),
-      quantity: s.quantity,
-      sale_date: s.convertedAt? new Date(s.convertedAt).toISOString().slice(0, 19).replace('T', ' '): "-",
-      status: s.status || "-",   // Sale status
-      token: s.token || "",
+      amount: Number(s.amount || 0),
+      commission: Number(s.commissionAffiliate || 0),
+      quantity: s.quantity ?? 0,
+      sale_date: s.convertedAt
+        ? new Date(s.convertedAt).toISOString().slice(0, 19).replace("T", " ")
+        : "-",
+      status: s.status || "-",
+      // Gizli token yerine bayrak:
+      has_affiliate_link: s.has_affiliate_link,
     }));
 
-    return NextResponse.json({
-      details,
-      affiliate_name: meta.affiliate_name,
-      meta,
-    });
-    // NOTE: Only expose non-sensitive payout and sale details. Never include internal notes or admin-only data.
-
+    return NextResponse.json(
+      {
+        details,
+        affiliate_name: meta.affiliate_name,
+        meta,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+          Vary: "Cookie",
+        },
+      }
+    );
   } catch (err) {
-    console.error("Merchant Payment Details Error:", err);
-    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
+    // Prod’da PII loglama yok; generic hata
+    console.error("POST /merchant/payout/details error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
