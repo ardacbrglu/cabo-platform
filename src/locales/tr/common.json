@@ -313,6 +313,25 @@
     "heroTitleB": "Let the money flow.",
     "heroDesc": "Cabo, sadece ürün linki paylaşarak para kazanmanı sağlar. Birileri satın aldığında para hesabına yatar.",
     "loginBtn": "Hemen Kazanmaya Başla"
+  },
+  
+  "api": {
+    "payoutDetails": {
+      "unauthorized": "Yetkisiz erişim",
+      "forbidden": "Bu işlem için yetkin yok",
+      "ratelimit": "Çok fazla istek",
+      "invalidBody": "Geçersiz istek gövdesi",
+      "invalidRequestId": "Geçersiz requestId",
+      "serverError": "Sunucu hatası"
+    },
+    "performance": {
+      "unauthorized": "Yetkisiz erişim",
+      "ratelimit": "Çok fazla istek",
+      "invalidStartDate": "Geçersiz startDate",
+      "invalidEndDate": "Geçersiz endDate",
+      "invalidProductIds": "Geçersiz productIds",
+      "serverError": "Performans verisi alınırken hata oluştu"
+    }
   }
 }
 

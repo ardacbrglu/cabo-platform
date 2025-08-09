@@ -1,4 +1,3 @@
-// app/api/password_reset/request/route.js
 export const dynamic = "force-dynamic";
 
 import { withCsrfProtection } from "@/lib/csrf";
@@ -24,29 +23,33 @@ const messages = {
 };
 
 export const POST = withCsrfProtection(async (req) => {
-  try {
-    const langHeader = req.headers.get("accept-language") || "";
-    const locale = langHeader.startsWith("tr") ? "tr" : "en";
-    const msg = messages[locale];
+  const langHeader = req.headers.get("accept-language") || "";
+  const locale = langHeader.startsWith("tr") ? "tr" : "en";
+  const msg = messages[locale];
 
-    // Rate limit (IP bazlı 5/dk)
+  try {
+    // 1) Rate limit (IP bazlı 5/dk)
     const rlKey = makeRateLimitKey(req, { scope: "pwreset_req" });
-    const { ok } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
     if (!ok) {
       return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
         status: 429,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Retry-After": String(Math.ceil(resetMs / 1000)),
+        },
       });
     }
 
-    // Body
+    // 2) Body parse & validate
     let body;
     try {
       body = await req.json();
     } catch {
       return new Response(JSON.stringify({ success: false, message: msg.required }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
@@ -54,25 +57,25 @@ export const POST = withCsrfProtection(async (req) => {
     if (!email) {
       return new Response(JSON.stringify({ success: false, message: msg.required }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
-    // Kullanıcıyı bul (enumeration önleme: response her durumda generic)
+    // 3) Kullanıcıyı bul (enumeration-safe yanıt ver)
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return new Response(JSON.stringify({ success: true, message: msg.sent }), {
         status: 200,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
-    // Önce önceki kullanılmamış tokenları temizle
+    // 4) Önce önceki kullanılmamış tokenları temizle
     await prisma.passwordResetToken.deleteMany({
       where: { userId: user.id, used: false },
     });
 
-    // Yeni kısa ömürlü token (15dk)
+    // 5) Yeni kısa ömürlü token üret (15 dk)
     const token = uuidv4();
     const expiresAt = addMinutes(new Date(), 15);
 
@@ -85,19 +88,19 @@ export const POST = withCsrfProtection(async (req) => {
       },
     });
 
-    // Mail dilini kullanıcı tercihi ya da accept-language
+    // 6) E-postayı gönder (dil: user tercih ya da accept-language)
     const language = user.languagePreference || locale;
     await sendPasswordResetEmail(user.email, token, language);
 
     return new Response(JSON.stringify({ success: true, message: msg.sent }), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   } catch (err) {
     console.error("PASSWORD RESET REQ ERROR:", err);
     return new Response(JSON.stringify({ success: false, message: messages.tr.fail }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   }
 });

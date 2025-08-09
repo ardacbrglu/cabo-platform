@@ -1,4 +1,3 @@
-// app/api/password_reset/confirm/route.js
 export const dynamic = "force-dynamic";
 
 import { withCsrfProtection } from "@/lib/csrf";
@@ -30,29 +29,33 @@ const messages = {
 };
 
 export const POST = withCsrfProtection(async (req) => {
-  try {
-    const langHeader = req.headers.get("accept-language") || "";
-    const locale = langHeader.startsWith("tr") ? "tr" : "en";
-    const msg = messages[locale];
+  const langHeader = req.headers.get("accept-language") || "";
+  const locale = langHeader.startsWith("tr") ? "tr" : "en";
+  const msg = messages[locale];
 
-    // Rate limit (IP bazlı 5/dk)
+  try {
+    // 1) Rate limit (IP bazlı 5/dk)
     const rlKey = makeRateLimitKey(req, { scope: "pwreset_confirm" });
-    const { ok } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
     if (!ok) {
       return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
         status: 429,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Retry-After": String(Math.ceil(resetMs / 1000)),
+        },
       });
     }
 
-    // Body
+    // 2) Body parse & validate
     let body;
     try {
       body = await req.json();
     } catch {
       return new Response(JSON.stringify({ success: false, message: msg.required }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
@@ -62,68 +65,79 @@ export const POST = withCsrfProtection(async (req) => {
     if (!token || !password) {
       return new Response(JSON.stringify({ success: false, message: msg.required }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
+    // Basit complexity: 8+ uzunluk, harf + rakam
     if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
       return new Response(JSON.stringify({ success: false, message: msg.weak }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
-    // Token doğrula
+    // 3) Token doğrula
     const record = await prisma.passwordResetToken.findUnique({ where: { token } });
     if (!record) {
       return new Response(JSON.stringify({ success: false, message: msg.invalid }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (record.used) {
       return new Response(JSON.stringify({ success: false, message: msg.used }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
     if (record.expiresAt < new Date()) {
       return new Response(JSON.stringify({ success: false, message: msg.invalid }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
-    // Kullanıcıyı çek
+    // 4) Kullanıcıyı çek
     const user = await prisma.user.findUnique({ where: { id: record.userId } });
     if (!user) {
       return new Response(JSON.stringify({ success: false, message: msg.user }), {
         status: 404,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
-    // Şifreyi güncelle
+    // 5) Tek transaksiyonda şifreyi güncelle + token'ı kullan + diğer tokenları temizle + kilidi sıfırla
     const passwordHash = await bcrypt.hash(password, 10);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash },
-    });
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          failedAttempts: 0,
+          lockUntil: null,
+          ...(tx.user.fields?.passwordUpdatedAt ? { passwordUpdatedAt: new Date() } : {}),
+        },
+      });
 
-    // Token'ı kullanılmış işaretle
-    await prisma.passwordResetToken.update({
-      where: { token },
-      data: { used: true },
+      await tx.passwordResetToken.update({
+        where: { token },
+        data: { used: true },
+      });
+
+      await tx.passwordResetToken.deleteMany({
+        where: { userId: user.id, used: false, token: { not: token } },
+      });
     });
 
     return new Response(JSON.stringify({ success: true, message: msg.success }), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   } catch (err) {
     console.error("PASSWORD RESET CONFIRM ERROR:", err);
     return new Response(JSON.stringify({ success: false, message: messages.tr.fail }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     });
   }
 });
