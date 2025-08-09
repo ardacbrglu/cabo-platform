@@ -44,13 +44,24 @@ export async function GET(req) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // 4) Response (cache kapalı)
-    return NextResponse.json(user, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Vary": "Cookie",
+    // 4) Response (UserContext şemasına UYUMLU: userId + alanlar)
+    return NextResponse.json(
+      {
+        userId: user.id, // <— ÖNEMLİ: UserContext bunu bekliyor
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        languagePreference: user.languagePreference,
+        currencyCode: user.currencyCode,
       },
-    });
+      {
+        headers: {
+          "Cache-Control": "no-store",
+          "Vary": "Cookie",
+        },
+      }
+    );
   } catch (err) {
     console.error("GET /api/me error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

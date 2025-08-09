@@ -1,16 +1,49 @@
 // app/page.js
 "use client";
 
-// Amaç: Ana sayfa (i18n: useTranslation, erişilebilirlik iyileştirmeleri).
-// Not: Görsel stil korunur; sadece t hook'u doğru kullanıldı.
+/**
+ * Homepage — inline i18n ile metinler bu dosyada tutulur.
+ * Güvenlik/Stil notları:
+ * - Görsel yapı korunmuştur.
+ * - Erişilebilirlik için “skip to content” linki var.
+ * - i18n: Önce yerel (inline) sözlük, sonra global useTranslation(), sonra key fallback.
+ */
 
-import PublicLayout from "@/components/PublicLayout";
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
+import PublicLayout from "@/components/PublicLayout";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useLocale } from "@/context/LocaleContext";
+
+// Inline sözlük (bu sayfaya özel)
+const L = {
+  en: {
+    a11y_skip: "Skip to main content",
+    heroTitleA: "Drop your link. ",
+    heroTitleB: "Let the money flow.",
+    heroDesc:
+      "Cabo lets you earn by just sharing product links. When someone buys, cash is on the way.",
+    loginBtn: "Start Earning Now",
+  },
+  tr: {
+    a11y_skip: "Ana içeriğe geç",
+    heroTitleA: "Drop your link. ",
+    heroTitleB: "Let the money flow.",
+    heroDesc:
+      "Cabo, yalnızca ürün linklerini paylaşarak kazanmanı sağlar. Biri satın aldığında ödeme yoldadır.",
+    loginBtn: "Hemen Kazanmaya Başla",
+  },
+};
 
 export default function Homepage() {
-  const { t } = useTranslation(); // <-- DÜZELTME: destructure
+  const { t } = useTranslation(); // global çeviri (genel anahtarlar için)
+  const { locale = "en" } = useLocale() || {};
+
+  // Sayfa içi çeviri yardımcı fonksiyonu
+  const lt = useMemo(() => {
+    const dict = L[locale] || L.en;
+    return (key) => dict[key] ?? t(key) ?? key;
+  }, [locale, t]);
 
   return (
     <PublicLayout>
@@ -19,7 +52,7 @@ export default function Homepage() {
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:bg-[#1a1a1a] focus:text-white focus:px-3 focus:py-2 focus:rounded-md focus:z-50"
       >
-        {t("a11y.skipToContent") || "Skip to main content"}
+        {lt("a11y_skip")}
       </a>
 
       <main
@@ -29,19 +62,19 @@ export default function Homepage() {
       >
         <section className="max-w-4xl text-center">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold mb-2 leading-tight sm:leading-[3.5rem]">
-            <span className="text-[#d1ffd0]">{t("homepage.heroTitleA")}</span>
-            <span className="text-[#81d742]">{t("homepage.heroTitleB")}</span>
+            <span className="text-[#d1ffd0]">{lt("heroTitleA")}</span>
+            <span className="text-[#81d742]">{lt("heroTitleB")}</span>
           </h1>
 
           <p className="text-base sm:text-lg text-gray-400 max-w-2xl mx-auto mb-6">
-            {t("homepage.heroDesc")}
+            {lt("heroDesc")}
           </p>
 
           {/* LOGIN BUTTON */}
           <div className="flex justify-center mt-7">
             <Link
               href="/login"
-              aria-label={t("homepage.loginBtn")}
+              aria-label={lt("loginBtn")}
               prefetch
               className="
                 bg-[#81d742]
@@ -67,7 +100,7 @@ export default function Homepage() {
                 boxShadow: "0 4px 32px 0 rgba(129,215,66,0.08)",
               }}
             >
-              {t("homepage.loginBtn")}
+              {lt("loginBtn")}
             </Link>
           </div>
         </section>
