@@ -1,8 +1,15 @@
+// app/faq/page.js
+// Amaç: SSS sayfası (erişilebilir, SEO dostu, JSON-LD ile zengin sonuç).
+// Not: Tasarım korunmuştur; yalnızca semantik ve SEO iyileştirmeleri eklendi.
+
 'use client';
 
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
+import Link from 'next/link';
+import { useMemo } from 'react';
 
+// (İçerik mevcut metinlerle aynı)
 const translations = {
   en: {
     faqTitle: "Frequently Asked Questions",
@@ -20,6 +27,10 @@ const translations = {
     a6: "No! Signing up and earning with Cabo is totally free. There are no hidden fees — just share and earn.",
     q7: "How do I maximize my earnings?",
     a7: "Promote trending products, use your social media, and keep your links visible. The more you share, the more you can earn. Easy.",
+    // küçük yönlendirme metinleri
+    ctaRegister: "Create your account",
+    ctaProducts: "Products",
+    ctaWallet: "Wallet",
   },
   tr: {
     faqTitle: "Sık Sorulan Sorular",
@@ -37,31 +48,93 @@ const translations = {
     a6: "Hayır! Cabo'ya kayıt olmak ve kazanmak tamamen ücretsizdir. Gizli ücret yok, sadece paylaş ve kazan.",
     q7: "Daha fazla nasıl kazanırım?",
     a7: "Trend ürünleri öne çıkar, sosyal medyada ve çevrende sıkça paylaş. Ne kadar çok paylaşırsan, o kadar fazla kazanırsın. Bu kadar basit.",
+    ctaRegister: "Hesap oluştur",
+    ctaProducts: "Ürünler",
+    ctaWallet: "Cüzdan",
   }
 };
+
+const questionKeys = [1,2,3,4,5,6,7];
 
 export default function FAQPage() {
   const { locale, ready } = useLocale();
   if (!ready) return null;
+
   const t = (key) => translations[locale][key] || key;
+
+  // JSON-LD (FAQPage) — zengin sonuçlar için
+  const faqJsonLd = useMemo(() => {
+    const mainEntity = questionKeys.map((n) => ({
+      '@type': 'Question',
+      name: t(`q${n}`),
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: t(`a${n}`),
+      },
+    }));
+    return {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity,
+    };
+  }, [locale]);
 
   return (
     <PublicLayout>
+      {/* JSON-LD (SEO) */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
+
       <div className="max-w-3xl mx-auto py-16 px-6 sm:py-20 sm:px-8">
-        <h2 className="text-4xl md:text-5xl font-extrabold text-[#d1ffd0] mb-16 text-center">
-          {t("faqTitle")}
-        </h2>
+        <h1 className="text-4xl md:text-5xl font-extrabold text-[#d1ffd0] mb-10 text-center">
+          {t('faqTitle')}
+        </h1>
+
+        {/* Kısa İçindekiler/TOC (tasarımı bozmadan) */}
+        <nav aria-label="FAQ contents" className="mb-10">
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-gray-300">
+            {questionKeys.map((n) => (
+              <li key={`toc-${n}`}>
+                <a className="hover:underline hover:text-[#b3ffb3]" href={`#q${n}`}>
+                  {t(`q${n}`)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
         <div className="space-y-16">
-          {[1, 2, 3, 4, 5, 6, 7].map((n) => (
-            <div key={n}>
-              <h3 className="text-2xl md:text-3xl font-semibold text-[#81d742] mb-6">
+          {questionKeys.map((n) => (
+            <section key={n} aria-labelledby={`q${n}`}>
+              <h2 id={`q${n}`} className="text-2xl md:text-3xl font-semibold text-[#81d742] mb-6">
                 {t(`q${n}`)}
-              </h3>
+              </h2>
               <p className="text-lg md:text-xl text-gray-300 leading-relaxed mb-8">
                 {t(`a${n}`)}
               </p>
-            </div>
+
+              {/* Hafif yönlendirmeler (görseli bozmaz) */}
+              {n === 2 && (
+                <p className="text-sm text-gray-400">
+                  <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                    {t('ctaRegister')}
+                  </Link>{" "}
+                  ·{" "}
+                  <Link href="/products" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                    {t('ctaProducts')}
+                  </Link>
+                </p>
+              )}
+              {n === 5 && (
+                <p className="text-sm text-gray-400">
+                  <Link href="/wallet" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                    {t('ctaWallet')}
+                  </Link>
+                </p>
+              )}
+            </section>
           ))}
         </div>
       </div>

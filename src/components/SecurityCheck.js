@@ -2,7 +2,7 @@
 import React from "react";
 import { CheckCircle, XCircle } from "lucide-react";
 
-// Basit örnek: şifre güvenliği, 2FA, email doğrulama
+// Basit örnek: şifre güvenliği, 2FA, email doğrulama 2 ADIMLI DOGRULAMAYA SIMDILIK IHTIYACIMIZ YOK
 export default function SecurityCheck({ user, i18n = {} }) {
   const items = [
     { label: i18n.emailVerified || "E-posta doğrulandı", ok: user?.email_verified },

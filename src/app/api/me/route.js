@@ -1,51 +1,32 @@
+// app/api/me/route.js
 export const dynamic = "force-dynamic";
 
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/authOptions";
-import { cookies } from "next/headers";
-import jwt from "jsonwebtoken";
-import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { checkRateLimit } from "@/lib/ratelimit";
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('Missing required environment variable: JWT_SECRET');
-}
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
 export async function GET(req) {
   try {
-    // 1) Rate limit (60 request/dk aynı IP)
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || "unknown";
-    if (!(await checkRateLimit(`me_${ip}`, 60, 60_000))) {
-      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    // 1) Rate limit (60 req/dk IP bazlı)
+    const rlKey = makeRateLimitKey(req, { scope: "me" });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
-    // 2) Önce NextAuth session'ı kontrol et
-    let userId = null;
+    // 2) NextAuth session
     const session = await getServerSession(authOptions);
-
-    if (session && session.user && session.user.id) {
-      userId = session.user.id;
-    } else {
-      // 3) Manuel JWT (cabo_token) ile kontrol et
-      const cookieStore = cookies();
-      const token = cookieStore.get('cabo_token')?.value;
-      if (token) {
-        try {
-          const payload = jwt.verify(token, JWT_SECRET);
-          userId = payload.userId;
-        } catch {
-          // invalid token, userId null kalır
-        }
-      }
-    }
-
+    const userId = session?.user?.id;
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 4) User fetch & sanitize
+    // 3) User fetch (sadece güvenli alanlar)
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -56,18 +37,22 @@ export async function GET(req) {
         status: true,
         languagePreference: true,
         currencyCode: true,
-        // passwordHash: true, // sadece şifre oluşturma için gerekiyorsa aç
-      }
+      },
     });
+
     if (!user) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // 5) Safe response
-    return NextResponse.json(user);
-
+    // 4) Response (cache kapalı)
+    return NextResponse.json(user, {
+      headers: {
+        "Cache-Control": "no-store",
+        "Vary": "Cookie",
+      },
+    });
   } catch (err) {
-    console.error('GET /api/me error:', err);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error("GET /api/me error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

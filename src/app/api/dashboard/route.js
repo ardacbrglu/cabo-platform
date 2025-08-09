@@ -1,7 +1,11 @@
+// app/api/dashboard/route.js
 export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
+import { authOptions } from "@/lib/authOptions";
+import { getServerSession } from "next-auth";
+
 function getDeviceType(userAgent = "") {
   userAgent = (userAgent || "").toLowerCase();
   if (userAgent.includes("android")) return "Android";
@@ -13,12 +17,18 @@ function getDeviceType(userAgent = "") {
 
 export async function GET(req) {
   try {
-    const token = getTokenFromRequest(req);
-    const payload = token ? verifyToken(token) : null;
-    if (!payload?.userId) {
+    // ✅ NextAuth session kontrolü
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user?.id) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const userId = payload.userId;
+
+    // ✅ Rol kontrolü: Sadece affiliate kullanıcılar erişebilir
+    if (session.user.role !== "affiliate") {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    const userId = session.user.id;
 
     // Platform config'ten min payout
     let minPayout = 100;
@@ -27,11 +37,13 @@ export async function GET(req) {
         where: { keyName: "min_payout" }
       });
       if (config && config.value) minPayout = Number(config.value);
-    } catch { minPayout = 100; }
+    } catch {
+      minPayout = 100;
+    }
 
     // Kullanıcı banka & iban & ad bilgisi
     const user = await prisma.user.findUnique({
-      where: { id: userId },     // << DÜZELTİLDİ
+      where: { id: userId },
       select: { name: true, email: true, iban: true, bankName: true, realUserFullname: true }
     });
     const iban = user?.iban || "";
@@ -56,7 +68,7 @@ export async function GET(req) {
         totalEarnings: 0,
         balance: 0,
         minPayout,
-        username: user?.name || payload.name || "",
+        username: user?.name || "",
         iban,
         bankName,
         ibanMissing,
@@ -94,32 +106,33 @@ export async function GET(req) {
       where: { productId: { in: productIds }, status: 'confirmed' },
       orderBy: { convertedAt: 'desc' },
       take: 5,
-      include: { merchantProduct: { select: { name: true } } } // << modelde relation adı merchantProduct ise!
+      include: { merchantProduct: { select: { name: true } } }
     });
 
     // Leaderboard: En çok kazanan ilk 3 affiliate
-    const allAffiliates = await prisma.user.findMany({
+    const leaderboardRaw = await prisma.user.findMany({
       where: { role: 'affiliate' },
       select: {
-        id: true,    // << userId değil, id!
         name: true,
-        affiliateLinks: { select: { productId: true } }
+        affiliateLinks: {
+          select: { productId: true }
+        }
       }
     });
 
-    const leaderboardRaw = await Promise.all(allAffiliates.map(async u => {
-      const pids = u.affiliateLinks.map(l => l.productId);
-      if (!pids.length) return { name: u.name, value: 0 };
-      const sum = await prisma.affiliateUserSale.aggregate({
-        _sum: { commissionAffiliate: true },
-        where: { productId: { in: pids }, status: 'confirmed' }
-      });
-      return { name: u.name, value: Number(sum._sum.commissionAffiliate || 0) };
-    }));
+    const leaderboard = await Promise.all(
+      leaderboardRaw.map(async u => {
+        const pids = u.affiliateLinks.map(l => l.productId);
+        if (!pids.length) return { name: u.name, value: 0 };
+        const sum = await prisma.affiliateUserSale.aggregate({
+          _sum: { commissionAffiliate: true },
+          where: { productId: { in: pids }, status: 'confirmed' }
+        });
+        return { name: u.name, value: Number(sum._sum.commissionAffiliate || 0) };
+      })
+    );
 
-    const leaderboard = (leaderboardRaw || [])
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 3);
+    leaderboard.sort((a, b) => b.value - a.value);
 
     // Son satış (son 24 saat)
     const lastConversion = await prisma.affiliateUserSale.findFirst({
@@ -130,7 +143,7 @@ export async function GET(req) {
         convertedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       },
       orderBy: { convertedAt: "desc" },
-      include: { merchantProduct: { select: { name: true } } } // relation adı merchantProduct
+      include: { merchantProduct: { select: { name: true } } }
     });
 
     let lastConversionData = null;
@@ -148,7 +161,7 @@ export async function GET(req) {
     const lastClick = await prisma.click.findFirst({
       where: {
         linkId: { in: linkIds },
-        clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // << clickedAt
+        clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       },
       orderBy: { clickedAt: "desc" },
       include: {
@@ -174,7 +187,7 @@ export async function GET(req) {
       totalEarnings,
       balance,
       minPayout,
-      username: user?.name || payload.name || "",
+      username: user?.name || "",
       iban,
       bankName,
       ibanMissing,
@@ -185,7 +198,7 @@ export async function GET(req) {
         desc: `Sale: ${conv.merchantProduct?.name || 'Product'} (${conv.quantity || 1} adet)`,
         date: conv.convertedAt.toISOString().slice(0, 10)
       })),
-      leaderboard: (leaderboard || []).map(l => ({
+      leaderboard: leaderboard.slice(0, 3).map(l => ({
         name: l.name,
         value: `₺${l.value.toFixed(2)}`
       })),

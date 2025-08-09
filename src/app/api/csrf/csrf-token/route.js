@@ -1,26 +1,37 @@
-import { cookies } from 'next/headers';
+// app/api/csrf/csrf-token/route.js
+export const dynamic = "force-dynamic";
+
+import { cookies } from "next/headers";
 import crypto from "crypto";
 
 const CSRF_COOKIE_NAME = "csrf_token";
-const CSRF_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  path: "/",
-  sameSite: "lax",
-  maxAge: 60 * 60 * 2 // 2 saat
-};
+const TWO_HOURS = 60 * 60 * 2;
 
 export async function GET() {
   const cookieStore = cookies();
   let token = cookieStore.get(CSRF_COOKIE_NAME)?.value;
 
+  // Yoksa üret
   if (!token) {
     token = crypto.randomBytes(32).toString("hex");
-    cookieStore.set(CSRF_COOKIE_NAME, token, CSRF_COOKIE_OPTIONS);
+    cookieStore.set(CSRF_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",         // <- 'strict' öneriyoruz
+      path: "/",
+      maxAge: TWO_HOURS,
+    });
   }
 
   return new Response(JSON.stringify({ csrf_token: token }), {
     status: 200,
-    headers: { "Content-Type": "application/json" }
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Vary": "Cookie",
+      "Pragma": "no-cache",
+      "Expires": "0",
+    },
   });
+
 }

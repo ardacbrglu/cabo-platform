@@ -1,31 +1,53 @@
-import { useState, useEffect } from "react";
+// /hooks/useIsMobile.js
+/**
+ * useIsMobile — mobil/touch durumu algılama
+ * - width breakpoint (default 768)
+ * - pointer:coarse (touch) tespiti
+ * - SSR safe, event cleanup düzgün
+ */
+import { useEffect, useState } from "react";
 
 export function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(false);
+  const [state, setState] = useState({
+    isMobileWidth: false,
+    isTouch: false,
+  });
 
   useEffect(() => {
-    function checkMobile() {
-      // SSR veya non-browser ortamda guard
-      if (typeof window === "undefined" || typeof navigator === "undefined") {
-        setIsMobile(false);
-        return;
-      }
-      const widthMobile = window.innerWidth <= breakpoint;
-      // User agent check (daha hassas, Android/iOS ve bazı tabletleri de kapsar)
-      const ua = navigator.userAgent || "";
-      const isUserAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Silk/i.test(ua);
-      // Sadece mobil tarayıcıdan mı, yoksa küçük ekrandan mı geldik?
-      setIsMobile(widthMobile || isUserAgentMobile);
+    if (typeof window === "undefined") {
+      setState({ isMobileWidth: false, isTouch: false });
+      return;
     }
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    // orientation değişirse de kontrol et (mobilde ekran döndürme)
-    window.addEventListener("orientationchange", checkMobile);
+
+    const mmWidth = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const mmTouch = window.matchMedia("(pointer: coarse)");
+
+    const update = () => {
+      setState({
+        isMobileWidth: mmWidth.matches,
+        isTouch: mmTouch.matches,
+      });
+    };
+
+    update();
+
+    // Modern tarayıcılar için addEventListener tercih edilir
+    const onChange = () => update();
+    mmWidth.addEventListener?.("change", onChange);
+    mmTouch.addEventListener?.("change", onChange);
+
+    // Fallback (eski tarayıcılar)
+    if (!mmWidth.addEventListener) mmWidth.addListener?.(onChange);
+    if (!mmTouch.addEventListener) mmTouch.addListener?.(onChange);
+
     return () => {
-      window.removeEventListener("resize", checkMobile);
-      window.removeEventListener("orientationchange", checkMobile);
+      mmWidth.removeEventListener?.("change", onChange);
+      mmTouch.removeEventListener?.("change", onChange);
+      if (!mmWidth.removeEventListener) mmWidth.removeListener?.(onChange);
+      if (!mmTouch.removeEventListener) mmTouch.removeListener?.(onChange);
     };
   }, [breakpoint]);
 
+  const isMobile = state.isMobileWidth || state.isTouch;
   return isMobile;
 }

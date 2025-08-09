@@ -300,7 +300,14 @@
   "activatingAccount": "Your account is being verified...",
   "activationSuccess": "Activation successful! You can now log in.",
   "activationFailed": "Activation failed or the link is invalid.",
-  "redirectingToLogin": "Redirecting to login page..."
+  "redirectingToLogin": "Redirecting to login page...",
+  "homepage": {
+    "heroTitleA": "Drop your link. ",
+    "heroTitleB": "Let the money flow.",
+    "heroDesc": "Cabo lets you earn by just sharing product links. When someone buys, cash is on the way.",
+    "loginBtn": "Start Earning Now"
+  }
 }
+
 
 

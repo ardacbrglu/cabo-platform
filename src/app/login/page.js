@@ -1,13 +1,26 @@
+// app/login/page.js
+// Amaç: Kullanıcı girişi (manuel + Google) için güvenli, backend ile tam uyumlu sayfa.
+// Özet:
+// - CSRF header'ı otomatik ekler (useCsrfToken hook).
+// - Backend'in döndürdüğü tüm mesajları gösterir (Google ile kayıt oldu -> Google ile giriş vb.).
+// - Accept-Language header'ını locale'e göre gönderir.
+// - Başarılı aktivasyon sonrası banner ( ?activated=1 ).
+// - Basit input doğrulama (email pattern), erişilebilirlik ve mobil uyum.
+
+// SECURITY NOTE:
+// - State-changing isteklerde CSRF header zorunludur. Bu sayfa /api/login'e CSRF header gönderir.
+// - Google login NextAuth üzerinden yapılır; manuel login JWT cookie alır (HttpOnly, SameSite=Strict).
+
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
 
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { useCsrfToken } from '@/hooks/useCsrfToken';
 
 const translations = {
   en: {
@@ -25,6 +38,7 @@ const translations = {
     loginBtn: "Log in",
     loggingIn: "Logging in...",
     errorFill: "Please enter your email and password.",
+    errorEmailFormat: "Please enter a valid email address.",
     forgot: "Forgot password?",
     noAccount: "Don’t have an account?",
     registerHere: "Register here",
@@ -32,7 +46,8 @@ const translations = {
     googleBtn: "Sign in with Google",
     googleSignInError: "Google sign-in failed.",
     serverError: "Server error. Please try again later.",
-    setPassword: "You signed up with Google. Please log in with your google account."
+    setPassword: "You signed up with Google. Please log in with your google account.",
+    activatedBanner: "Your account has been activated! You can now log in."
   },
   tr: {
     title: "Kullanıcı Girişi",
@@ -49,6 +64,7 @@ const translations = {
     loginBtn: "Giriş Yap",
     loggingIn: "Giriş yapılıyor...",
     errorFill: "Lütfen e-posta ve şifrenizi girin.",
+    errorEmailFormat: "Lütfen geçerli bir e-posta adresi girin.",
     forgot: "Şifreni mi unuttun?",
     noAccount: "Hesabın yok mu?",
     registerHere: "Buradan kaydol",
@@ -56,23 +72,42 @@ const translations = {
     googleBtn: "Google ile giriş yap",
     googleSignInError: "Google ile giriş başarısız oldu.",
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
-    setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap."
+    setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap.",
+    activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz."
   }
 };
 
 export default function Page() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
   const csrfToken = useCsrfToken();
 
-  const [email, setEmail] = useState('');
+  const t = useMemo(() => {
+    const lang = locale === 'tr' ? 'tr' : 'en';
+    return (key) => translations[lang][key] ?? key;
+  }, [locale]);
+
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const [justActivated, setJustActivated] = useState(false);
 
+  // Aktivasyon sonrası banner: /login?activated=1
+  useEffect(() => {
+    if (searchParams?.get('activated') === '1') {
+      setJustActivated(true);
+      // URL'i temizleyelim (güzel görünüm)
+      const url = new URL(window.location.href);
+      url.searchParams.delete('activated');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [searchParams]);
+
   if (!ready) return null;
-  const t = (key) => translations[locale][key] || key;
+
+  const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -80,6 +115,11 @@ export default function Page() {
       setError(t('errorFill'));
       return;
     }
+    if (!validateEmail(email)) {
+      setError(t('errorEmailFormat'));
+      return;
+    }
+
     setError('');
     setLoading(true);
     try {
@@ -90,20 +130,28 @@ export default function Page() {
           'x-csrf-token': csrfToken || '',
           'accept-language': locale || 'en'
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+        credentials: 'include'
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data?.success) {
         router.push('/dashboard');
       } else {
+        // Backend'den gelen mesajı önceliklendirelim
+        const msg = data?.message;
+
+        // Google ile kayıt mesajını kullanıcı dilinde göster
         if (
-          data.message === t('setPassword') ||
-          data.message === translations.tr.setPassword ||
-          data.message === translations.en.setPassword
+          msg === translations.en.setPassword ||
+          msg === translations.tr.setPassword
         ) {
           setError(t('setPassword'));
+        } else if (typeof msg === 'string' && msg.length > 0) {
+          setError(msg);
         } else {
-          setError(data.message || t('errorFill'));
+          setError(t('serverError'));
         }
       }
     } catch {
@@ -117,11 +165,12 @@ export default function Page() {
     setLoading(true);
     setError('');
     try {
-      await signIn("google", { callbackUrl: "/dashboard" }); // doğrudan dashboard
+      await signIn('google', { callbackUrl: '/dashboard' });
     } catch {
       setError(t('googleSignInError'));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -144,7 +193,7 @@ export default function Page() {
             <div className="text-gray-400 text-sm mb-2">
               {t('faq')}
               <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-                {locale === "tr" ? "SSS" : "FAQ"}
+                {locale === 'tr' ? 'SSS' : 'FAQ'}
               </Link>
             </div>
           </div>
@@ -155,16 +204,19 @@ export default function Page() {
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
             {t('title')}
           </h3>
+
           {justActivated && (
-            <div className="text-green-400 text-base text-center mb-2">
-              {locale === "tr"
-                ? "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz."
-                : "Your account has been activated! You can now log in."}
+            <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
+              {t('activatedBanner')}
             </div>
           )}
-          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
+
+          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" noValidate>
+            <label className="sr-only" htmlFor="email">{t('emailPlaceholder')}</label>
             <input
+              id="email"
               type="email"
+              inputMode="email"
               placeholder={t('emailPlaceholder')}
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -173,8 +225,12 @@ export default function Page() {
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
               spellCheck="false"
+              aria-invalid={!!error && !email}
             />
+
+            <label className="sr-only" htmlFor="password">{t('passwordPlaceholder')}</label>
             <input
+              id="password"
               type="password"
               placeholder={t('passwordPlaceholder')}
               value={password}
@@ -184,6 +240,7 @@ export default function Page() {
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
               spellCheck="false"
+              aria-invalid={!!error && !password}
             />
 
             <div className="flex items-center justify-between">
@@ -197,13 +254,16 @@ export default function Page() {
             </div>
 
             {error && (
-              <div className="text-red-500 text-base text-center">{error}</div>
+              <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
+                {error}
+              </div>
             )}
 
             <button
               type="submit"
               disabled={loading}
               className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
+              aria-busy={loading ? 'true' : 'false'}
             >
               {loading ? t('loggingIn') : t('loginBtn')}
             </button>
@@ -219,9 +279,10 @@ export default function Page() {
               onClick={handleGoogleLogin}
               disabled={loading}
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full"
+              aria-label={t('googleBtn')}
             >
-              {/* Google Icon */}
-              <span className="w-6 h-6 mr-1 inline-block align-middle">
+              {/* Google Icon (inline svg) */}
+              <span className="w-6 h-6 mr-1 inline-block align-middle" aria-hidden="true">
                 <svg width="24" height="24" viewBox="0 0 48 48">
                   <g>
                     <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..." />
@@ -236,7 +297,7 @@ export default function Page() {
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
-            {t('noAccount')}{" "}
+            {t('noAccount')}{' '}
             <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t('registerHere')}
             </Link>

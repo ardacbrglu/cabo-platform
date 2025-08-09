@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from 'lucide-react';
 import { useUser } from '@/context/UserContext';
@@ -52,6 +54,8 @@ function getDeviceType(userAgent = "") {
 }
 
 export default function Dashboard() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [stats, setStats] = useState({
     totalClicks: 0,
     totalSales: 0,
@@ -77,13 +81,27 @@ export default function Dashboard() {
   const { setUser } = useUser();
   const t = useTranslation();
 
+  // Auth kontrolü
   useEffect(() => {
+    if (status === "loading") return;
+    if (!session) {
+      router.push("/login");
+      return;
+    }
+    if (session.user?.role !== "affiliate") {
+      router.push("/unauthorized");
+      return;
+    }
+  }, [session, status, router]);
+
+  useEffect(() => {
+    if (!session) return;
     let interval;
     const fetchStats = async () => {
       const res = await fetch('/api/dashboard');
       const data = await res.json();
       if (data.error) {
-        window.location.href = "/login";
+        router.push("/login");
         return;
       }
       let fixedLastClick = data.lastClick;
@@ -112,7 +130,7 @@ export default function Dashboard() {
     fetchStats();
     interval = setInterval(fetchStats, 8000);
     return () => clearInterval(interval);
-  }, [setUser]);
+  }, [session, setUser, router]);
 
   const {
     totalClicks, totalSales, totalEarnings, balance, minPayout, platformCommission,
@@ -136,7 +154,6 @@ export default function Dashboard() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- FİX: Banka warning mobilde nav ile çakışmasın, sticky yapsın ---
   const BankWarningBar = (
     !loading && (ibanMissing || bankMissing || realNameMissing) && (
       <div
@@ -162,7 +179,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <main className="flex flex-col items-center w-full max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-4 overflow-x-hidden">
+            <main className="flex flex-col items-center w-full max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-4 overflow-x-hidden">
         {/* Banka uyarı barı (mobilde sticky, desktopta normal) */}
         {BankWarningBar}
 

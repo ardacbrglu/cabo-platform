@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useLocale } from '@/context/LocaleContext';
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { signIn } from 'next-auth/react';
 
 import PublicLayout from '@/components/PublicLayout';
 
@@ -64,7 +64,6 @@ const translations = {
 export default function MerchantLoginPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const csrfToken = useCsrfToken();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -88,25 +87,21 @@ export default function MerchantLoginPage() {
     }
     setError('');
     setLoading(true);
-    try {
-      const res = await fetch('/api/merchant_login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken || ''
-        },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        router.push('/merchant/dashboard');
-      } else {
-        setError(data.message || t('errorFill'));
-      }
-    } catch (err) {
-      setError('Server error. Please try again later.');
-    } finally {
+
+    // NextAuth üzerinden merchant login
+    const res = await signIn('credentials', {
+      redirect: false,
+      email,
+      password,
+      loginType: 'merchant',
+      callbackUrl: '/merchant/dashboard'
+    });
+
+    if (res?.error) {
+      setError(t('errorFill')); // İstersen backend’den gelen mesajı gösterebiliriz
       setLoading(false);
+    } else {
+      router.push('/merchant/dashboard');
     }
   };
 
@@ -158,7 +153,6 @@ export default function MerchantLoginPage() {
             {t('title')}
           </h3>
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
-            
             <input
               type="email"
               placeholder={t('emailPlaceholder')}
@@ -201,7 +195,6 @@ export default function MerchantLoginPage() {
             >
               {loading ? t('loggingIn') : t('loginBtn')}
             </button>
-
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
