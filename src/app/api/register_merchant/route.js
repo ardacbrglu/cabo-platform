@@ -5,13 +5,22 @@ import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { NextResponse } from "next/server";
+import { z } from "zod";
+
+/**
+ * SECURITY NOTES
+ * - CSRF: withCsrfProtection wrapper kullanılıyor.
+ * - Rate limit: IP bazlı 5/dk.
+ * - Captcha: Google reCAPTCHA siteverify. Token'ı hem header (x-recaptcha-token) hem body.captcha'dan kabul eder.
+ * - Validation: Zod ile sıkı şema, temizleme/normalize işlemleri.
+ * - Role: client’tan rol alınmaz; server "merchant" yazar.
+ * - Status: yeni merchant "pending" olarak oluşturulur (admin onayı gerekir).
+ */
 
 const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const nameRegex = /^[a-zA-Z0-9_ ]{3,40}$/;
-const phoneRegex = /^\+?\d{10,15}$/;
-
+// i18n mesajları
 const messages = {
   en: {
     ratelimit: "Too many requests. Please wait and try again.",
@@ -21,11 +30,11 @@ const messages = {
     username: "Name must be 3-40 chars, only letters, numbers, spaces, and _.",
     password: "Password must be at least 8 chars and contain both letters and numbers.",
     phone: "Invalid phone number.",
-    uniq: "A merchant account with this email already exists.",
+    uniq: "An account with this email already exists.",
     terms: "You must accept the Terms and Privacy Policy.",
     captcha: "Captcha verification failed. Please try again.",
     success: "Merchant registration successful. Your account is pending approval.",
-    fail: "Registration failed. Please try again."
+    fail: "Registration failed. Please try again.",
   },
   tr: {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
@@ -35,156 +44,163 @@ const messages = {
     username: "İsim 3-40 karakter, harf/rakam/boşluk/_ içerebilir.",
     password: "Şifre en az 8 karakter ve hem harf hem rakam içermeli.",
     phone: "Geçersiz telefon numarası.",
-    uniq: "Bu e-posta ile daha önce satıcı kaydı yapılmış.",
+    uniq: "Bu e‑posta ile bir hesap zaten var.",
     terms: "Kullanım ve gizlilik şartlarını kabul etmelisiniz.",
     captcha: "Doğrulama başarısız oldu. Lütfen tekrar deneyin.",
-    success: "Satıcı kaydınız başarılı. Hesabınız onay bekliyor.",
-    fail: "Kayıt başarısız. Lütfen tekrar deneyin."
-  }
+    success: "Satıcı kaydı başarılı. Hesabınız onay bekliyor.",
+    fail: "Kayıt başarısız. Lütfen tekrar deneyin.",
+  },
 };
 
-export const POST = withCsrfProtection(async (req) => {
-  // Locale
+// Zod şemaları
+const RegisterSchema = z.object({
+  name: z
+    .string()
+    .min(3)
+    .max(40)
+    // Unicode harfler de dahil (Türkçe karakterler) + rakam + boşluk + _
+    .regex(/^[\p{L}\p{N}_ ]+$/u),
+  email: z.string().email(),
+  password: z
+    .string()
+    .min(8)
+    .refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
+  phoneNumber: z.string().regex(/^\+?\d{10,15}$/),
+  termsAccepted: z.literal(true),
+});
+
+function localeFrom(req) {
   const lang = req.headers.get("accept-language")?.split(",")[0] || "en";
-  const locale = lang && lang.startsWith("tr") ? "tr" : "en";
+  return lang && lang.startsWith("tr") ? "tr" : "en";
+}
+
+async function verifyRecaptcha(req, token) {
+  if (!token || !RECAPTCHA_SECRET_KEY) return false;
+  try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0] ||
+      req.headers.get("x-real-ip") ||
+      undefined;
+    const params = new URLSearchParams();
+    params.set("secret", RECAPTCHA_SECRET_KEY);
+    params.set("response", token);
+    if (ip) params.set("remoteip", ip);
+
+    const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    const json = await res.json().catch(() => ({}));
+    return !!json?.success;
+  } catch {
+    return false;
+  }
+}
+
+export const POST = withCsrfProtection(async (req) => {
+  const locale = localeFrom(req);
   const msg = messages[locale];
 
   // Rate limit (IP bazlı 5/dk)
   const rlKey = makeRateLimitKey(req, { scope: "register_merchant" });
-  const { ok } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+  const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
   if (!ok) {
-    return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
+    return new NextResponse(JSON.stringify({ success: false, message: msg.ratelimit }), {
       status: 429,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(Math.ceil((resetMs || 0) / 1000)),
+      },
     });
   }
 
-  // Body
-  let body;
+  // Body parse
+  let raw;
   try {
-    body = await req.json();
+    raw = await req.json();
   } catch {
-    return new Response(JSON.stringify({ success: false, message: msg.required }), {
+    return new NextResponse(JSON.stringify({ success: false, message: msg.required }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  const {
-    name,
-    email,
-    password,
-    phoneNumber,
-    // role,  // güvenlik: rolü client'tan almayacağız
-    termsAccepted,
-    captcha, // reCAPTCHA token
-  } = body || {};
-
-  // Terms kontrolü
-  if (!termsAccepted) {
-    return new Response(JSON.stringify({ success: false, message: msg.terms }), {
+  // Captcha token: header veya body.captcha
+  const captchaToken =
+    req.headers.get("x-recaptcha-token") ||
+    req.headers.get("x-recaptcha") ||
+    raw?.captcha ||
+    null;
+  const captchaOk = await verifyRecaptcha(req, captchaToken);
+  if (!captchaOk) {
+    return new NextResponse(JSON.stringify({ success: false, message: msg.captcha }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  // Zorunlu alanlar
-  if (!name || !email || !password || !phoneNumber) {
-    return new Response(JSON.stringify({ success: false, message: msg.required }), {
+  // Clean + Validate
+  const data = {
+    name: String(raw?.name ?? "").trim(),
+    email: String(raw?.email ?? "").trim().toLowerCase(),
+    password: String(raw?.password ?? ""),
+    phoneNumber: String(raw?.phoneNumber ?? "").trim(),
+    termsAccepted: !!raw?.termsAccepted,
+  };
+
+  const parsed = RegisterSchema.safeParse(data);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => i.path[0]);
+    const field = issues[0];
+    const fieldMsg =
+      field === "email"
+        ? msg.email
+        : field === "name"
+        ? msg.username
+        : field === "password"
+        ? msg.password
+        : field === "phoneNumber"
+        ? msg.phone
+        : msg.required;
+
+    return new NextResponse(JSON.stringify({ success: false, message: fieldMsg }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  // CAPTCHA doğrulama
-  if (!captcha || !RECAPTCHA_SECRET_KEY) {
-    return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  try {
-    const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body:
-        `secret=${encodeURIComponent(RECAPTCHA_SECRET_KEY)}` +
-        `&response=${encodeURIComponent(captcha)}`,
-    });
-    const captchaRes = await res.json();
-    if (!captchaRes?.success) {
-      return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  } catch {
-    return new Response(JSON.stringify({ success: false, message: msg.captcha }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const { name, email, password, phoneNumber } = parsed.data;
 
-  // Validation
-  const cleanEmail = String(email).trim().toLowerCase();
-  const cleanName = String(name).trim();
-  const cleanPhone = String(phoneNumber).trim();
-  const pw = String(password);
-
-  if (!emailRegex.test(cleanEmail)) {
-    return new Response(JSON.stringify({ success: false, message: msg.email }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  if (!nameRegex.test(cleanName)) {
-    return new Response(JSON.stringify({ success: false, message: msg.username }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) {
-    return new Response(JSON.stringify({ success: false, message: msg.password }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  if (!phoneRegex.test(cleanPhone)) {
-    return new Response(JSON.stringify({ success: false, message: msg.phone }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // Duplicate (aynı email ile zaten merchant var mı?)
-  const existing = await prisma.user.findFirst({
-    where: { email: cleanEmail, role: "merchant" },
+  // Email tekilliği: aynı e‑posta ile herhangi bir kullanıcı var mı?
+  const existing = await prisma.user.findUnique({
+    where: { email }, // email alanı DB’de UNIQUE olmalı
     select: { id: true },
   });
   if (existing) {
-    return new Response(JSON.stringify({ success: false, message: msg.uniq }), {
+    return new NextResponse(JSON.stringify({ success: false, message: msg.uniq }), {
       status: 409,
       headers: { "Content-Type": "application/json" },
     });
   }
 
   // Hash
-  const passwordHash = await bcrypt.hash(pw, 10);
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  // Create (rolü server zorlar: "merchant")
+  // Oluştur
   await prisma.user.create({
     data: {
-      name: cleanName,
-      email: cleanEmail,
+      name,
+      email,
       passwordHash,
-      phoneNumber: cleanPhone,
+      phoneNumber,
       role: "merchant",
-      status: "pending",
-      termsAccepted: !!termsAccepted,
+      status: "pending", // admin onayı şart
+      termsAccepted: true,
     },
   });
 
-  return new Response(JSON.stringify({ success: true, message: msg.success }), {
+  return new NextResponse(JSON.stringify({ success: true, message: msg.success }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

@@ -8,14 +8,16 @@ import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { z } from "zod";
 
-// Body şeması
+// Body şeması (sayfalama opsiyonel)
 const bodySchema = z.object({
   requestId: z.number().int().positive(),
+  page: z.number().int().positive().optional(),
+  pageSize: z.number().int().positive().max(100).optional(), // üst sınır
 });
 
 export const POST = withCsrfProtection(async (req) => {
   try {
-    // 1) Auth (NextAuth session)
+    // 1) Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
     if (!userId) {
@@ -44,6 +46,8 @@ export const POST = withCsrfProtection(async (req) => {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
     const { requestId } = parsed.data;
+    const page = parsed.data.page ?? 1;
+    const pageSize = parsed.data.pageSize ?? 10;
 
     // 4) Payout request kontrol (sadece sahibine göster)
     const payoutReq = await prisma.payoutRequest.findUnique({
@@ -65,11 +69,11 @@ export const POST = withCsrfProtection(async (req) => {
     });
 
     if (!payoutReq || payoutReq.userId !== userId) {
-      // Var/yok ayrımı sızdırmamak adına generic dönüş
+      // Var/yok ayrımı sızdırmamak için generic hata
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
-    // 5) İlgili item’ların sales ID’leri
+    // 5) İlgili item’ların satış ID’leri
     const items = await prisma.payoutRequestItem.findMany({
       where: { requestId },
       select: { sourceSaleIds: true },
@@ -83,15 +87,29 @@ export const POST = withCsrfProtection(async (req) => {
       )
       .filter((n) => Number.isInteger(n) && n > 0);
 
-    // 6) Satışları çek (sadece bu kullanıcının satışları)
-    const sales = saleIds.length
-      ? await prisma.affiliateUserSale.findMany({
-          where: { saleId: { in: saleIds }, userId: userId },
-          include: { merchantProduct: { select: { name: true } } },
-        })
-      : [];
+    // 6) Satışları çek + sayfalama
+    let totalSales = 0;
+    let sales = [];
+    if (saleIds.length) {
+      // total count
+      totalSales = await prisma.affiliateUserSale.count({
+        where: { saleId: { in: saleIds }, userId },
+      });
 
-    // 7) Response
+      // sayfalı fetch
+      const skip = (page - 1) * pageSize;
+      sales = await prisma.affiliateUserSale.findMany({
+        where: { saleId: { in: saleIds }, userId },
+        include: { merchantProduct: { select: { name: true } } },
+        orderBy: { saleId: "desc" },
+        skip,
+        take: pageSize,
+      });
+    }
+
+    const totalPages = Math.max(1, Math.ceil(totalSales / pageSize));
+
+    // 7) Response (frontend’in beklediği isimlerle)
     return NextResponse.json(
       {
         sales: sales.map((sale) => ({
@@ -106,16 +124,19 @@ export const POST = withCsrfProtection(async (req) => {
             : "",
         })),
         status: payoutReq.status,
-        request_date: payoutReq.requestedAt ? payoutReq.requestedAt.toISOString() : "",
-        paid_at: payoutReq.paidAt || null,
+        date: payoutReq.requestedAt ? payoutReq.requestedAt.toISOString() : "",
+        paid_at: payoutReq.paidAt ? payoutReq.paidAt.toISOString() : null,
         rejectedReason: payoutReq.rejectedReason || null,
-        updatedAt: payoutReq.updatedAt || null,
+        updatedAt: payoutReq.updatedAt ? payoutReq.updatedAt.toISOString() : null,
         total: Number(payoutReq.amountTotal),
         iban: payoutReq.iban || "",
         bankName: payoutReq.bankName || "",
-        realUserFullname: payoutReq.realUserFullname || "",
-        platformPaid: payoutReq.platformPaid ?? false,
-        platformPaidAt: payoutReq.platformPaidAt || null,
+        realName: payoutReq.realUserFullname || "",
+        platform_paid: Boolean(payoutReq.platformPaid),
+        platformPaidAt: payoutReq.platformPaidAt ? payoutReq.platformPaidAt.toISOString() : null,
+        page,
+        pageSize,
+        totalPages,
       },
       {
         headers: {
