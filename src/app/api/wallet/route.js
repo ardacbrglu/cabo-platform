@@ -1,238 +1,313 @@
-//src\app\api\wallet
+// src/app/api/wallet/route.js
 export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
-import { checkRateLimit } from "@/lib/ratelimit";
-import { validatecsrf_token } from "@/lib/csrf";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { z } from "zod";
 
-// SECURITY REVIEW: This route uses validatecsrf_token for CSRF protection. Ensure the CSRF secret is strong and not default. Consider per-session/user tokens for higher security.
-// SECURITY REVIEW: This API handles wallet and payout logic. See comments below for security notes.
+/**
+ * SECURITY NOTES
+ * - Auth: NextAuth session (custom JWT/cookie yok).
+ * - CSRF: POST için header (x-csrf-token | csrf-token) + cookie(csrf_token) eşleşmesi zorunlu.
+ * - Rate limit: userId bazlı (GET: 30/dk, POST: 10/dk).
+ * - Validation: Zod ile sıkı şema ve sanitize (trim/uppercase).
+ * - Payout istekleri transaction içinde.
+ */
 
 function isValidIbanTR(iban) {
-  return typeof iban === "string" && iban.startsWith("TR") && iban.length === 26;
+  return typeof iban === "string" && /^TR\d{24}$/.test(iban.toUpperCase().replace(/\s+/g, ""));
 }
 
-async function getUserIdSafe(req) {
-  const token = getTokenFromRequest(req);
-  const payload = token ? verifyToken(token) : null;
-  if (!payload?.userId) return null;
-  // WARNING: Always validate and sanitize userId from token. Never trust user input for sensitive queries.
-  await checkRateLimit(req, payload.userId, 40, "5m", "wallet-api");
-  // NOTE: Rate limiting is per user. Consider additional device/IP-based limits for abuse prevention.
-  return payload.userId;
+function cleanBankName(s) {
+  return String(s || "").trim().slice(0, 120);
+}
+
+function cleanRealName(s) {
+  return String(s || "").trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
+const BankInfoSchema = z.object({
+  iban: z.string().min(26).max(34),
+  bankName: z.string().min(1).max(120),
+  realName: z.string().min(1).max(120),
+});
+
+const PayoutCreateSchema = z.object({
+  requestPayout: z.literal(true),
+});
+
+const PayoutCancelSchema = z.object({
+  cancelRequest: z.literal(true),
+  requestId: z.number().int().positive(),
+});
+
+const PostBodySchema = z.union([BankInfoSchema, PayoutCreateSchema, PayoutCancelSchema]);
+
+async function getAuthedUserId(req) {
+  const session = await getServerSession(authOptions);
+  const rawId = session?.user?.id;
+  const userId = Number(rawId);
+  if (!rawId || !Number.isFinite(userId)) return null;
+
+  // user scoped rate-limit key helper
+  const rlKey = makeRateLimitKey(req, { scope: "wallet", userId });
+  return { userId, rlKey };
+}
+
+async function getMinPayout() {
+  const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
+  const v = cfg ? Number(cfg.value) : NaN;
+  return Number.isFinite(v) ? v : 100; // varsayılan 100₺
 }
 
 export async function GET(req) {
-  // WARNING: Ensure only authenticated users can access wallet data. Never expose sensitive info to unauthorized users.
   try {
-    const userId = await getUserIdSafe(req);
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Auth
+    const info = await getAuthedUserId(req);
+    if (!info) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId, rlKey } = info;
 
-    // Minimum payout (platformConfig)
-    const config = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
-    const minPayout = config ? Number(config.value) : 100;
-    // NOTE: Only expose non-sensitive config to users.
+    // Rate limit (GET 30/dk)
+    const rl = await checkRateLimit({ key: `${rlKey}:GET`, limit: 30, windowMs: 60_000 });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      );
+    }
 
+    const minPayout = await getMinPayout();
+
+    // Kullanıcının sahip olduğu ürünler
     const links = await prisma.affiliateLink.findMany({
-      where: { userId: userId },
-      select: { productId: true }
+      where: { userId },
+      select: { productId: true },
     });
-    const productIds = links.map(l => l.productId);
+    const productIds = links.map((l) => l.productId);
 
-    // pending veya approved payout request var mı?
+    // Mevcut bekleyen/approved payout var mı?
     const pendingRequest = await prisma.payoutRequest.findFirst({
-      where: { userId: userId, status: { in: ["pending", "approved"] } }
+      where: { userId, status: { in: ["pending", "approved"] } },
     });
 
     let pendingAmount = 0;
     if (pendingRequest) pendingAmount = Number(pendingRequest.amountTotal || 0);
 
-    // payout'a bağlı olmayan (henüz çekilmemiş) confirmed satışlar
+    // confirmed & henüz payout'a bağlanmamış satışlar
     const confirmedSales = await prisma.affiliateUserSale.findMany({
       where: {
-        userId: userId,
+        userId,
         status: "confirmed",
         payoutItemId: null,
-        productId: { in: productIds }
-      }
+        productId: { in: productIds },
+      },
     });
     const confirmed = confirmedSales.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
 
-    // payout'a bağlı olmayan pending satışlar
+    // pending & henüz payout'a bağlanmamış satışlar
     const pendingSales = await prisma.affiliateUserSale.findMany({
       where: {
-        userId: userId,
+        userId,
         status: "pending",
         payoutItemId: null,
-        productId: { in: productIds }
-      }
+        productId: { in: productIds },
+      },
     });
     const pending = pendingSales.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
 
     const balance = confirmed + pending;
 
-    // Kullanıcı banka/ad bilgisi
+    // Kullanıcı bank/ad bilgisi
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { iban: true, bankName: true, realUserFullname: true }
+      select: { iban: true, bankName: true, realUserFullname: true },
     });
-    // WARNING: Only select fields that are safe to expose. Never return sensitive data (passwords, tokens, etc).
+
     const iban = user?.iban || "";
     const bankName = user?.bankName || "";
     const realName = user?.realUserFullname || "";
 
-    const ibanMissing = !iban || iban.length !== 26 || !iban.startsWith("TR");
-    const bankMissing = !bankName || !bankName.trim();
-    const realNameMissing = !realName || realName.trim().split(" ").length < 2;
+    const ibanMissing = !isValidIbanTR(iban);
+    const bankMissing = !cleanBankName(bankName);
+    const realNameMissing = cleanRealName(realName).split(" ").length < 2;
 
-    // payout history
+    // payout history (kullanıcıya görünür kısım)
     const history = await prisma.payoutRequest.findMany({
-      where: { userId: userId },
+      where: { userId },
       orderBy: { requestedAt: "desc" },
-      take: 100
+      take: 100,
     });
 
-    return NextResponse.json({
-      balance,
-      confirmed,
-      pending,
-      minPayout,
-      iban,
-      bankName,
-      realName,
-      ibanMissing,
-      bankMissing,
-      realNameMissing,
-      hasPendingRequest: !!pendingRequest,
-      pendingAmount,
-      history: history.map(item => ({
-        requestId: item.requestId,
-        date: item.requestedAt?.toISOString().slice(0, 10) || "",
-        amount: Number(item.amountTotal),
-        status: item.status,
-        method: "IBAN",
-        bankName: item.bankName || "",
-        iban: item.iban || "",
-        realName: item.realUserFullname || "",
-        platform_paid: !!item.platformPaid,
-        platformPaidAt: item.platformPaidAt,
-        paid_at: item.paidAt,
-        rejectedReason: item.rejectedReason,
-        updatedAt: item.updatedAt,
-      }))
-    });
-    // NOTE: Only expose non-sensitive payout history. Never include internal notes or admin-only data.
+    return NextResponse.json(
+      {
+        balance,
+        confirmed,
+        pending,
+        minPayout,
+        iban,
+        bankName,
+        realName,
+        ibanMissing,
+        bankMissing,
+        realNameMissing,
+        hasPendingRequest: !!pendingRequest,
+        pendingAmount,
+        history: history.map((item) => ({
+          requestId: item.requestId,
+          date: item.requestedAt?.toISOString().slice(0, 10) || "",
+          amount: Number(item.amountTotal),
+          status: item.status,
+          method: "IBAN",
+          bankName: item.bankName || "",
+          iban: item.iban || "",
+          realName: item.realUserFullname || "",
+          platform_paid: !!item.platformPaid,
+          platformPaidAt: item.platformPaidAt,
+          paid_at: item.paidAt,
+          rejectedReason: item.rejectedReason,
+          updatedAt: item.updatedAt,
+        })),
+      },
+      { headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
+    );
   } catch (err) {
     console.error("Wallet API GET error:", err);
-    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
-    return NextResponse.json({ error: err.message || "Server error" }, { status: 500 });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
 export async function POST(req) {
-  // WARNING: Ensure only authenticated users can modify wallet data. Validate all input fields strictly.
   try {
-    const userId = await getUserIdSafe(req);
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // CSRF (mutating)
+    validateCsrfToken(req);
 
-    await validatecsrf_token(req);
-    // SECURITY REVIEW: CSRF protection is enabled for this sensitive endpoint. Keep this for all state-changing wallet operations.
-    // NOTE: CSRF protection is enabled. Always keep this active for sensitive endpoints.
+    // Auth
+    const info = await getAuthedUserId(req);
+    if (!info) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId, rlKey } = info;
 
-    const body = await req.json();
-    // WARNING: No input sanitization beyond basic checks. Consider using a library to sanitize all user input to prevent injection attacks.
+    // Rate limit (POST 10/dk)
+    const rl = await checkRateLimit({ key: `${rlKey}:POST`, limit: 10, windowMs: 60_000 });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      );
+    }
 
-    const config = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
-    const minPayout = config ? Number(config.value) : 100;
+    // Body + Zod
+    const raw = await req.json().catch(() => ({}));
+    const parsed = PostBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    }
+    const body = parsed.data;
 
-    // IBAN/banka/ad güncelleme
-    if (body.iban && body.bankName && body.realName) {
-      // WARNING: IBAN, bank name, and real name are user-controlled. Validate and sanitize before saving to DB.
-      if (!isValidIbanTR(body.iban)) {
-        return NextResponse.json({ error: "Invalid IBAN. Only 26-character Turkish IBAN starting with TR is allowed." }, { status: 400 });
+    const minPayout = await getMinPayout();
+
+    // ---- IBAN/Bank/Real Name güncelleme ----
+    if ("iban" in body && "bankName" in body && "realName" in body) {
+      const iban = body.iban.toUpperCase().replace(/\s+/g, "");
+      const bankName = cleanBankName(body.bankName);
+      const realName = cleanRealName(body.realName);
+
+      if (!isValidIbanTR(iban)) {
+        return NextResponse.json(
+          { error: "Invalid IBAN. Only 26-character Turkish IBAN starting with TR is allowed." },
+          { status: 400 }
+        );
       }
-      if (!body.bankName.trim()) {
+      if (!bankName) {
         return NextResponse.json({ error: "Bank name is required." }, { status: 400 });
       }
-      if (!body.realName.trim() || body.realName.trim().split(' ').length < 2) {
+      if (!realName || realName.split(" ").length < 2) {
         return NextResponse.json({ error: "Full legal name is required." }, { status: 400 });
       }
+
       await prisma.user.update({
         where: { id: userId },
         data: {
-          iban: body.iban,
-          bankName: body.bankName,
-          realUserFullname: body.realName
-        }
+          iban,
+          bankName,
+          realUserFullname: realName,
+        },
       });
-      // NOTE: Consider logging changes to sensitive user data for audit purposes.
+
       return NextResponse.json({ ok: true, message: "Bank info saved" });
     }
 
-    if ((body.iban && !body.realName) || (body.bankName && !body.realName)) {
-      // NOTE: Always require full legal name for financial operations.
-      return NextResponse.json({ error: "Full legal name is required." }, { status: 400 });
-    }
-
-    // Payout request başlat
-    if (body.requestPayout) {
-      // WARNING: Payout requests are sensitive. Ensure all business rules are enforced and log actions for auditing.
+    // ---- Payout request oluştur ----
+    if ("requestPayout" in body && body.requestPayout === true) {
+      // Aktif pending/approved var mı?
       const activeRequest = await prisma.payoutRequest.findFirst({
-        where: { userId: userId, status: { in: ["pending", "approved"] } }
+        where: { userId, status: { in: ["pending", "approved"] } },
       });
       if (activeRequest) {
-        return NextResponse.json({ error: "You already have a pending payout request. Wait for it to be processed." }, { status: 400 });
+        return NextResponse.json(
+          { error: "You already have a pending payout request. Wait for it to be processed." },
+          { status: 400 }
+        );
       }
 
-      // Kullanıcı banka & ad snapshot'ı
+      // Snapshot için kullanıcı bilgisi
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { iban: true, bankName: true, realUserFullname: true }
+        select: { iban: true, bankName: true, realUserFullname: true },
       });
-      // WARNING: Always use a snapshot of user bank info at the time of payout request. Never trust client-side data for payouts.
-      if (!user?.iban || !isValidIbanTR(user.iban)) {
+      const iban = user?.iban || "";
+      const bankName = user?.bankName || "";
+      const realName = user?.realUserFullname || "";
+
+      if (!isValidIbanTR(iban)) {
         return NextResponse.json({ error: "Please save a valid IBAN first." }, { status: 400 });
       }
-      if (!user?.bankName || !user.bankName.trim()) {
+      if (!cleanBankName(bankName)) {
         return NextResponse.json({ error: "Please save your bank name first." }, { status: 400 });
       }
-      if (!user?.realUserFullname || user.realUserFullname.trim().split(' ').length < 2) {
+      if (cleanRealName(realName).split(" ").length < 2) {
         return NextResponse.json({ error: "Please save your full real name first." }, { status: 400 });
       }
 
+      // Kullanıcının sahip olduğu ürünler
       const links = await prisma.affiliateLink.findMany({
-        where: { userId: userId },
-        select: { productId: true }
+        where: { userId },
+        select: { productId: true },
       });
-      const productIds = links.map(l => l.productId);
+      const productIds = links.map((l) => l.productId);
 
+      // Payout'a bağlanmamış confirmed satışlar
       const sales = await prisma.affiliateUserSale.findMany({
         where: {
-          userId: userId,
+          userId,
           status: "confirmed",
           payoutItemId: null,
-          productId: { in: productIds }
-        }
+          productId: { in: productIds },
+        },
       });
       const amount = sales.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
 
       if (amount < minPayout) {
-        return NextResponse.json({ error: `Minimum payout is ${minPayout}₺. You do not have enough balance.` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Minimum payout is ${minPayout}₺. You do not have enough balance.` },
+          { status: 400 }
+        );
       }
 
       return await prisma.$transaction(async (tx) => {
-        // NOTE: All payout operations are wrapped in a DB transaction. Good practice for consistency.
         const payoutReq = await tx.payoutRequest.create({
           data: {
-            userId: userId,
+            userId,
             amountTotal: amount,
             status: "pending",
-            bankName: user.bankName,
-            iban: user.iban,
-            realUserFullname: user.realUserFullname,
-            platformPaid: false
-          }
+            bankName,
+            iban,
+            realUserFullname: realName,
+            platformPaid: false,
+          },
         });
 
         for (const sale of sales) {
@@ -242,88 +317,102 @@ export async function POST(req) {
               merchantId: sale.merchantId,
               productId: sale.productId,
               amount: sale.commissionAffiliate,
-              sourceSaleIds: sale.saleId.toString(),
-            }
+              sourceSaleIds: String(sale.saleId),
+            },
           });
+
           await tx.affiliateUserSale.update({
             where: { saleId: sale.saleId },
-            data: { payoutItemId: payoutItem.itemId }
+            data: { payoutItemId: payoutItem.itemId },
           });
         }
 
         await tx.payoutRequestLog.create({
           data: {
             requestId: payoutReq.requestId,
-            userId: userId,
+            userId,
             action: "create",
             newStatus: "pending",
-            note: `Payout request created. Amount: ${amount}`
-          }
+            note: `Payout request created. Amount: ${amount}`,
+          },
         });
 
         return NextResponse.json({ ok: true, message: "Payout request created" });
       });
     }
 
-    // CANCEL REQUEST
-    if (body.cancelRequest && body.requestId) {
-      // WARNING: Only allow users to cancel their own pending payout requests. Validate request ownership and status.
+    // ---- Payout request iptal ----
+    if ("cancelRequest" in body && body.cancelRequest === true) {
+      const reqId = Number(raw.requestId);
+      if (!Number.isFinite(reqId) || reqId <= 0) {
+        return NextResponse.json({ error: "Invalid requestId" }, { status: 400 });
+      }
+
       return await prisma.$transaction(async (tx) => {
-        // NOTE: All cancel operations are wrapped in a DB transaction. Good practice for consistency.
-        const reqItem = await tx.payoutRequest.findUnique({
-          where: { requestId: body.requestId }
-        });
+        const reqItem = await tx.payoutRequest.findUnique({ where: { requestId: reqId } });
         if (!reqItem || reqItem.userId !== userId || reqItem.status !== "pending") {
           return NextResponse.json({ error: "Request not found or not cancellable." }, { status: 400 });
         }
-        const items = await tx.payoutRequestItem.findMany({
-          where: { requestId: body.requestId }
-        });
 
+        const items = await tx.payoutRequestItem.findMany({ where: { requestId: reqId } });
+
+        // 10 dk kuralı
         const now = new Date();
         const createdAt = new Date(reqItem.requestedAt);
-        if ((now - createdAt) > 10 * 60 * 1000) {
-          return NextResponse.json({
-            error: "You can only cancel a payout request within 10 minutes after creation."
-          }, { status: 400 });
+        if (now.getTime() - createdAt.getTime() > 10 * 60 * 1000) {
+          return NextResponse.json(
+            { error: "You can only cancel a payout request within 10 minutes after creation." },
+            { status: 400 }
+          );
         }
 
-        if (items.some(itm => itm.status === "merchant_paid" || itm.status === "platform_confirmed")) {
-          return NextResponse.json({
-            error: "This payout request can no longer be cancelled because the merchant has already marked it as paid. Please contact support if there is a problem."
-          }, { status: 400 });
+        // Durumu ilerlemiş item varsa iptal etme
+        if (items.some((itm) => itm.status === "merchant_paid" || itm.status === "platform_confirmed")) {
+          return NextResponse.json(
+            {
+              error:
+                "This payout request can no longer be cancelled because the merchant has already marked it as paid. Please contact support if there is a problem.",
+            },
+            { status: 400 }
+          );
         }
 
+        // Satışları geri bağla
         for (const item of items) {
           if (item.sourceSaleIds) {
-            const saleIds = item.sourceSaleIds.split(',').map(id => Number(id)).filter(Boolean);
-            await tx.affiliateUserSale.updateMany({
-              where: { saleId: { in: saleIds }, userId: userId },
-              data: { payoutItemId: null }
-            });
+            const saleIds = item.sourceSaleIds
+              .split(",")
+              .map((id) => Number(id))
+              .filter((n) => Number.isFinite(n));
+            if (saleIds.length) {
+              await tx.affiliateUserSale.updateMany({
+                where: { saleId: { in: saleIds }, userId },
+                data: { payoutItemId: null },
+              });
+            }
           }
         }
-        await tx.payoutRequestItem.deleteMany({
-          where: { requestId: body.requestId }
-        });
+
+        await tx.payoutRequestItem.deleteMany({ where: { requestId: reqId } });
         await tx.payoutRequest.update({
-          where: { requestId: body.requestId },
+          where: { requestId: reqId },
           data: {
             status: "rejected",
             rejectedReason: "User cancelled request",
-            updatedAt: new Date()
-          }
+            updatedAt: new Date(),
+          },
         });
         await tx.payoutRequestLog.create({
           data: {
-            requestId: body.requestId,
-            userId: userId,
+            requestId: reqId,
+            userId,
             action: "cancel",
             oldStatus: "pending",
             newStatus: "rejected",
-            note: "User cancelled payout request"
-          }
+            note: "User cancelled payout request",
+          },
         });
+
         return NextResponse.json({ ok: true, message: "Payout request cancelled" });
       });
     }
@@ -331,7 +420,6 @@ export async function POST(req) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   } catch (err) {
     console.error("Wallet API POST error:", err);
-    // WARNING: Avoid logging sensitive user data in production logs. Consider alerting admins for repeated failures.
-    return NextResponse.json({ error: err.message || "Server error" }, { status: 500 });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

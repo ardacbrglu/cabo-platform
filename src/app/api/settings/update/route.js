@@ -1,12 +1,20 @@
-// app/api/settings/update/route.js
 export const dynamic = "force-dynamic";
-import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
-import prisma from '@/lib/prisma';
-import { validatecsrf_token } from '@/lib/csrf';
-import { checkRateLimit } from '@/lib/ratelimit';
-import { sanitizeHtml } from '@/lib/validation';
+
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/ratelimit";
+
+// Basit güvenli isim temizleyici (validation dosyan yoksa)
+function sanitizeName(input) {
+  if (typeof input !== "string") return "";
+  // HTML taglarını ve kontrol karakterlerini at
+  const noTags = input.replace(/<[^>]*>/g, "");
+  // Trim ve soft normalize
+  return noTags.trim().slice(0, 80);
+}
 
 // DİNAMİK: PlatformConfig ve Currencies
 async function getSupportedLanguages() {
@@ -16,32 +24,39 @@ async function getSupportedLanguages() {
   } catch {}
   return ["en", "tr"];
 }
+
 async function getSupportedCurrencies() {
   const currencies = await prisma.currency.findMany();
-  return currencies.map(c => c.code);
+  return currencies.map((c) => c.code);
 }
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) throw new Error("Missing JWT_SECRET");
 
 export async function POST(req) {
   try {
-    await validatecsrf_token(req);
-    const store = await cookies();
-    const token = store.get('cabo_token')?.value;
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    let payload;
-    try { payload = jwt.verify(token, JWT_SECRET); }
-    catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
-    const userId = payload.userId;
+    // 1) CSRF
+    validateCsrfToken(req);
+
+    // 2) Auth
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.id;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!checkRateLimit(`settings:update:${userId}`, 5, 60_000)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+
+    // 3) Rate limit
+    const { ok, resetMs } = await checkRateLimit({
+      key: `settings:update:u:${userId}`,
+      limit: 5,
+      windowMs: 60_000,
+    });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
+    // 4) Body + dinamik doğrulama
     const body = await req.json();
-    const { name, languagePreference, currencyCode } = body;
-    // Dinamik doğrulama:
+    const { name, languagePreference, currencyCode } = body || {};
+
     const supportedLangs = await getSupportedLanguages();
     const supportedCurrencies = await getSupportedCurrencies();
 
@@ -54,14 +69,15 @@ export async function POST(req) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
 
-    const nameClean = sanitizeHtml(name.trim());
+    const nameClean = sanitizeName(name);
+
     await prisma.user.update({
       where: { id: userId },
       data: {
         name: nameClean,
         languagePreference,
-        currencyCode
-      }
+        currencyCode,
+      },
     });
 
     return NextResponse.json({ success: true });
