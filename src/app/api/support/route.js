@@ -5,19 +5,10 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
-import { validateCsrfToken } from "@/lib/csrf";
-import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { withCsrfProtection } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey, logApiEvent } from "@/lib/ratelimit";
 import { z } from "zod";
 
-/**
- * SECURITY NOTES
- * - Auth: NextAuth session (custom JWT cookie yok)
- * - CSRF: Header (x-csrf-token | csrf-token) + Cookie (csrf_token) eşleşmesi zorunlu
- * - Rate limit: userId bazlı 5 req/dk
- * - Validation: Zod ile trim + min/max
- */
-
-// Zod şeması (trim + uzunluk kontrolü)
 const supportSchema = z.object({
   message: z
     .string()
@@ -26,40 +17,83 @@ const supportSchema = z.object({
     .max(900, "Message too long"),
 });
 
-// Basit, güvenli bir düz metin temizleyici (HTML taglarını siler)
+// Basit plaintext temizleme (HTML tag + kontrol karakterleri)
 function sanitizePlaintext(s) {
-  // HTML taglarını ve kontrol karakterlerini temizle
-  return s.replace(/<[^>]*>/g, "").replace(/[\u0000-\u001F\u007F]/g, "").trim();
+  return String(s || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim();
 }
 
-export async function POST(req) {
+// (Opsiyonel) reCAPTCHA doğrulama
+async function verifyCaptcha(req) {
+  const token = req.headers.get("x-recaptcha-token");
+  if (!token) return false;
+  const secret = process.env.RECAPTCHA_SECRET; // Enterprise/hCaptcha ise uygun secret
+  if (!secret) return true; // secret yoksa doğrulamayı pas geç (dev)
   try {
-    // 1) CSRF koruması
-    validateCsrfToken(req);
+    // Burada fetch ile Google/HCaptcha verify servisine POST atarsın.
+    // Prod'da timeout ve hata yakalama ekleyin.
+    // return resp.success === true;
+    return true; // örnek
+  } catch {
+    return false;
+  }
+}
 
-    // 2) Kimlik doğrulama (NextAuth session)
+export const POST = withCsrfProtection(async (req) => {
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0] ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  const ua = req.headers.get("user-agent") || "";
+
+  try {
+    // 0) Content-Type kontrolü
+    const ct = req.headers.get("content-type") || "";
+    if (!ct.toLowerCase().includes("application/json")) {
+      return NextResponse.json({ error: "Unsupported Media Type" }, { status: 415 });
+    }
+
+    // 1) Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 3) Rate limit (kullanıcı başına 5/dk)
+    // 2) Rate limit (5/dk kullanıcı bazlı)
     const rlKey = makeRateLimitKey(req, { scope: "support", userId });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
     if (!ok) {
+      await logApiEvent({ endpoint: "/api/support", ip, ua, event: "rate_limited" });
       return NextResponse.json(
         { error: "Too many requests" },
         { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
     }
 
-    // 4) Body parse + şema validasyonu
-    const body = await req.json().catch(() => ({}));
-    const parsed = supportSchema.parse(body);
-    const cleanMessage = sanitizePlaintext(parsed.message);
+    // 3) Body parse + validation
+    const raw = await req.json().catch(() => ({}));
+    const parsed = supportSchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    }
 
-    // 5) Kullanıcı bilgisi (gerekli alanlar)
+    // 4) Sanitize + tekrar min kontrol
+    const cleanMessage = sanitizePlaintext(parsed.data.message);
+    if (!cleanMessage || cleanMessage.length < 1) {
+      return NextResponse.json({ error: "Message is required" }, { status: 400 });
+    }
+
+    // 5) (Opsiyonel) Captcha doğrula
+    const captchaOk = await verifyCaptcha(req);
+    if (!captchaOk) {
+      await logApiEvent({ endpoint: "/api/support", ip, ua, event: "captcha_failed" });
+      return NextResponse.json({ error: "Captcha verification failed" }, { status: 400 });
+    }
+
+    // 6) Kullanıcı bilgisi
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, email: true },
@@ -68,19 +102,45 @@ export async function POST(req) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // 6) Mesajı DB'ye kaydet
+    // 7) Mesajı kaydet
     await prisma.contactMessage.create({
       data: {
-        userId, // int
+        userId,
         name: user.name || null,
         email: user.email || null,
         message: cleanMessage,
       },
     });
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    await logApiEvent({ endpoint: "/api/support", ip, ua, event: "message_created", email: user.email });
+
+    return NextResponse.json(
+      { success: true },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+          "Vary": "Cookie",
+        },
+      }
+    );
   } catch (err) {
-    // production’da generic mesaj
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    await logApiEvent({
+      endpoint: "/api/support",
+      ip,
+      ua,
+      event: "error",
+      error: err?.message?.slice(0, 200) || String(err).slice(0, 200),
+    });
+    return NextResponse.json(
+      { error: "Server error" },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store",
+          "Vary": "Cookie",
+        },
+      }
+    );
   }
-}
+});
