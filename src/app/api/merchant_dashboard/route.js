@@ -4,9 +4,8 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import crypto from "crypto";
-import { cookies } from "next/headers";
-import { csrf } from "@/lib/csrf"; // POST/PATCH için zorunlu
-import { checkRateLimit } from "@/lib/ratelimit";
+import { withCsrfProtection } from "@/lib/csrf"; // ✅ doğru wrapper
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 
@@ -26,13 +25,14 @@ function isValidUrl(url) {
 // --------- GET: Merchant dashboard verileri ---------
 export const GET = async (req) => {
   try {
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0] ||
-      req.headers.get("x-real-ip") ||
-      "unknown";
-
-    if (!checkRateLimit(`merchant_dashboard_get_${ip}`, 30, 60_000)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    // Rate limit (IP bazlı)
+    const rlKey = makeRateLimitKey(req, { scope: "merchant_dashboard_get" });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 30, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
     const session = await getServerSession(authOptions);
@@ -40,6 +40,7 @@ export const GET = async (req) => {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // min commission
     let minCommission = 5;
     try {
       const config = await prisma.platform_config.findUnique({
@@ -81,7 +82,9 @@ export const GET = async (req) => {
       remaining_quota: Math.max(0, p.max_sales_limit - p.total_purchases),
     }));
 
-    return NextResponse.json({ success: true, products: formatted, minCommission });
+    return NextResponse.json({ success: true, products: formatted, minCommission }, {
+      headers: { "Cache-Control": "no-store", "Vary": "Cookie" },
+    });
   } catch (err) {
     console.error("Dashboard Fetch Error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
@@ -89,20 +92,21 @@ export const GET = async (req) => {
 };
 
 // --------- POST: Yeni ürün ekleme ---------
-export const POST = csrf(async (req) => {
+export const POST = withCsrfProtection(async (req) => {
   try {
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0] ||
-      req.headers.get("x-real-ip") ||
-      "unknown";
-
-    if (!checkRateLimit(`merchant_dashboard_post_${ip}`, 10, 60_000)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
-
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit (userId bazlı)
+    const rlKey = makeRateLimitKey(req, { scope: "merchant_dashboard_post", userId: session.user.id });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
     const body = await req.json();
@@ -134,12 +138,9 @@ export const POST = csrf(async (req) => {
     const limitValue = parseInt(max_sales_limit);
 
     if (
-      Number.isNaN(priceValue) ||
-      priceValue <= 0 ||
-      Number.isNaN(commissionValue) ||
-      commissionValue <= 0 ||
-      Number.isNaN(limitValue) ||
-      limitValue < 0
+      Number.isNaN(priceValue) || priceValue <= 0 ||
+      Number.isNaN(commissionValue) || commissionValue <= 0 ||
+      Number.isNaN(limitValue) || limitValue < 0
     ) {
       return NextResponse.json({ error: "Invalid price, commission rate or sales limit." }, { status: 400 });
     }
@@ -155,9 +156,10 @@ export const POST = csrf(async (req) => {
     }
 
     if (commissionValue < minCommission) {
-      return NextResponse.json({
-        error: `Commission rate must be at least ${minCommission}%`,
-      }, { status: 400 });
+      return NextResponse.json(
+        { error: `Commission rate must be at least ${minCommission}%` },
+        { status: 400 }
+      );
     }
 
     const productCode = crypto.randomBytes(16).toString("hex");
@@ -184,20 +186,21 @@ export const POST = csrf(async (req) => {
 });
 
 // --------- PATCH: Ürün güncelleme ---------
-export const PATCH = csrf(async (req) => {
+export const PATCH = withCsrfProtection(async (req) => {
   try {
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0] ||
-      req.headers.get("x-real-ip") ||
-      "unknown";
-
-    if (!checkRateLimit(`merchant_dashboard_patch_${ip}`, 10, 60_000)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
-
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== "merchant") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit (userId bazlı)
+    const rlKey = makeRateLimitKey(req, { scope: "merchant_dashboard_patch", userId: session.user.id });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
     const body = await req.json();
@@ -226,9 +229,10 @@ export const PATCH = csrf(async (req) => {
         return NextResponse.json({ error: "commissionRate must be a number" }, { status: 400 });
       }
       if (crNum < minCommission) {
-        return NextResponse.json({
-          error: `Commission rate must be at least ${minCommission}%`,
-        }, { status: 400 });
+        return NextResponse.json(
+          { error: `Commission rate must be at least ${minCommission}%` },
+          { status: 400 }
+        );
       }
       dataToUpdate.commissionRate = crNum;
       editTriggered = true;
@@ -237,9 +241,10 @@ export const PATCH = csrf(async (req) => {
     if (max_sales_limit !== undefined) {
       const mslNum = Number(max_sales_limit);
       if (!Number.isInteger(mslNum) || mslNum < 0) {
-        return NextResponse.json({
-          error: "max_sales_limit must be a non-negative integer",
-        }, { status: 400 });
+        return NextResponse.json(
+          { error: "max_sales_limit must be a non-negative integer" },
+          { status: 400 }
+        );
       }
       dataToUpdate.max_sales_limit = mslNum;
       editTriggered = true;

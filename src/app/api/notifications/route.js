@@ -1,39 +1,47 @@
+// ✅ Kullanıcı → Bildirimleri listele
+// SECURITY: NextAuth, rate-limit (userId+scope), soft-deleted gizli
 export const dynamic = "force-dynamic";
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY';
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
 export async function GET(req) {
-  // 1) Cookie'den token'ı al
-  const cookieStore = await cookies();
-  const token = cookieStore.get('cabo_token')?.value;
-  if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try {
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.id;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // 2) JWT doğrula
-  let decoded;
-  try { decoded = jwt.verify(token, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Invalid token' }, { status: 401 }); }
+    const rlKey = makeRateLimitKey(req, { scope: "notif:list", userId });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
 
-  const userId = decoded.userId;
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const url = new URL(req.url);
+    const unreadOnly = url.searchParams.get("unreadOnly") === "true";
 
-  // 3) Sadece okunmamış istenirse ?unreadOnly=true
-  const url = new URL(req.url);
-  const unreadOnly = url.searchParams.get('unreadOnly') === 'true';
+    const where = { userId, isDeleted: false, ...(unreadOnly ? { read: false } : {}) };
 
-  // Silinmişleri gösterme!
-  const where = { userId, isDeleted: false };
-  if (unreadOnly) where.read = false;
+    const [total, notifications] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
 
-  // 4) DB’den çek
-  const total = await prisma.notification.count({ where });
-  const notifications = await prisma.notification.findMany({
-    where,
-    orderBy: { createdAt: 'desc' }
-  });
-
-  return NextResponse.json({ total, notifications });
+    return NextResponse.json(
+      { total, notifications },
+      { headers: { "Cache-Control": "no-store", Vary: "Cookie" } }
+    );
+  } catch (err) {
+    console.error("GET /api/notifications error:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }

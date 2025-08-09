@@ -1,32 +1,44 @@
+// ✅ Kullanıcı → Bildirim(leri) okundu yap (read=true)
+// SECURITY: NextAuth, CSRF (POST), rate-limit, only-own records
 export const dynamic = "force-dynamic";
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY';
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { withCsrfProtection } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
-export async function POST(req) {
-  const cookieStore = cookies();
-  const token = cookieStore.get('cabo_token')?.value;
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const POST = withCsrfProtection(async (req) => {
+  try {
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.id;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let decoded;
-  try { decoded = jwt.verify(token, JWT_SECRET); }
-  catch { return NextResponse.json({ error: "Invalid token" }, { status: 401 }); }
+    const rlKey = makeRateLimitKey(req, { scope: "notif:markread", userId });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
 
-  const userId = decoded.userId;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = await req.json().catch(() => ({}));
+    const idsRaw = Array.isArray(body?.ids) ? body.ids : [];
+    const ids = idsRaw.map((v) => String(v)).filter((v) => v.length > 0);
+    if (!ids.length) {
+      return NextResponse.json({ error: "No ids" }, { status: 400 });
+    }
 
-  const { ids } = await req.json();
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return NextResponse.json({ error: "No ids" }, { status: 400 });
+    await prisma.notification.updateMany({
+      where: { id: { in: ids }, userId, isDeleted: false },
+      data: { read: true },
+    });
+
+    return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+  } catch (err) {
+    console.error("POST /api/notifications/mark-read error:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-
-  await prisma.notification.updateMany({
-    where: { id: { in: ids }, userId },
-    data: { read: true },
-  });
-
-  return NextResponse.json({ success: true });
-}
+});
