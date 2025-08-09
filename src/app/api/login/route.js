@@ -4,11 +4,11 @@
 
 export const dynamic = "force-dynamic";
 
-import { csrf } from "@/lib/csrf";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
-import { checkRateLimit, logApiEvent } from "@/lib/ratelimit";
-import { signIn } from "next-auth/react";
+import { withCsrfProtection } from "@/lib/csrf";
+import { checkRateLimit } from "@/lib/ratelimit";
+import { signIn } from "next-auth/react"; // client yard. fn; burada redirect:false ile kullanıyoruz
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;   // 1 dakika
 const RATE_LIMIT_COUNT     = 6;
@@ -51,20 +51,23 @@ function getClientIp(req) {
   return xf ? xf.split(",")[0].trim() : req.headers.get("x-real-ip") || "unknown";
 }
 
-export const POST = csrf(async (req) => {
+export const POST = withCsrfProtection(async (req) => {
   const locale = pickLocale(req);
   const msg = MESSAGES[locale];
   const ip = getClientIp(req);
 
   try {
-    // Rate limit
-    const allowed = await checkRateLimit(`login_ip_${ip}`, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW_MS);
-    if (!allowed) {
-      await logApiEvent?.({ endpoint: "login", ip, event: "ratelimit" });
+    // Rate limit (IP bazlı)
+    const { ok } = await checkRateLimit({
+      key: `login:ip:${ip}`,
+      limit: RATE_LIMIT_COUNT,
+      windowMs: RATE_LIMIT_WINDOW_MS,
+    });
+    if (!ok) {
       return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
     }
 
-    // Parse input
+    // Input
     let body;
     try {
       body = await req.json();
@@ -77,13 +80,14 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
-    // Fetch user
+    // User fetch (minimum alanlar)
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      await logApiEvent?.({ endpoint: "login", ip, event: "invalid_user" });
+      // Bilerek generic mesaj
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
+    // Rol / durum kontrolleri
     if (user.role === "merchant") {
       return Response.json({ success: false, message: msg.merchant }, { status: 403 });
     }
@@ -97,9 +101,9 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
-    // Password check
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) {
+    // Parola doğrulama
+    const okPass = await bcrypt.compare(password, user.passwordHash);
+    if (!okPass) {
       const nextFailed = (user.failedAttempts || 0) + 1;
       const willLock = nextFailed >= MAX_FAILED_ATTEMPTS;
       await prisma.user.update({
@@ -109,17 +113,17 @@ export const POST = csrf(async (req) => {
           lockUntil: willLock ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS) : user.lockUntil
         }
       });
-      await logApiEvent?.({ endpoint: "login", ip, event: "bad_password", userId: user.id });
       return Response.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // Reset fail counter
+    // Başarılı giriş → sayaç sıfırla
     await prisma.user.update({
       where: { id: user.id },
       data: { failedAttempts: 0, lockUntil: null }
     });
 
-    // NextAuth Credentials login
+    // NextAuth Credentials ile oturum açtır
+    // Not: redirect:false -> JSON döner, cookie/oturum NextAuth tarafından ayarlanır.
     const result = await signIn("credentials", {
       redirect: false,
       email,
@@ -130,12 +134,10 @@ export const POST = csrf(async (req) => {
       return Response.json({ success: false, message: msg.fail }, { status: 401 });
     }
 
-    await logApiEvent?.({ endpoint: "login", ip, event: "success", userId: user.id });
     return Response.json({ success: true, message: msg.success }, { status: 200 });
 
   } catch (err) {
     console.error("LOGIN ERROR:", err);
-    await logApiEvent?.({ endpoint: "login", ip, event: "server_error", detail: String(err?.message || err) });
     return Response.json({ success: false, message: msg.fail }, { status: 500 });
   }
 });

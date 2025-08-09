@@ -1,30 +1,45 @@
+// app/api/merchant/payouts/route.js
 export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
-import { getTokenFromRequest, verifyToken } from "@/lib/authOptions";
-import { checkRateLimit } from "@/lib/ratelimit";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { requireRole } from "@/lib/access";
 
 export async function GET(req) {
   try {
-    // Auth & Rate Limit
-    const token = getTokenFromRequest(req);
-    const user = token ? verifyToken(token) : null;
-    if (!user || user.role !== "merchant") {
+    // 1) Session (NextAuth) + rol kontrolü
+    const session = await getServerSession(authOptions);
+    const user = session?.user || null;
+    try {
+      requireRole(user, "merchant"); // SECURITY: sadece merchant
+    } catch {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    await checkRateLimit(req, user.userId, 30, 60_000, 'merchant-payouts-get');
 
-    // Pagination
+    // 2) Rate limit (IP veya userId scoped)
+    const rlKey = makeRateLimitKey(req, { scope: "merchant-payouts-get", userId: user.id });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 30, windowMs: 60_000 });
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
+
+    // 3) Pagination (güvenli parse + sınırlar)
     const { searchParams } = new URL(req.url);
-    const page = Math.max(1, Number(searchParams.get("page") || 1));
-    const limit = Math.max(1, Math.min(100, Number(searchParams.get("limit") || 100)));
+    const page = Math.max(1, Number.parseInt(searchParams.get("page") || "1", 10) || 1);
+    const limit = Math.max(1, Math.min(100, Number.parseInt(searchParams.get("limit") || "100", 10) || 100));
     const offset = (page - 1) * limit;
 
-    // payoutRequestItem ve relation mapping doğru olmalı
+    // 4) Veri çekimi (sadece kendi merchantId’si)
     const rawItems = await prisma.payoutRequestItem.findMany({
       where: {
-        merchantId: user.userId,
-        status: { in: ["pending", "merchant_paid", "platform_confirmed", "rejected"] }
+        merchantId: user.id,
+        status: { in: ["pending", "merchant_paid", "platform_confirmed", "rejected"] },
       },
       select: {
         itemId: true,
@@ -37,13 +52,13 @@ export async function GET(req) {
             userId: true,
             realUserFullname: true,
             requestedAt: true,
-          }
-        }
+          },
+        },
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
     });
 
-    // Gruplama ve statü önceliği
+    // 5) Gruplama + statü önceliği
     const statusPriority = {
       platform_confirmed: 3,
       merchant_paid: 2,
@@ -66,8 +81,8 @@ export async function GET(req) {
         };
       }
       grouped[key].itemIds.push(item.itemId);
-      grouped[key].amount += Number(item.amount);
-      // Statü önceliği
+      grouped[key].amount += Number(item.amount) || 0;
+
       if (statusPriority[item.status] > statusPriority[grouped[key].status]) {
         grouped[key].status = item.status;
       }
@@ -77,15 +92,17 @@ export async function GET(req) {
     const totalCount = result.length;
     const pagedResult = result.slice(offset, offset + limit);
 
-    return NextResponse.json({
-      items: pagedResult,
-      total: totalCount,
-      page,
-      pageCount: Math.ceil(totalCount / limit),
-    });
-
+    return NextResponse.json(
+      {
+        items: pagedResult,
+        total: totalCount,
+        page,
+        pageCount: Math.ceil(totalCount / limit),
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
-    console.error("Merchant Payments Backend Error:", error);
+    console.error("GET /api/merchant/payouts error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
