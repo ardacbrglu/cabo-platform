@@ -2,7 +2,7 @@
 "use client";
 
 // Amaç: Ana sayfa (i18n: useTranslation, erişilebilirlik iyileştirmeleri).
-// Not: Görsel stil korunur; sadece role/id ve skip link eklendi.
+// Not: Görsel stil korunur; sadece t hook'u doğru kullanıldı.
 
 import PublicLayout from "@/components/PublicLayout";
 import React from "react";
@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useTranslation } from "@/hooks/useTranslation";
 
 export default function Homepage() {
-  const t = useTranslation();
+  const { t } = useTranslation(); // <-- DÜZELTME: destructure
 
   return (
     <PublicLayout>

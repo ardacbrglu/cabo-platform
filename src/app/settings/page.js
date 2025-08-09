@@ -1,9 +1,17 @@
 'use client';
 
+/**
+ * Settings Page (prod-ready)
+ * SECURITY NOTES
+ * - Mutating isteklerde CSRF header zorunlu (x-csrf-token) + session cookie (credentials: "include")
+ * - /api/me ve liste endpointleri no-store; yetkisiz (401) durumunda kullanıcıya mesaj göster
+ * - Double submit önlendi (submitting state)
+ * - Dil/para birimi listeleri backend'ten çekiliyor; boş gelirse güvenli varsayılanlar kullanılıyor
+ */
+
 import { useState, useEffect, useRef } from "react";
 import Layout from "@/components/Layout";
 import CustomSelect from "@/components/CustomSelect";
-import { useUser } from "@/context/UserContext";
 import { useLocale } from "@/context/LocaleContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -11,6 +19,7 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [currencies, setCurrencies] = useState([]);
   const [languages, setLanguages] = useState([]);
   const [profile, setProfile] = useState({
@@ -24,56 +33,93 @@ export default function SettingsPage() {
   });
   const [message, setMessage] = useState("");
   const msgRef = useRef(null);
+
   const { setLocale } = useLocale();
   const t = useTranslation();
   const isMobile = useIsMobile();
-  const csrfToken = useCsrfToken();
+  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅ doğru kullanım
 
-  // İlk yüklemede dilleri ve para birimlerini dinamik çek
+  // İlk yükleme: diller, para birimleri, kullanıcı profili
   useEffect(() => {
+    let mounted = true;
+
     async function fetchAll() {
-      // Para birimi
-      let cur = [{ value: 'TRY', label: '₺ Türk Lirası' }];
       try {
-        const res = await fetch("/api/currencies");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.currencies) && data.currencies.length > 0)
-            cur = data.currencies;
+        // Para birimi
+        let cur = [{ value: "TRY", label: "₺ Türk Lirası" }];
+        try {
+          const res = await fetch("/api/currencies", {
+            method: "GET",
+            headers: { accept: "application/json", "cache-control": "no-cache" },
+            cache: "no-store",
+            credentials: "include",
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.currencies) && data.currencies.length > 0) cur = data.currencies;
+          }
+        } catch {
+          // sessiz fallback: cur zaten TRY
         }
-      } catch {}
-      setCurrencies(cur);
+        if (!mounted) return;
+        setCurrencies(cur);
 
-      // Diller (DB'den)
-      let langs = [
-        { value: 'tr', label: 'Türkçe' },
-        { value: 'en', label: 'English' }
-      ];
-      try {
-        const res = await fetch("/api/languages");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.languages) && data.languages.length > 0)
-            langs = data.languages;
+        // Diller
+        let langs = [
+          { value: "tr", label: "Türkçe" },
+          { value: "en", label: "English" },
+        ];
+        try {
+          const res = await fetch("/api/languages", {
+            method: "GET",
+            headers: { accept: "application/json", "cache-control": "no-cache" },
+            cache: "no-store",
+            credentials: "include",
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.languages) && data.languages.length > 0) langs = data.languages;
+          }
+        } catch {
+          // fallback: langs sabit
         }
-      } catch {}
-      setLanguages(langs);
+        if (!mounted) return;
+        setLanguages(langs);
 
-      // Kullanıcı profilini çek
-      const resp = await fetch("/api/me");
-      const data = await resp.json();
-      setProfile(prev => ({
-        ...prev,
-        name: data.name || "",
-        email: data.email || "",
-        languagePreference: data.languagePreference || langs[0]?.value || "tr",
-        currencyCode: data.currencyCode || cur[0]?.value || "TRY",
-      }));
-      setLocale(data.languagePreference || langs[0]?.value || "tr");
-      setLoading(false);
+        // Kullanıcı profili
+        const resp = await fetch("/api/me", {
+          method: "GET",
+          headers: { accept: "application/json", "cache-control": "no-cache" },
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!resp.ok) {
+          setMessage(t("unauthorized") || "Unauthorized");
+          setLoading(false);
+          return;
+        }
+        const data = await resp.json();
+        if (!mounted) return;
+
+        setProfile(prev => ({
+          ...prev,
+          name: data.name || "",
+          email: data.email || "",
+          languagePreference: data.languagePreference || (langs[0] && langs[0].value) || "tr",
+          currencyCode: data.currencyCode || (cur[0] && cur[0].value) || "TRY",
+        }));
+        setLocale(data.languagePreference || (langs[0] && langs[0].value) || "tr");
+        setLoading(false);
+      } catch {
+        if (!mounted) return;
+        setMessage(t("errorGeneric") || "An error occurred");
+        setLoading(false);
+      }
     }
+
     fetchAll();
-    // eslint-disable-next-line
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -93,66 +139,97 @@ export default function SettingsPage() {
     if (e) e.preventDefault();
     setMessage("");
 
-    // Profil güncelleme
-    const profileRes = await fetch("/api/settings/update", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-csrf-token": csrfToken
-      },
-      body: JSON.stringify({
-        name: profile.name,
-        languagePreference: profile.languagePreference,
-        currencyCode: profile.currencyCode,
-      }),
-    });
-    const profileData = await profileRes.json();
+    if (!csrfReady || !csrfToken) {
+      setMessage(t("pleaseWait") || "Please wait…");
+      return;
+    }
+    if (submitting) return;
+    setSubmitting(true);
 
-    // Şifre alanı doluysa şifre güncelleme
-    let passwordMsg = "";
-    if (profile.new_password && profile.new_password_repeat) {
-      if (profile.new_password !== profile.new_password_repeat) {
-        setMessage(t("passwordNoMatch"));
-        return;
-      }
-      const passwordRes = await fetch("/api/settings/change_password", {
+    try {
+      // Profil güncelleme
+      const profileRes = await fetch("/api/settings/update", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken
+          accept: "application/json",
+          "x-csrf-token": csrfToken,
         },
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({
-          current_password: profile.current_password,
-          new_password: profile.new_password
+          name: profile.name,
+          languagePreference: profile.languagePreference,
+          currencyCode: profile.currencyCode,
         }),
       });
-      const passwordData = await passwordRes.json();
-      if (passwordRes.status === 429) {
-        passwordMsg = t("tooManyRequests") || "Too many attempts";
-      } else if (passwordData.firstTimeSet) {
-        passwordMsg = t("passwordSetSuccess") || "Password set!";
-      } else {
-        passwordMsg = passwordData.success
-          ? t("passwordChanged")
-          : (passwordData.error || t("errorGeneric"));
+      const profileData = await profileRes.json().catch(() => ({}));
+
+      // Şifre güncelleme gerekiyorsa
+      let passwordMsg = "";
+      const wantsPasswordChange =
+        profile.new_password || profile.new_password_repeat || profile.current_password;
+
+      if (wantsPasswordChange) {
+        if (!profile.new_password || !profile.new_password_repeat) {
+          setMessage(t("passwordMissing") || "Please fill both new password fields");
+          setSubmitting(false);
+          return;
+        }
+        if (profile.new_password !== profile.new_password_repeat) {
+          setMessage(t("passwordNoMatch") || "Passwords do not match");
+          setSubmitting(false);
+          return;
+        }
+
+        const passwordRes = await fetch("/api/settings/change_password", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+            "x-csrf-token": csrfToken,
+          },
+          credentials: "include",
+          cache: "no-store",
+          body: JSON.stringify({
+            current_password: profile.current_password,
+            new_password: profile.new_password,
+          }),
+        });
+        const passwordData = await passwordRes.json().catch(() => ({}));
+
+        if (passwordRes.status === 429) {
+          passwordMsg = t("tooManyRequests") || "Too many attempts";
+        } else if (passwordData.firstTimeSet) {
+          passwordMsg = t("passwordSetSuccess") || "Password set!";
+        } else {
+          passwordMsg = passwordData.success
+            ? (t("passwordChanged") || "Password changed")
+            : (passwordData.error || t("errorGeneric") || "Error");
+        }
       }
-    }
 
-    if (profileRes.status === 429) {
-      setMessage(t("tooManyRequests") || "Too many requests");
-    } else {
-      setMessage(
-        (profileData.success ? t("profileUpdated") : profileData.error || t("errorGeneric")) +
-        (passwordMsg ? " • " + passwordMsg : "")
-      );
+      if (profileRes.status === 429) {
+        setMessage(t("tooManyRequests") || "Too many requests");
+      } else if (!profileRes.ok) {
+        setMessage(profileData.error || t("errorGeneric") || "Error");
+      } else {
+        setMessage(
+          (profileData.success ? (t("profileUpdated") || "Profile updated") : (profileData.error || t("errorGeneric") || "Error")) +
+          (passwordMsg ? " • " + passwordMsg : "")
+        );
+      }
+    } catch {
+      setMessage(t("errorGeneric") || "An error occurred");
+    } finally {
+      setSubmitting(false);
+      setProfile(prev => ({
+        ...prev,
+        current_password: "",
+        new_password: "",
+        new_password_repeat: ""
+      }));
     }
-
-    setProfile(prev => ({
-      ...prev,
-      current_password: "",
-      new_password: "",
-      new_password_repeat: ""
-    }));
   }
 
   if (loading) {
@@ -178,11 +255,12 @@ export default function SettingsPage() {
 
   return (
     <Layout>
-      <main className={`flex flex-col items-center w-full max-w-3xl mx-auto flex-1 justify-center mt-8 ${isMobile ? 'gap-6' : 'gap-8'} px-2`}>
+      <main className={`flex flex-col items-center w-full max-w-3xl mx-auto flex-1 justify-center mt-8 ${isMobile ? "gap-6" : "gap-8"} px-2`}>
         <form onSubmit={handleSave} className={`flex flex-col ${cardGap} w-full md:flex-row`}>
           {/* Profil Kartı */}
           <div className={cardClass}>
             <h3 className="font-extrabold text-lg mb-2 text-[#81d742] font-mono text-center">{t("profileInfo")}</h3>
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("name")}</label>
             <input
               type="text"
@@ -191,28 +269,34 @@ export default function SettingsPage() {
               onChange={e => handleChange("name", e.target.value)}
               className="bg-[#222] border border-[#444] focus:border-[#81d742] rounded-md px-3 py-2 text-white text-sm"
               required
+              autoComplete="name"
             />
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
             <CustomSelect
               options={languages}
               value={profile.languagePreference}
               onChange={v => handleChange("languagePreference", v)}
             />
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currency")}</label>
             <CustomSelect
               options={currencies}
               value={profile.currencyCode}
               onChange={v => handleChange("currencyCode", v)}
             />
-            {message && (
+
+            {message ? (
               <div ref={msgRef} className="text-[#81d742] font-semibold mt-3 text-center max-w-2xl transition-opacity duration-500">
                 {message}
               </div>
-            )}
+            ) : null}
           </div>
+
           {/* Şifre Kartı */}
           <div className={cardClass}>
             <h3 className="font-extrabold text-lg mb-2 text-[#81d742] font-mono text-center">{t("changePassword")}</h3>
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currentPassword")}</label>
             <input
               type="password"
@@ -223,6 +307,7 @@ export default function SettingsPage() {
               autoComplete="current-password"
               placeholder={t("currentPasswordPlaceholder") || ""}
             />
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("newPassword")}</label>
             <input
               type="password"
@@ -233,6 +318,7 @@ export default function SettingsPage() {
               autoComplete="new-password"
               placeholder={t("newPasswordPlaceholder") || ""}
             />
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("repeatNewPassword")}</label>
             <input
               type="password"
@@ -243,20 +329,22 @@ export default function SettingsPage() {
               autoComplete="new-password"
               placeholder={t("repeatNewPasswordPlaceholder") || ""}
             />
+
             <div className="text-xs text-gray-400 mt-1 mb-2">
               {t("hybridPasswordHint") ||
                 "If you registered with Google, you can set your password for classic login. Leave current password empty for the first time."}
             </div>
           </div>
         </form>
+
         <button
           type="submit"
           onClick={handleSave}
-          disabled={!csrfToken}
+          disabled={!csrfReady || !csrfToken || submitting}
           className="w-full max-w-xs py-3 font-bold text-lg bg-[#81d742] text-[#181818] rounded-lg shadow hover:bg-[#a9ff72] transition mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ marginBottom: "8px" }}
         >
-          {t("saveChanges")}
+          {submitting ? (t("saving") || "Saving…") : t("saveChanges")}
         </button>
       </main>
     </Layout>
