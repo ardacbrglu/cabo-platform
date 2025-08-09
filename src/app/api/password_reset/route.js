@@ -1,14 +1,12 @@
-// SORUMLULUK: Kullanıcı email ile reset linki ister. Her zaman generic mesaj döner.
-// Rate limit, CSRF, brute-force ve token hijacking korumalı.
-
+// app/api/password_reset/request/route.js
 export const dynamic = "force-dynamic";
 
-import { csrf } from '@/lib/csrf';
-import prisma from '@/lib/prisma';
-import { v4 as uuidv4 } from 'uuid';
-import { sendPasswordResetEmail } from '@/lib/mailer';
-import { addMinutes } from 'date-fns';
-import { checkRateLimit } from '@/lib/ratelimit';
+import { withCsrfProtection } from "@/lib/csrf";
+import prisma from "@/lib/prisma";
+import { v4 as uuidv4 } from "uuid";
+import { sendPasswordResetEmail } from "@/lib/mailer";
+import { addMinutes } from "date-fns";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
 const messages = {
   en: {
@@ -22,60 +20,84 @@ const messages = {
     sent: "Kullanıcı varsa şifre sıfırlama e-postası gönderildi.",
     fail: "Şifre sıfırlama e-postası gönderilirken hata oluştu.",
     ratelimit: "Çok fazla istek. Lütfen tekrar deneyin.",
-  }
+  },
 };
 
-export const POST = csrf(async (req) => {
+export const POST = withCsrfProtection(async (req) => {
   try {
     const langHeader = req.headers.get("accept-language") || "";
-    const acceptLang = langHeader.startsWith("tr") ? "tr" : "en";
-    const msg = messages[acceptLang];
+    const locale = langHeader.startsWith("tr") ? "tr" : "en";
+    const msg = messages[locale];
 
-    // IP Rate limit
-    const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
-    if (!checkRateLimit(`pwreset_req_${ip}`, 5, 60 * 1000)) {
-      return Response.json({ success: false, message: msg.ratelimit }, { status: 429 });
+    // Rate limit (IP bazlı 5/dk)
+    const rlKey = makeRateLimitKey(req, { scope: "pwreset_req" });
+    const { ok } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+    if (!ok) {
+      return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
-    // E-mail zorunlu
-    const { email } = await req.json();
+    // Body
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ success: false, message: msg.required }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const email = String(body?.email || "").trim().toLowerCase();
     if (!email) {
-      return Response.json({ success: false, message: msg.required }, { status: 400 });
+      return new Response(JSON.stringify({ success: false, message: msg.required }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
     }
-    const cleanEmail = email.trim().toLowerCase();
 
-    // User kontrolü (gizli)
-    const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+    // Kullanıcıyı bul (enumeration önleme: response her durumda generic)
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      return Response.json({ success: true, message: msg.sent });
+      return new Response(JSON.stringify({ success: true, message: msg.sent }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
-    // Token üretimi (benzersiz, 15 dk geçerli)
-    const token = uuidv4();
-    const expires = addMinutes(new Date(), 15);
-
-    // Eski tokenları sil
+    // Önce önceki kullanılmamış tokenları temizle
     await prisma.passwordResetToken.deleteMany({
-      where: { userId: user.id, used: false }
+      where: { userId: user.id, used: false },
     });
 
-    // Yeni token kaydı
+    // Yeni kısa ömürlü token (15dk)
+    const token = uuidv4();
+    const expiresAt = addMinutes(new Date(), 15);
+
     await prisma.passwordResetToken.create({
       data: {
         userId: user.id,
         token,
-        expiresAt: expires,
+        expiresAt,
         used: false,
-      }
+      },
     });
 
-    // DİLİ KULLANICIDAN ÇEK → linkte lang parametresi olarak ata!
-    const language = user.languagePreference || acceptLang;
+    // Mail dilini kullanıcı tercihi ya da accept-language
+    const language = user.languagePreference || locale;
     await sendPasswordResetEmail(user.email, token, language);
 
-    return Response.json({ success: true, message: msg.sent });
+    return new Response(JSON.stringify({ success: true, message: msg.sent }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err) {
     console.error("PASSWORD RESET REQ ERROR:", err);
-    return Response.json({ success: false, message: messages.tr.fail }, { status: 500 });
+    return new Response(JSON.stringify({ success: false, message: messages.tr.fail }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 });
