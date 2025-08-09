@@ -9,12 +9,9 @@ import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey, logApiEvent } from "@/lib/ratelimit";
 import { z } from "zod";
 
+// Zod şeması: transform yerine .trim() kullan
 const supportSchema = z.object({
-  message: z
-    .string()
-    .transform((s) => s.trim())
-    .min(1, "Message is required")
-    .max(900, "Message too long"),
+  message: z.string().trim().min(1, "Message is required").max(900, "Message too long"),
 });
 
 // Basit plaintext temizleme (HTML tag + kontrol karakterleri)
@@ -29,13 +26,11 @@ function sanitizePlaintext(s) {
 async function verifyCaptcha(req) {
   const token = req.headers.get("x-recaptcha-token");
   if (!token) return false;
-  const secret = process.env.RECAPTCHA_SECRET; // Enterprise/hCaptcha ise uygun secret
-  if (!secret) return true; // secret yoksa doğrulamayı pas geç (dev)
+  const secret = process.env.RECAPTCHA_SECRET;
+  if (!secret) return true; // dev ortamı
   try {
-    // Burada fetch ile Google/HCaptcha verify servisine POST atarsın.
-    // Prod'da timeout ve hata yakalama ekleyin.
-    // return resp.success === true;
-    return true; // örnek
+    // TODO: buraya gerçek verify isteğini ekle
+    return true;
   } catch {
     return false;
   }
@@ -49,20 +44,20 @@ export const POST = withCsrfProtection(async (req) => {
   const ua = req.headers.get("user-agent") || "";
 
   try {
-    // 0) Content-Type kontrolü
+    // Content-Type kontrolü
     const ct = req.headers.get("content-type") || "";
     if (!ct.toLowerCase().includes("application/json")) {
       return NextResponse.json({ error: "Unsupported Media Type" }, { status: 415 });
     }
 
-    // 1) Auth
+    // Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2) Rate limit (5/dk kullanıcı bazlı)
+    // Rate limit
     const rlKey = makeRateLimitKey(req, { scope: "support", userId });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
     if (!ok) {
@@ -73,27 +68,27 @@ export const POST = withCsrfProtection(async (req) => {
       );
     }
 
-    // 3) Body parse + validation
+    // Body + validation
     const raw = await req.json().catch(() => ({}));
     const parsed = supportSchema.safeParse(raw);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    // 4) Sanitize + tekrar min kontrol
+    // Sanitize + tekrar min kontrol (temizlik sonrası boş kalabilir)
     const cleanMessage = sanitizePlaintext(parsed.data.message);
-    if (!cleanMessage || cleanMessage.length < 1) {
+    if (!cleanMessage) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
-    // 5) (Opsiyonel) Captcha doğrula
+    // (Opsiyonel) Captcha
     const captchaOk = await verifyCaptcha(req);
     if (!captchaOk) {
       await logApiEvent({ endpoint: "/api/support", ip, ua, event: "captcha_failed" });
       return NextResponse.json({ error: "Captcha verification failed" }, { status: 400 });
     }
 
-    // 6) Kullanıcı bilgisi
+    // Kullanıcı bilgisi
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, email: true },
@@ -102,7 +97,7 @@ export const POST = withCsrfProtection(async (req) => {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // 7) Mesajı kaydet
+    // Kaydet
     await prisma.contactMessage.create({
       data: {
         userId,
@@ -116,13 +111,7 @@ export const POST = withCsrfProtection(async (req) => {
 
     return NextResponse.json(
       { success: true },
-      {
-        status: 200,
-        headers: {
-          "Cache-Control": "no-store",
-          "Vary": "Cookie",
-        },
-      }
+      { status: 200, headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
     );
   } catch (err) {
     await logApiEvent({
@@ -134,13 +123,7 @@ export const POST = withCsrfProtection(async (req) => {
     });
     return NextResponse.json(
       { error: "Server error" },
-      {
-        status: 500,
-        headers: {
-          "Cache-Control": "no-store",
-          "Vary": "Cookie",
-        },
-      }
+      { status: 500, headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
     );
   }
 });
