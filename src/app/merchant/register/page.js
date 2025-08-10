@@ -6,9 +6,8 @@ import { Loader2 } from "lucide-react";
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
-
 import dynamic from "next/dynamic";
-// import { signIn } from "next-auth/react"; // Google ile giriş tamamen devre dışı
+// import { signIn } from "next-auth/react"; // Google tamamen devre dışı
 
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
@@ -24,7 +23,8 @@ const translations = {
     li4: "Secure payment reporting & sales stats",
     loginQ: "Already have a merchant account?",
     loginBtn: "Login here",
-    name: "Business / Name",
+    company: "Company Name",
+    fullName: "Full Name (Authorized Person)",
     email: "Business Email",
     phone: "Phone Number",
     password: "Password",
@@ -33,6 +33,8 @@ const translations = {
     required: "Please fill in all fields.",
     success: "Your merchant account request has been received and is now pending approval. You will be notified by email once your account is activated.",
     failed: "Registration failed.",
+    invalidCompany: "Company name must be 2–150 valid characters.",
+    invalidName: "Full name must be 3–40 characters (letters/numbers/space/_).",
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
     invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
@@ -56,7 +58,8 @@ const translations = {
     li4: "Güvenli ödeme ve satış raporları",
     loginQ: "Zaten satıcı hesabın var mı?",
     loginBtn: "Giriş yap",
-    name: "Firma / Ad",
+    company: "Şirket Adı",
+    fullName: "Ad Soyad (Yetkili)",
     email: "Firma E-posta",
     phone: "Telefon Numarası",
     password: "Şifre",
@@ -65,9 +68,11 @@ const translations = {
     required: "Lütfen tüm alanları doldurun.",
     success: "Satıcı başvurun alındı ve onay bekliyor. Hesabın aktif olduğunda e-posta ile bilgilendirileceksin.",
     failed: "Kayıt başarısız.",
+    invalidCompany: "Şirket adı 2–150 geçerli karakter olmalı.",
+    invalidName: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
-    invalidPassword: "Şifre en az 8 karakter olmalı, harf ve rakam içermeli.",
+    invalidPassword: "Şifre en az 8 karakter olmalı; harf ve rakam içermeli.",
     acceptTerms: <>
       <Link href="/merchant/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım</Link>
       {" ve "}
@@ -87,6 +92,7 @@ export default function MerchantRegisterPage() {
   const csrfToken = useCsrfToken();
 
   const [form, setForm] = useState({
+    companyName: "",
     name: "",
     email: "",
     password: "",
@@ -106,6 +112,10 @@ export default function MerchantRegisterPage() {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
+  // backend Zod ile hizalı basic regexler
+  const reName = /^[\p{L}\p{N}_ ]+$/u;
+  const reCompany = /^[\p{L}\p{N}\s&_.,'’()\-]+$/u;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -117,8 +127,18 @@ export default function MerchantRegisterPage() {
       setLoading(false);
       return;
     }
-    if (!form.name || !form.email || !form.password || !form.phone) {
+    if (!form.companyName || !form.name || !form.email || !form.password || !form.phone) {
       setError(t("required"));
+      setLoading(false);
+      return;
+    }
+    if (form.companyName.length < 2 || form.companyName.length > 150 || !reCompany.test(form.companyName.trim())) {
+      setError(t("invalidCompany"));
+      setLoading(false);
+      return;
+    }
+    if (form.name.length < 3 || form.name.length > 40 || !reName.test(form.name.trim())) {
+      setError(t("invalidName"));
       setLoading(false);
       return;
     }
@@ -150,22 +170,22 @@ export default function MerchantRegisterPage() {
       headers: {
         "Content-Type": "application/json",
         "x-csrf-token": csrfToken || "",
-        "accept-language": locale || "en"
+        "accept-language": locale || "en",
       },
       body: JSON.stringify({
+        companyName: form.companyName,
         name: form.name,
         email: form.email,
         password: form.password,
         phoneNumber: fullPhone,
-        role: "merchant",
         termsAccepted: terms,
-        captcha
+        captcha,
       }),
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      setError(data.message || t("failed"));
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      setError(data?.message || t("failed"));
     } else {
       setSuccess(true);
       setTimeout(() => {
@@ -206,12 +226,12 @@ export default function MerchantRegisterPage() {
               </Link>
             </div>
             <div className="text-[#81d742] mt-4 text-base font-semibold">
-              {t('howWorksQ')}{" "}
+              {t("howWorksQ")}{" "}
               <Link
                 href="/merchant/info"
                 className="underline hover:text-[#b3ffb3] transition"
               >
-                {t('howWorksLink')}
+                {t("howWorksLink")}
               </Link>
             </div>
           </div>
@@ -225,8 +245,20 @@ export default function MerchantRegisterPage() {
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" autoComplete="off">
             <input
               type="text"
+              name="companyName"
+              placeholder={t("company")}
+              value={form.companyName}
+              onChange={handleChange}
+              spellCheck={false}
+              inputMode="text"
+              autoCorrect="off"
+              required
+              className="bg-white text-black rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            />
+            <input
+              type="text"
               name="name"
-              placeholder={t("name")}
+              placeholder={t("fullName")}
               value={form.name}
               onChange={handleChange}
               spellCheck={false}
@@ -313,23 +345,16 @@ export default function MerchantRegisterPage() {
               {loading ? <Loader2 className="animate-spin mx-auto" size={18} /> : t("submit")}
             </button>
 
-            {/* Google ile giriş/kayıt ve "or" separatoru tamamen kaldırıldı */}
-
+            {/* Google seçenekleri kaldırıldı */}
           </form>
         </div>
       </div>
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 3rem;
-          }
-          .cabo-mobile-form-bottom {
-            margin-bottom: 3rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem; }
+          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
+          .cabo-mobile-form-bottom { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>

@@ -11,11 +11,12 @@ model User {
   id                 Int        @id @default(autoincrement())
   name               String     @db.VarChar(100)
   email              String     @unique @db.VarChar(255)
+  companyName        String?    @db.VarChar(150)
   emailVerified      DateTime?  @db.DateTime(0)
   passwordHash       String?    @db.VarChar(255)
   role               Role       @default(affiliate)
   languagePreference String     @default("en") @db.VarChar(10)
-  currencyCode       String     @default("EUR") @db.Char(3)
+  currencyCode       String     @default("TRY") @db.Char(3)
   createdAt          DateTime   @default(now()) @db.DateTime(0)
   bankName           String?    @db.VarChar(100)
   iban               String?    @db.VarChar(34)
@@ -32,7 +33,7 @@ model User {
   activationToken          String?              @db.VarChar(255)
   activationRequestedCount Int                  @default(0)
   lastActivationRequestAt  DateTime?
-  passwordResetTokens      PasswordResetToken[] // <-- Şifre sıfırlama token ilişkisi
+  passwordResetTokens      PasswordResetToken[]
 
   salesAsMerchant    AffiliateUserSale[] @relation("AffiliateUserSale_merchantIdToUsers")
   salesAsAffiliate   AffiliateUserSale[] @relation("AffiliateUserSale_userIdToUsers")
@@ -45,13 +46,19 @@ model User {
   accounts           Account[]
   sessions           Session[]
 
+  // 👇 Opsiyonel back-relations (raporlama/sorgu için güzel)
+  webhookLogsAsMerchant  WebhookRequestLog[]   @relation("WebhookLogMerchant")
+  webhookLogsAsAffiliate WebhookRequestLog[]   @relation("WebhookLogAffiliate")
+  MerchantIntegration    MerchantIntegration[]
+
+  @@index([role, companyName]) // admin panelde arama/filtre kolaylığı (opsiyonel)
   @@map("users")
 }
 
 model PasswordResetToken {
   id        Int      @id @default(autoincrement())
   userId    Int
-  token     String   @unique @db.VarChar(255)
+  tokenHash String   @unique @db.VarChar(255)
   expiresAt DateTime
   used      Boolean  @default(false)
   user      User     @relation(fields: [userId], references: [id])
@@ -114,6 +121,7 @@ model AffiliateLink {
   user               User                @relation(fields: [userId], references: [id])
   clicks             Click[]
 
+  @@unique([userId, productId], map: "uniq_user_product_link")
   @@index([userId])
   @@index([productId])
   @@map("affiliateLinks")
@@ -134,11 +142,14 @@ model AffiliateUserSale {
   payoutItemId        Int?
   updatedAt           DateTime?               @default(now()) @db.DateTime(0)
   affiliateLinkId     Int?
-  affiliateLink       AffiliateLink?          @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
-  merchantProduct     MerchantProduct         @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
-  merchant            User                    @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
-  affiliate           User                    @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
-  platformEarnings    PlatformEarning[]
+  webhookLogId        Int?
+
+  affiliateLink     AffiliateLink?     @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
+  merchantProduct   MerchantProduct    @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
+  merchant          User               @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
+  affiliate         User               @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
+  webhookRequestLog WebhookRequestLog? @relation("WebhookToSales", fields: [webhookLogId], references: [id])
+  platformEarnings  PlatformEarning[]
 
   @@unique([orderId, productId], map: "order_product_unique")
   @@index([userId])
@@ -146,6 +157,7 @@ model AffiliateUserSale {
   @@index([productId])
   @@index([payoutItemId])
   @@index([affiliateLinkId], map: "idx_affiliateLinkId")
+  @@index([webhookLogId], map: "idx_webhookLogId")
   @@map("AffiliateUserSale")
 }
 
@@ -216,22 +228,25 @@ model Notification {
 }
 
 model PayoutRequest {
-  requestId          Int                 @id @default(autoincrement())
-  userId             Int
-  amountTotal        Decimal             @db.Decimal(19, 4)
-  status             Payoutstatus        @default(pending)
-  requestedAt        DateTime?           @default(now()) @db.DateTime(0)
-  paidAt             DateTime?           @db.DateTime(0)
-  bankName           String?             @db.VarChar(100)
-  iban               String?             @db.VarChar(34)
-  platformPaid       Boolean             @default(false)
-  platformPaidAt     DateTime?           @db.DateTime(0)
-  realUserFullname   String?             @db.VarChar(100)
-  rejectedReason     String?             @db.VarChar(255)
-  updatedAt          DateTime?           @default(now()) @db.DateTime(0)
+  requestId        Int          @id @default(autoincrement())
+  userId           Int
+  amountTotal      Decimal      @db.Decimal(19, 4)
+  status           Payoutstatus @default(pending)
+  requestedAt      DateTime?    @default(now()) @db.DateTime(0)
+  paidAt           DateTime?    @db.DateTime(0)
+  bankName         String?      @db.VarChar(100)
+  iban             String?      @db.VarChar(34)
+  platformPaid     Boolean      @default(false)
+  platformPaidAt   DateTime?    @db.DateTime(0)
+  realUserFullname String?      @db.VarChar(100)
+  rejectedReason   String?      @db.VarChar(255)
+  updatedAt        DateTime?    @default(now()) @db.DateTime(0)
+  idempotencyKey   String?      @db.VarChar(100)
+
   payoutRequestItems PayoutRequestItem[]
   user               User                @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
 
+  @@unique([userId, idempotencyKey], map: "uniq_user_idempotencyKey")
   @@index([userId])
   @@map("payoutRequests")
 }
@@ -251,10 +266,13 @@ model PayoutRequestItem {
   status              PayoutRequestItemstatus? @default(pending)
   transactionId       String?                  @db.VarChar(100)
   updatedAt           DateTime?                @default(now()) @db.DateTime(0)
-  payoutRequest       PayoutRequest            @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
-  user                User                     @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
-  merchantProduct     MerchantProduct?         @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
+  idempotencyKey      String?                  @db.VarChar(100)
 
+  payoutRequest   PayoutRequest    @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
+  user            User             @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
+  merchantProduct MerchantProduct? @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
+
+  @@unique([merchantId, idempotencyKey], map: "uniq_merchant_idempotencyKey")
   @@index([merchantId])
   @@index([requestId])
   @@index([productId])
@@ -302,7 +320,7 @@ model PlatformEarning {
   earningId         Int               @id @default(autoincrement())
   saleId            Int
   amount            Decimal           @db.Decimal(19, 4)
-  currencyCode      String            @default("EUR") @db.Char(3)
+  currencyCode      String            @default("TRY") @db.Char(3)
   loggedAt          DateTime          @default(now()) @db.DateTime(0)
   affiliateUserSale AffiliateUserSale @relation(fields: [saleId], references: [saleId], map: "platform_earnings_ibfk_1")
   currency          Currency          @relation(fields: [currencyCode], references: [code], map: "platform_earnings_ibfk_2")
@@ -315,6 +333,52 @@ model PlatformConfig {
   keyName   String    @id @db.VarChar(100)
   value     String    @db.Text
   updatedAt DateTime? @default(now()) @db.DateTime(0)
+}
+
+model MerchantIntegration {
+  id                 Int       @id @default(autoincrement())
+  merchantId         Int
+  keyId              String    @unique @db.VarChar(100)
+  secretHash         String    @db.VarChar(255)
+  webhookIpAllowlist String?   @db.Text
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now()) @db.DateTime(0)
+  rotatedAt          DateTime?
+
+  merchant User @relation(fields: [merchantId], references: [id])
+
+  @@index([merchantId])
+}
+
+model WebhookRequestLog {
+  id          Int           @id @default(autoincrement())
+  merchantId  Int
+  affiliateId Int? // token -> AffiliateLink -> userId çözümlenirse
+  requestId   String        @unique @db.VarChar(100) // X-Request-Id
+  nonce       String        @unique @db.VarChar(100) // X-Nonce
+  sentAt      DateTime
+  receivedAt  DateTime      @default(now()) @db.DateTime(0)
+  hmac        String        @db.VarChar(255) // X-Signature (geldiği gibi)
+  ip          String        @db.VarChar(45)
+  ua          String?       @db.Text
+  status      WebhookStatus
+  error       String?       @db.Text
+
+  // İçerik (kanıt ve debug için):
+  rawBody    String @db.LongText // imza doğrulaması için "aynen gelen" gövde
+  headers    Json? // X-Key-Id, X-Timestamp vb.
+  parsedBody Json? // { orderId, items:[{productCode, quantity, unitPrice, currency, ...}], token, ... }
+  itemsCount Int?
+
+  // 👇 İsimlendirilmiş ilişkiler (ambiguous relation fix)
+  merchant  User  @relation("WebhookLogMerchant", fields: [merchantId], references: [id])
+  affiliate User? @relation("WebhookLogAffiliate", fields: [affiliateId], references: [id])
+
+  sales AffiliateUserSale[] @relation("WebhookToSales")
+
+  @@index([merchantId])
+  @@index([affiliateId])
+  @@map("webhookRequestLogs")
 }
 
 // ENUMS
@@ -354,6 +418,16 @@ enum NotificationType {
   info
   support_reply
   important
+}
+
+enum WebhookStatus {
+  accepted
+  invalid_signature
+  replay
+  expired
+  invalid_product
+  unauthorized
+  error
 }
 
 model ApiLog {
