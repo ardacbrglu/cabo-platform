@@ -1,5 +1,5 @@
-// app/api/csrf/csrf-token/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { cookies } from "next/headers";
 import crypto from "crypto";
@@ -11,13 +11,12 @@ export async function GET() {
   const cookieStore = cookies();
   let token = cookieStore.get(CSRF_COOKIE_NAME)?.value;
 
-  // Yoksa üret
   if (!token) {
     token = crypto.randomBytes(32).toString("hex");
     cookieStore.set(CSRF_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",         // <- 'strict' öneriyoruz
+      sameSite: "strict",
       path: "/",
       maxAge: TWO_HOURS,
     });
@@ -33,5 +32,4 @@ export async function GET() {
       "Expires": "0",
     },
   });
-
 }
