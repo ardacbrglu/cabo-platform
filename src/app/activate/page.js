@@ -1,8 +1,9 @@
-"use client";
-
+// app/activate/page.js
 import { Suspense } from "react";
 import PublicLayout from "@/components/PublicLayout";
 import ActivateContent from "./Content";
+
+export const dynamic = "force-dynamic";
 
 export default function Page() {
   return (
