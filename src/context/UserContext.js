@@ -1,12 +1,13 @@
 "use client";
 /**
  * /context/UserContext.jsx
- * Amaç: Oturum bilgisini (NextAuth session üzerinden) tek kez çekip uygulama genelinde paylaşmak.
+ * Amaç: Oturum bilgisini (NextAuth session cookie’leri) /api/me üzerinden tek kez çekip
+ * uygulama genelinde paylaşmak.
  *
  * SECURITY NOTES
- * - Kimlik doğrulama NextAuth cookie'leri ile yapılır; custom JWT yok.
- * - /api/me yalnızca güvenli alanları döner ve 401/403 durumlarında anon sayılırız.
- * - İstekler credentials: "include" ile yapılır ve cache devre dışı bırakılır.
+ * - Oturum tek kaynağı NextAuth’tır; custom JWT/cookie yok.
+ * - /api/me yalnız güvenli alanları döner; 401/403/404 durumunda anon kabul edilir.
+ * - İstek cache’lenmez (no-store) ve credentials: "include" gönderilir.
  */
 
 import React, {
@@ -19,9 +20,12 @@ import React, {
   useMemo,
 } from "react";
 
+const noop = () => {};
 const UserContext = createContext({
-  user: undefined,            // undefined=loading, null=anon, object=auth
-  setUser: () => {},
+  user: undefined,          // undefined = loading, null = anon, object = auth payload
+  ready: false,             // user !== undefined
+  isAuthenticated: false,   // !!user && !!user.userId
+  setUser: noop,
   lastError: null,
   refreshUser: async () => {},
 });
@@ -32,7 +36,7 @@ export function UserProvider({ children }) {
   const acRef = useRef(null);
 
   const fetchMe = useCallback(async () => {
-    // Var olan isteği iptal et
+    // Önceki isteği iptal et
     if (acRef.current) acRef.current.abort();
     const ac = new AbortController();
     acRef.current = ac;
@@ -51,14 +55,15 @@ export function UserProvider({ children }) {
       });
 
       if (!res.ok) {
-        // 401/403/404 → anon kabul et
+        // 401/403/404/429 → anon kabul et (enumeration yok)
         setUser(null);
         setLastError(new Error(`GET /api/me ${res.status}`));
         return;
-        }
+      }
+
       const data = await res.json().catch(() => ({}));
 
-      // Beklenen minimal şema: { userId, email, role, status, name? }
+      // Beklenen minimal şema: { userId, email, role, status, name?, languagePreference?, currencyCode? }
       if (data && data.userId) {
         setUser(data);
         setLastError(null);
@@ -74,7 +79,7 @@ export function UserProvider({ children }) {
     }
   }, []);
 
-  // İlk yükleme
+  // İlk yükleme (ve refreshUser -> user = undefined olduğunda)
   useEffect(() => {
     if (user === undefined) {
       fetchMe();
@@ -85,15 +90,18 @@ export function UserProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Login/logout sonrası manuel yenilemek için
+  // Login/logout sonrası yeniden okumak için
   const refreshUser = useCallback(() => {
-    setUser(undefined); // loading state
+    setUser(undefined); // loading state tetikler
     return fetchMe();
   }, [fetchMe]);
 
+  const ready = user !== undefined;
+  const isAuthenticated = !!(user && user.userId);
+
   const value = useMemo(
-    () => ({ user, setUser, lastError, refreshUser }),
-    [user, lastError, refreshUser]
+    () => ({ user, ready, isAuthenticated, setUser, lastError, refreshUser }),
+    [user, ready, isAuthenticated, lastError, refreshUser]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
