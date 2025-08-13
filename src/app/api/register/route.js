@@ -134,7 +134,7 @@ export const POST = withCsrfProtection(async (req) => {
     // SECURITY: HttpOnly + Strict + 5 dk
     res.cookies.set("google_reg_precheck", cookieValue, {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: "lax",
       secure: true,
       maxAge: 300,
       path: "/",

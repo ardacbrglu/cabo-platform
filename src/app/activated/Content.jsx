@@ -1,36 +1,45 @@
 'use client';
+
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { useTranslation } from "@/hooks/useTranslation";
+
+// Bu sayfada da dinamik i18n kullanmıyoruz (aynı sebep).
+const dict = {
+  en: {
+    ok: "Your account has been activated! Redirecting to the login page...",
+    fail: "Activation failed or link is invalid.",
+  },
+  tr: {
+    ok: "Hesabınız aktifleştirildi! Giriş sayfasına yönlendiriliyorsunuz...",
+    fail: "Aktivasyon başarısız veya link geçersiz.",
+  },
+};
 
 export default function ActivatedContent() {
   const params = useSearchParams();
   const router = useRouter();
   const error = params.get("error");
-  const lang = params.get("lang");
-  const { setLocale } = useLocale();
-  const t = useTranslation();
+  const urlLang = params.get("lang");
+  const { setLocale, locale } = useLocale();
+
+  const lang = (urlLang || (locale === "tr" ? "tr" : "en")).toLowerCase();
+  const t = useMemo(() => (k) => (dict[lang]?.[k] ?? dict.en[k] ?? k), [lang]);
 
   useEffect(() => {
-    if (lang) setLocale(lang);
-    // 2 saniye sonra login ekranına yönlendir
+    if (urlLang) setLocale(urlLang);
     const timer = setTimeout(() => {
       router.replace("/login");
-    }, 2000);
+    }, 1800);
     return () => clearTimeout(timer);
-  }, [lang, setLocale, router]);
+  }, [urlLang, setLocale, router]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
       {error ? (
-        <div className="text-red-400 text-lg">
-          {t("activationFailed") || "Aktivasyon başarısız veya link geçersiz."}
-        </div>
+        <div className="text-red-400 text-lg">{t("fail")}</div>
       ) : (
-        <div className="text-green-400 text-lg mb-6">
-          {t("activationSuccess") || "Kayıt başarılı! Giriş sayfasına yönlendiriliyorsunuz..."}
-        </div>
+        <div className="text-green-400 text-lg mb-6">{t("ok")}</div>
       )}
     </div>
   );
