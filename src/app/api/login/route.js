@@ -1,9 +1,9 @@
 // app/api/login/route.js
-// Manuel (Credentials) giriş için güvenli proxy.
-// Tek oturum kaynağı NextAuth; custom JWT yok.
+// Manuel (Credentials) login için güvenli proxy.
+// Not: Tek oturum kaynağı NextAuth (custom JWT yok).
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs"; // Prisma/crypto için Node runtime
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -11,10 +11,10 @@ import bcrypt from "bcryptjs";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/ratelimit";
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 dk
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_COUNT = 6;
 const MAX_FAILED_ATTEMPTS = 5;
-const ACCOUNT_LOCK_DURATION_MS = 15 * 60 * 1000; // 15 dk
+const ACCOUNT_LOCK_DURATION_MS = 15 * 60 * 1000;
 
 const MESSAGES = {
   en: {
@@ -27,7 +27,7 @@ const MESSAGES = {
     success: "Login successful!",
     fail: "Login failed. Please try again.",
     ratelimit: "Too many requests. Please wait.",
-    csrf: "Invalid CSRF token.",
+    csrf: "Invalid CSRF token."
   },
   tr: {
     fill: "Lütfen e-posta ve şifrenizi girin.",
@@ -39,8 +39,8 @@ const MESSAGES = {
     success: "Giriş başarılı!",
     fail: "Giriş başarısız. Lütfen tekrar deneyin.",
     ratelimit: "Çok fazla istek. Lütfen bekleyin.",
-    csrf: "Geçersiz CSRF anahtarı.",
-  },
+    csrf: "Geçersiz CSRF anahtarı."
+  }
 };
 
 function pickLocale(req) {
@@ -52,24 +52,24 @@ function getClientIp(req) {
   return xf ? xf.split(",")[0].trim() : (req.headers.get("x-real-ip") || "unknown");
 }
 
-// Çoklu "Set-Cookie" başlığını güvenle parçala
+// "Set-Cookie" başlığındaki parçaları güvenle ayır
 function splitSetCookies(headerVal) {
   return headerVal ? headerVal.split(/,(?=[^,; ]+=)/g) : [];
 }
 
-// NextAuth’ın döndüğü CSRF/Callback cookie’lerini topla → "a=b; c=d" şeklinde döner
+// NextAuth'ın döndürebileceği tüm olası cookie adlarını toplayıp "a=b; c=d" döndür
 function collectNextAuthCookies(setCookieHeader) {
   const wanted = new Set([
+    "next-auth.csrf-token",
     "__secure-next-auth.csrf-token",
     "__host-next-auth.csrf-token",
-    "next-auth.csrf-token",
+    "next-auth.callback-url",
     "__secure-next-auth.callback-url",
     "__host-next-auth.callback-url",
-    "next-auth.callback-url",
   ]);
   const pairs = [];
   for (const c of splitSetCookies(setCookieHeader)) {
-    const pair = c.split(";")[0].trim(); // "name=value"
+    const pair = c.split(";")[0].trim(); // name=value
     const eq = pair.indexOf("=");
     if (eq > 0) {
       const nameLower = pair.slice(0, eq).trim().toLowerCase();
@@ -79,11 +79,9 @@ function collectNextAuthCookies(setCookieHeader) {
   return pairs.join("; ");
 }
 
-// Yardımcı: tek noktadan JSON & header ile dön
-function jsonWithReason(body, { status = 200, reason = "" } = {}) {
-  const res = NextResponse.json(body, { status });
-  if (reason) res.headers.set("X-Debug-Reason", reason);
-  res.headers.set("cache-control", "no-store");
+const DEBUG = process.env.DEBUG_AUTH === "1";
+function withDebug(res, reason) {
+  if (DEBUG && reason) res.headers.set("x-debug-reason", reason);
   return res;
 }
 
@@ -93,11 +91,11 @@ export async function POST(req) {
   const ip = getClientIp(req);
 
   try {
-    // 1) CSRF zorunlu
+    // 1) CSRF (header + cookie eşleşmeli)
     try {
       await validateCsrfToken(req);
     } catch {
-      return jsonWithReason({ success: false, message: msg.csrf, reason: "csrf_mismatch" }, { status: 403, reason: "csrf_mismatch" });
+      return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 });
     }
 
     // 2) Rate limit
@@ -107,35 +105,36 @@ export async function POST(req) {
       windowMs: RATE_LIMIT_WINDOW_MS,
     });
     if (!ok) {
-      const headers = {
-        "Retry-After": String(Math.ceil((resetMs || RATE_LIMIT_WINDOW_MS) / 1000)),
-        "Content-Type": "application/json",
-      };
-      const res = NextResponse.json({ success: false, message: msg.ratelimit, reason: "rate_limited" }, { status: 429, headers });
-      res.headers.set("X-Debug-Reason", "rate_limited");
-      return res;
+      return new NextResponse(
+        JSON.stringify({ success: false, message: msg.ratelimit }),
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.ceil((resetMs || RATE_LIMIT_WINDOW_MS) / 1000)),
+            "Content-Type": "application/json",
+          },
+        }
+      );
     }
 
-    // 3) Input
+    // 3) Body
     let body;
-    try {
-      body = await req.json();
-    } catch {
-      return jsonWithReason({ success: false, message: msg.fill, reason: "bad_json" }, { status: 400, reason: "bad_json" });
-    }
+    try { body = await req.json(); } catch { body = null; }
     const email = String(body?.email || "").trim().toLowerCase();
     const password = String(body?.password || "");
     if (!email || !password) {
-      return jsonWithReason({ success: false, message: msg.fill, reason: "missing_fields" }, { status: 400, reason: "missing_fields" });
+      return NextResponse.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
-    // 4) Kullanıcı kapıları
+    // 4) Kullanıcı & kapılar
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return jsonWithReason({ success: false, message: msg.invalid, reason: "no_user" }, { status: 401, reason: "no_user" });
-    if (user.role === "merchant") return jsonWithReason({ success: false, message: msg.merchant, reason: "role_merchant" }, { status: 403, reason: "role_merchant" });
-    if (user.lockUntil && new Date(user.lockUntil) > new Date()) return jsonWithReason({ success: false, message: msg.locked, reason: "locked" }, { status: 403, reason: "locked" });
-    if (!user.passwordHash) return jsonWithReason({ success: false, message: msg.google, reason: "google_only" }, { status: 401, reason: "google_only" });
-    if (user.status !== "active") return jsonWithReason({ success: false, message: msg.inactive, reason: "inactive" }, { status: 403, reason: "inactive" });
+    if (!user) return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
+    if (user.role === "merchant") return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
+    if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
+      return NextResponse.json({ success: false, message: msg.locked }, { status: 403 });
+    }
+    if (!user.passwordHash) return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
+    if (user.status !== "active") return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
 
     // 5) Parola + brute-force sayaçları
     const okPass = await bcrypt.compare(password, user.passwordHash);
@@ -150,76 +149,76 @@ export async function POST(req) {
             : user.lockUntil,
         },
       });
-      return jsonWithReason({ success: false, message: msg.invalid, reason: "bad_password" }, { status: 401, reason: "bad_password" });
+      return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
     }
-    // Başarılı → sayaç sıfırla
+    // Başarılı → sayaçları sıfırla
     await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
     // 6) NextAuth Credentials callback’e proxy
-    const scheme = req.headers.get("x-forwarded-proto") || "https";
+    // Base URL'i env'den zorunlu tercih et (proxy’lerde daha stabil)
+    const scheme = req.headers.get("x-forwarded-proto") || "http";
     const host = req.headers.get("host");
-    const origin = req.nextUrl?.origin || `${scheme}://${host}`;
+    const requestOrigin = req.nextUrl?.origin || `${scheme}://${host}`;
+    const baseUrl = (process.env.NEXTAUTH_URL || requestOrigin).replace(/\/$/, "");
 
-    // a) /api/auth/csrf
-    let csrfJson, csrfSetCookie;
-    try {
-      const csrfRes = await fetch(`${origin}/api/auth/csrf`, {
-        method: "GET",
-        headers: { accept: "application/json" },
-      });
-      csrfSetCookie = csrfRes.headers.get("set-cookie") || "";
-      csrfJson = await csrfRes.json().catch(() => ({}));
-    } catch (e) {
-      return jsonWithReason({ success: false, message: msg.fail, reason: "csrf_fetch_fail" }, { status: 500, reason: "csrf_fetch_fail" });
+    // a) CSRF token’ı /api/auth/signin?json=true ile al (cookie de set eder)
+    const signinRes = await fetch(`${baseUrl}/api/auth/signin?json=true&callbackUrl=${encodeURIComponent(baseUrl)}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      cache: "no-store",
+      redirect: "manual",
+    });
+    if (!signinRes.ok) {
+      const res = NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
+      return withDebug(res, "csrf_fetch_fail");
     }
-    const nextAuthCsrfToken = csrfJson?.csrfToken;
+    let signinJson = {};
+    try { signinJson = await signinRes.json(); } catch {}
+    const nextAuthCsrfToken = signinJson?.csrfToken;
     if (!nextAuthCsrfToken) {
-      return jsonWithReason({ success: false, message: msg.fail, reason: "csrf_missing" }, { status: 500, reason: "csrf_missing" });
+      const res = NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
+      return withDebug(res, "no_nextauth_csrf");
     }
-    const cookieJar = collectNextAuthCookies(csrfSetCookie);
+    const cookieJar = collectNextAuthCookies(signinRes.headers.get("set-cookie") || "");
 
-    // b) /api/auth/callback/credentials (redirect=false + json=true)
+    // b) Credentials callback (redirect=false + json=true)
     const form = new URLSearchParams();
     form.set("csrfToken", nextAuthCsrfToken);
     form.set("email", email);
     form.set("password", password);
     form.set("redirect", "false");
-    form.set("callbackUrl", origin);
+    form.set("callbackUrl", baseUrl);
 
-    let cbRes, cbJson;
-    try {
-      cbRes = await fetch(`${origin}/api/auth/callback/credentials?json=true&redirect=false`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          accept: "application/json",
-          ...(cookieJar ? { cookie: cookieJar } : {}),
-        },
-        body: form.toString(),
-        redirect: "manual",
-      });
-      // 200/401/400 haricinde 302 de gelebilir; json okunabilir olmayabilir
-      cbJson = await cbRes.json().catch(() => ({}));
-    } catch (e) {
-      return jsonWithReason({ success: false, message: msg.fail, reason: "callback_fetch_fail" }, { status: 500, reason: "callback_fetch_fail" });
-    }
+    const cbRes = await fetch(`${baseUrl}/api/auth/callback/credentials?json=true&redirect=false`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        ...(cookieJar ? { cookie: cookieJar } : {}),
+      },
+      body: form.toString(),
+      redirect: "manual",
+    });
+
+    let cbJson = {};
+    try { cbJson = await cbRes.json(); } catch {}
 
     if (!cbRes.ok || cbJson?.error) {
-      const reason = cbJson?.error ? `callback_${String(cbJson.error)}` : `callback_status_${cbRes.status}`;
-      return jsonWithReason({ success: false, message: msg.fail, reason }, { status: 401, reason });
+      const res = NextResponse.json({ success: false, message: msg.fail }, { status: 401 });
+      return withDebug(res, cbJson?.error ? `cb_error_${cbJson.error}` : `cb_status_${cbRes.status}`);
     }
 
-    // c) Oturum çerezlerini geçir
+    // c) Session çerezlerini forward et
     const res = NextResponse.json({ success: true, message: msg.success }, { status: 200 });
     const setCookieHeader = cbRes.headers.get("set-cookie");
     if (setCookieHeader) {
       for (const c of splitSetCookies(setCookieHeader)) res.headers.append("set-cookie", c);
     }
     res.headers.set("cache-control", "no-store");
+    res.headers.set("vary", "cookie");
     return res;
 
-  } catch (e) {
-    // Log’u istersen buraya ekle
-    return jsonWithReason({ success: false, message: MESSAGES[pickLocale(req)].fail, reason: "unhandled" }, { status: 500, reason: "unhandled" });
+  } catch {
+    return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
   }
 }
