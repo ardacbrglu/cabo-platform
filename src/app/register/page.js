@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
@@ -44,6 +44,9 @@ const translations = {
     googleBtn: "Sign up with Google",
     emailSent: "Activation email sent to",
     mailfail: "Activation email could not be sent. Please try again later.",
+    csrf: "Invalid CSRF token. Refresh the page and try again.",
+    csrfWait: "Preparing a secure session… Please try again.",
+    missingReasons: "To continue:",
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -76,18 +79,24 @@ const translations = {
     googleBtn: "Google ile kayıt ol",
     emailSent: "Aktivasyon e-postası gönderildi:",
     mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen tekrar deneyin.",
+    csrf: "CSRF anahtarı geçersiz. Sayfayı yenileyip tekrar deneyin.",
+    csrfWait: "Güvenli oturum hazırlanıyor… Lütfen tekrar deneyin.",
+    missingReasons: "Devam etmek için:",
   }
 };
 
 export default function RegisterPage() {
-  const csrfToken = useCsrfToken();
+  const { csrfToken, ready: csrfReady } = useCsrfToken();
   const router = useRouter();
   const { locale, ready } = useLocale();
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [terms, setTerms] = useState(false);
   const [captcha, setCaptcha] = useState("");
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
@@ -99,26 +108,59 @@ export default function RegisterPage() {
     setTimeout(() => router.push("/login"), 1800);
   };
 
-  // Google ile kayıt/giriş
+  // Ortak eksik nedenleri (butonlar disabled iken görünür uyarı)
+  const manualMissing = useMemo(() => {
+    const arr = [];
+    if (!name || !email || !password) arr.push(t("required"));
+    if (!terms) arr.push(t("termsReq"));
+    if (!captcha) arr.push(t("captchaReq"));
+    if (!csrfReady || !csrfToken) arr.push(t("csrfWait"));
+    return arr;
+  }, [name, email, password, terms, captcha, csrfReady, csrfToken, locale]);
+
+  const googleMissing = useMemo(() => {
+    const arr = [];
+    if (!terms) arr.push(t("termsReq"));
+    if (!captcha) arr.push(t("captchaReq"));
+    if (!csrfReady || !csrfToken) arr.push(t("csrfWait"));
+    return arr;
+  }, [terms, captcha, csrfReady, csrfToken, locale]);
+
+  // Google ile kayıt/giriş (Precheck → signIn)
   const handleGoogleSignIn = async () => {
     setError("");
-    if (!terms) {
-      setError(t("termsReq"));
-      return;
-    }
-    if (!captcha) {
-      setError(t("captchaReq"));
-      return;
-    }
+    setSuccess("");
+
+    if (!terms) return setError(t("termsReq"));
+    if (!captcha) return setError(t("captchaReq"));
+    if (!csrfReady || !csrfToken) return setError(t("csrfWait"));
+
     setLoading(true);
     try {
+      // 1) Precheck: terms+captcha zorunluluğunu server tarafında kanıtla
+      const precheck = await fetch("/api/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken || "",
+          "accept-language": locale || "en",
+        },
+        body: JSON.stringify({ termsAccepted: true, captcha, flow: "google" }),
+      });
+
+      const pdata = await precheck.json().catch(() => ({}));
+      if (!precheck.ok || !pdata?.success) {
+        setError(pdata?.message || t("failed"));
+        setLoading(false);
+        return;
+      }
+
+      // 2) NextAuth Google → yeni kullanıcıysa active yaratılacak ve otomatik login
       await signIn("google", { callbackUrl: "/dashboard" });
     } catch {
-      setError(locale === "tr"
-        ? "Google ile giriş başarısız oldu."
-        : "Google sign-in failed.");
+      setError(locale === "tr" ? "Google ile giriş başarısız oldu." : "Google sign-in failed.");
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Manuel kayıt submit
@@ -127,18 +169,10 @@ export default function RegisterPage() {
     setError("");
     setSuccess("");
 
-    if (!name || !email || !password) {
-      setError(t("required"));
-      return;
-    }
-    if (!terms) {
-      setError(t("termsReq"));
-      return;
-    }
-    if (!captcha) {
-      setError(t("captchaReq"));
-      return;
-    }
+    if (!name || !email || !password) return setError(t("required"));
+    if (!terms) return setError(t("termsReq"));
+    if (!captcha) return setError(t("captchaReq"));
+    if (!csrfReady || !csrfToken) return setError(t("csrfWait"));
 
     setLoading(true);
     try {
@@ -149,11 +183,19 @@ export default function RegisterPage() {
           "x-csrf-token": csrfToken || "",
           "accept-language": locale || "en",
         },
-        body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha }),
+        body: JSON.stringify({ name, email, password, termsAccepted: terms, captcha, flow: "manual" }),
       });
-      const data = await res.json();
-      // Backend'den gelen tüm hata mesajlarını göster
-      if (res.ok && data.success) {
+
+      const data = await res.json().catch(() => ({}));
+
+      // CSRF özel hata mesajını kullanıcıya geçir
+      if (res.status === 403 && (data?.error?.toLowerCase?.().includes("csrf") || data?.message?.toLowerCase?.().includes("csrf"))) {
+        setError(t("csrf"));
+        setLoading(false);
+        return;
+      }
+
+      if (res.ok && data?.success) {
         setSuccess(`${t("success")} (${email})`);
         setError("");
         handleSuccessRedirect();
@@ -296,12 +338,27 @@ export default function RegisterPage() {
           {/* reCAPTCHA */}
           <Captcha onChange={setCaptcha} lang={locale} />
 
+          {/* Inline uyarılar (butonlar disabled iken nedenlerini göster) */}
+          {(manualMissing.length > 0 || googleMissing.length > 0) && (
+            <div className="w-full -mt-2">
+              <div className="text-gray-400 text-sm mb-1">{t("missingReasons")}</div>
+              <ul className="text-red-500 text-sm list-disc pl-5 space-y-1">
+                {/* Listeyi minimal tutmak için yalnız bir kez gösteriyoruz (manuel ile aynı maddeler olduğundan uniqleyelim) */}
+                {[...new Set([...manualMissing, ...googleMissing])].map((m, i) => (
+                  <li key={i}>{m}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {error && <div className="text-red-500 text-base md:text-lg text-center">{error}</div>}
           {success && <div className="text-green-400 text-base md:text-lg text-center">{success}</div>}
 
+          {/* Manuel kayıt */}
           <button
             type="submit"
-            disabled={loading || !terms || !captcha}
+            disabled={loading || manualMissing.length > 0}
+            aria-disabled={loading || manualMissing.length > 0}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition"
           >
             {loading ? (locale === "tr" ? "Kaydediliyor..." : "Registering...") : t("registerBtn")}
@@ -317,7 +374,8 @@ export default function RegisterPage() {
           <button
             type="button"
             onClick={handleGoogleSignIn}
-            disabled={loading}
+            disabled={loading || googleMissing.length > 0}
+            aria-disabled={loading || googleMissing.length > 0}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-white text-[#111] rounded-lg hover:bg-[#e0ffe0] border border-[#232323] transition flex items-center justify-center gap-2"
           >
             <img src="/google.svg" alt="Google" className="w-6 h-6 mr-1" />
