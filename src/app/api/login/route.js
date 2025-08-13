@@ -59,6 +59,23 @@ function getClientIp(req) {
   return xf ? xf.split(",")[0].trim() : (req.headers.get("x-real-ip") || "unknown");
 }
 
+// "Set-Cookie" başlığındaki birden fazla çerezi güvenle ayır
+function splitSetCookies(headerVal) {
+  return headerVal ? headerVal.split(/,(?=[^,; ]+=)/g) : [];
+}
+// Set-Cookie listesi içinden istenen cookie'nin "name=value" çiftini döndür
+function pickCookiePair(setCookieHeader, cookieNameLower /* lower-case */) {
+  for (const c of splitSetCookies(setCookieHeader)) {
+    const pair = c.split(";")[0].trim();        // name=value
+    const eq = pair.indexOf("=");
+    if (eq > 0) {
+      const name = pair.slice(0, eq).trim().toLowerCase();
+      if (name === cookieNameLower) return pair; // değeri orijinal haliyle döndür
+    }
+  }
+  return "";
+}
+
 export async function POST(req) {
   const locale = pickLocale(req);
   const msg = MESSAGES[locale];
@@ -114,11 +131,9 @@ export async function POST(req) {
     }
     if (!user.passwordHash) {
       // Google ile kayıt: manuel login yasak (şifre oluşturmadıkça)
-      // Kullanıcı ayarlardan şifre oluşturursa sonraki girişlerde manuel + Google serbest.
       return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
     }
     if (user.status !== "active") {
-      // Manuel kayıtlı ve aktivasyon yapmamış kullanıcıyı bilgilendir
       return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
@@ -146,10 +161,9 @@ export async function POST(req) {
     /**
      * 7) SESSION KURULUMU — NextAuth Credentials callback'e sunucu-tarafı proxy
      * Akış:
-     *   a) /api/auth/csrf → csrfToken + (Set-Cookie: next-auth.csrf-token)
+     *   a) /api/auth/csrf → csrfToken + (Set-Cookie: next-auth.csrf-token=...)
      *   b) /api/auth/callback/credentials?json=true&redirect=false (POST, urlencoded)
      *      → (Set-Cookie: next-auth.session-token[|__Secure-...])
-     * Not: Dönen Set-Cookie başlıklarını kendi yanıtımıza ekliyoruz.
      */
     const scheme = req.headers.get("x-forwarded-proto") || "http";
     const host = req.headers.get("host");
@@ -165,8 +179,9 @@ export async function POST(req) {
     if (!nextAuthCsrfToken) {
       return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
     }
-    // NextAuth, callback’te aynı request’te CSRF cookie’sini görmek ister
-    const csrfSetCookie = csrfRes.headers.get("set-cookie") || "";
+    // NextAuth, callback’te aynı request’te CSRF cookie’sini görmek ister → sadece name=value olarak gönder
+    const rawSetCookie = csrfRes.headers.get("set-cookie") || "";
+    const csrfCookiePair = pickCookiePair(rawSetCookie, "next-auth.csrf-token");
 
     // b) Credentials callback (redirect=false + json=true)
     const form = new URLSearchParams();
@@ -181,7 +196,7 @@ export async function POST(req) {
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "accept": "application/json",
-        ...(csrfSetCookie ? { cookie: csrfSetCookie } : {}),
+        ...(csrfCookiePair ? { cookie: csrfCookiePair } : {}),
       },
       body: form.toString(),
       redirect: "manual",
@@ -189,16 +204,18 @@ export async function POST(req) {
 
     let cbJson = {};
     try { cbJson = await cbRes.json(); } catch {}
+
     if (!cbRes.ok || cbJson?.error) {
-      // NextAuth, pending/merchant/google-only gibi durumları zaten authorize aşamasında reddediyor.
       return NextResponse.json({ success: false, message: msg.fail }, { status: 401 });
     }
 
-    // NextAuth session cookie’lerini geçir
-    const setCookieHeader = cbRes.headers.get("set-cookie");
+    // NextAuth session cookie’lerini TEK TEK geçir
     const res = NextResponse.json({ success: true, message: msg.success }, { status: 200 });
+    const setCookieHeader = cbRes.headers.get("set-cookie");
     if (setCookieHeader) {
-      res.headers.append("set-cookie", setCookieHeader);
+      for (const c of splitSetCookies(setCookieHeader)) {
+        res.headers.append("set-cookie", c);
+      }
     }
     res.headers.set("cache-control", "no-store");
     return res;
