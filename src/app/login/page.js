@@ -18,6 +18,8 @@ import { signIn } from "next-auth/react";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
+import Image from "next/image";
+
 
 const translations = {
   en: {
@@ -299,6 +301,7 @@ export default function Page() {
             </div>
 
             <button
+
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
@@ -306,22 +309,11 @@ export default function Page() {
               aria-label={t("googleBtn")}
             >
               <span className="w-6 h-6 mr-1 inline-block align-middle" aria-hidden="true">
-                <svg width="24" height="24" viewBox="0 0 48 48">
-                  <g>
-                    <path
-                      fill="#4285F4"
-                      d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..."
-                    />
-                    <path fill="#34A853" d="..." />
-                    <path fill="#FBBC05" d="..." />
-                    <path fill="#EA4335" d="..." />
-                  </g>
-                </svg>
-              </span>
+                <Image src="/google.svg" width={24} height={24} alt="" priority />
+              </span>              
               {t("googleBtn")}
             </button>
           </form>
-
           <div className="mt-6 text-gray-400 text-sm">
             {t("noAccount")}{" "}
             <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
