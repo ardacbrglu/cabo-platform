@@ -1,9 +1,18 @@
-// app/api/activate/route.js
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { checkRateLimit, logApiEvent } from "@/lib/ratelimit";
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error("JWT_SECRET is not defined.");
+
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
 
 export async function GET(req) {
   const ip =
@@ -22,42 +31,47 @@ export async function GET(req) {
   });
   if (!rl.ok) {
     await logApiEvent({ endpoint: "activate", ip, ua, event: "ratelimit" });
-    return NextResponse.json({ success: false, error: "ratelimit" }, { status: 429 });
+    return json({ success: false, error: "ratelimit" }, { status: 429 });
   }
 
   // 2) Token eksikse
   if (!token) {
     await logApiEvent({ endpoint: "activate", ip, ua, event: "no_token" });
-    return NextResponse.json({ success: false, error: "notoken" }, { status: 400 });
+    return json({ success: false, error: "notoken" }, { status: 400 });
   }
 
-  // 3) DB'de eşleşen kullanıcı: pending + activationToken eşit olmalı
+  // 3) JWT doğrulaması (süre, bütünlük)
+  let emailFromJwt = null;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    emailFromJwt = (payload && payload.email && String(payload.email).toLowerCase()) || null;
+  } catch {
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "jwt_invalid" });
+    return json({ success: false, error: "jwt" }, { status: 400 });
+  }
+
+  // 4) Token + pending durumu ile kullanıcıyı bul
   const user = await prisma.user.findFirst({
-    where: { activationToken: token, status: "pending" },
+    where: { activationToken: token, status: "pending", email: emailFromJwt || undefined },
     select: { id: true, email: true },
   });
 
-  // 3b) Kullanıcı zaten aktifse
   if (!user) {
-    const alreadyActive = await prisma.user.findFirst({
-      where: { activationToken: null, status: "active" },
+    // 4b) Aynı email aktifse "alreadyActive" de
+    const already = await prisma.user.findFirst({
+      where: { email: emailFromJwt || undefined, status: "active", activationToken: null },
       select: { id: true, email: true },
     });
-    if (alreadyActive) {
-      await logApiEvent({
-        endpoint: "activate",
-        ip,
-        ua,
-        event: "already_active",
-        email: alreadyActive.email,
-      });
-      return NextResponse.json({ success: true, alreadyActive: true }, { status: 200 });
+    if (already) {
+      await logApiEvent({ endpoint: "activate", ip, ua, event: "already_active", email: already.email });
+      return json({ success: true, alreadyActive: true }, { status: 200 });
     }
-    await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid" });
-    return NextResponse.json({ success: false, error: "invalid" }, { status: 404 });
+
+    await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email: emailFromJwt || "unknown" });
+    return json({ success: false, error: "invalid" }, { status: 404 });
   }
 
-  // 4) Kullanıcıyı aktif et
+  // 5) Kullanıcıyı aktif et
   await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -67,13 +81,7 @@ export async function GET(req) {
     },
   });
 
-  await logApiEvent({
-    endpoint: "activate",
-    ip,
-    ua,
-    event: "activated",
-    email: user.email,
-  });
+  await logApiEvent({ endpoint: "activate", ip, ua, event: "activated", email: user.email });
 
-  return NextResponse.json({ success: true }, { status: 200 });
+  return json({ success: true }, { status: 200 });
 }

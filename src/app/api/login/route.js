@@ -1,18 +1,16 @@
-// ✅ app/api/login/route.js
-// Sorumluluk: Manuel login (Credentials Provider) için güvenli giriş.
-// Google login zaten /api/auth/[...nextauth] üzerinden çalışıyor.
+// app/api/login/route.js
+// Sorumluluk: Manuel login (Credentials) için güvenli giriş proxy'si.
+// Google login zaten /api/auth/[...nextauth] üzerinden çalışır (hesap otomatik oluşturulup aktif açılır).
+//
+// SECURITY NOTES
+// - Auth: NextAuth (custom JWT yok). Bu endpoint, NextAuth Credentials callback'ine sunucu-tarafı proxy yapar.
+// - CSRF: Header (x-csrf-token | csrf-token) + cookie (csrf_token) eşleşmesi zorunlu.
+// - Rate limit: IP bazlı (6/dk) → Retry-After başlığı döner.
+// - Brute force: failedAttempts + geçici lock (15dk).
+// - Mesajlar generic; kullanıcı enumeration yok.
+// - Yanıt: JSON; başarılıysa NextAuth session cookie’lerini Set-Cookie ile geçirir.
 
 export const dynamic = "force-dynamic";
-
-/**
- * SECURITY NOTES
- * - Auth: NextAuth (custom JWT yok). Bu endpoint sadece kimlik doğrular ve
- *   NextAuth Credentials callback'ine sunucu-tarafı proxy yaparak session'ı kurar.
- * - CSRF: Header (x-csrf-token | csrf-token) + cookie (csrf_token) eşleşmesi zorunlu.
- * - Rate limit: IP bazlı (dakikada 6).
- * - Brute force: failedAttempts + geçici lock (15dk).
- * - Yanıt: JSON; başarılıysa Set-Cookie başlıkları ile birlikte döner.
- */
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -20,9 +18,9 @@ import bcrypt from "bcryptjs";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/ratelimit";
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;   // 1 dk
-const RATE_LIMIT_COUNT     = 6;
-const MAX_FAILED_ATTEMPTS  = 5;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;        // 1 dk
+const RATE_LIMIT_COUNT = 6;
+const MAX_FAILED_ATTEMPTS = 5;
 const ACCOUNT_LOCK_DURATION_MS = 15 * 60 * 1000; // 15 dk
 
 const MESSAGES = {
@@ -54,11 +52,11 @@ const MESSAGES = {
 
 function pickLocale(req) {
   const raw = req.headers.get("accept-language")?.split(",")[0] || "en";
-  return raw.startsWith("tr") ? "tr" : "en";
+  return raw.toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 function getClientIp(req) {
   const xf = req.headers.get("x-forwarded-for");
-  return xf ? xf.split(",")[0].trim() : req.headers.get("x-real-ip") || "unknown";
+  return xf ? xf.split(",")[0].trim() : (req.headers.get("x-real-ip") || "unknown");
 }
 
 export async function POST(req) {
@@ -69,19 +67,22 @@ export async function POST(req) {
   try {
     // 1) CSRF (header + cookie eşleşmeli)
     try {
-      validateCsrfToken(req);
+      await validateCsrfToken(req);
     } catch {
       return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 });
     }
 
     // 2) Rate limit (IP bazlı)
-    const { ok } = await checkRateLimit({
+    const { ok, resetMs } = await checkRateLimit({
       key: `login:ip:${ip}`,
       limit: RATE_LIMIT_COUNT,
       windowMs: RATE_LIMIT_WINDOW_MS,
     });
     if (!ok) {
-      return NextResponse.json({ success: false, message: msg.ratelimit }, { status: 429 });
+      return new NextResponse(
+        JSON.stringify({ success: false, message: msg.ratelimit }),
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || RATE_LIMIT_WINDOW_MS)/1000)), "Content-Type": "application/json" } }
+      );
     }
 
     // 3) Input
@@ -100,11 +101,11 @@ export async function POST(req) {
     // 4) User fetch (minimum alanlar)
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      // Bilerek generic mesaj
+      // Generic mesaj (enumeration yok)
       return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
     }
 
-    // 5) Rol / durum kontrolleri
+    // 5) Rol / durum kapıları + Google-only uyarısı
     if (user.role === "merchant") {
       return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
     }
@@ -113,9 +114,11 @@ export async function POST(req) {
     }
     if (!user.passwordHash) {
       // Google ile kayıt: manuel login yasak (şifre oluşturmadıkça)
+      // Kullanıcı ayarlardan şifre oluşturursa sonraki girişlerde manuel + Google serbest.
       return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
     }
     if (user.status !== "active") {
+      // Manuel kayıtlı ve aktivasyon yapmamış kullanıcıyı bilgilendir
       return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
@@ -142,75 +145,65 @@ export async function POST(req) {
 
     /**
      * 7) SESSION KURULUMU — NextAuth Credentials callback'e sunucu-tarafı proxy
-     * - Akış:
+     * Akış:
      *   a) /api/auth/csrf → csrfToken + (Set-Cookie: next-auth.csrf-token)
      *   b) /api/auth/callback/credentials?json=true&redirect=false (POST, urlencoded)
      *      → (Set-Cookie: next-auth.session-token[|__Secure-...])
-     * - Sonuç: Dönen Set-Cookie başlıklarını kendi yanıtımıza ekliyoruz.
+     * Not: Dönen Set-Cookie başlıklarını kendi yanıtımıza ekliyoruz.
      */
-    const origin = req.nextUrl?.origin || `${req.headers.get("x-forwarded-proto") || "http"}://${req.headers.get("host")}`;
+    const scheme = req.headers.get("x-forwarded-proto") || "http";
+    const host = req.headers.get("host");
+    const origin = req.nextUrl?.origin || `${scheme}://${host}`;
 
-    // a) CSRF al
+    // a) NextAuth CSRF al
     const csrfRes = await fetch(`${origin}/api/auth/csrf`, {
       method: "GET",
       headers: { accept: "application/json" },
     });
-
     const csrfJson = await csrfRes.json().catch(() => ({}));
-    const csrfToken = csrfJson?.csrfToken;
-    if (!csrfToken) {
-      // Beklenmedik durum
+    const nextAuthCsrfToken = csrfJson?.csrfToken;
+    if (!nextAuthCsrfToken) {
       return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
     }
-
-    // NextAuth, callback isteğinde aynı request cookie'lerinde csrf cookie'sini görmek ister.
-    // Node fetch cookie jar olmadığından, önceki cevaptaki Set-Cookie'yi header "cookie" olarak yeniden gönderiyoruz.
+    // NextAuth, callback’te aynı request’te CSRF cookie’sini görmek ister
     const csrfSetCookie = csrfRes.headers.get("set-cookie") || "";
 
     // b) Credentials callback (redirect=false + json=true)
     const form = new URLSearchParams();
-    form.set("csrfToken", csrfToken);
+    form.set("csrfToken", nextAuthCsrfToken);
     form.set("email", email);
     form.set("password", password);
     form.set("redirect", "false");
-    form.set("callbackUrl", origin); // isteğe bağlı
+    form.set("callbackUrl", origin); // opsiyonel
 
     const cbRes = await fetch(`${origin}/api/auth/callback/credentials?json=true&redirect=false`, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "accept": "application/json",
-        // CSRF cookie'yi ilet
         ...(csrfSetCookie ? { cookie: csrfSetCookie } : {}),
       },
       body: form.toString(),
       redirect: "manual",
     });
 
-    // NextAuth JSON cevabı (error alanı varsa başarısız)
     let cbJson = {};
     try { cbJson = await cbRes.json(); } catch {}
-
     if (!cbRes.ok || cbJson?.error) {
+      // NextAuth, pending/merchant/google-only gibi durumları zaten authorize aşamasında reddediyor.
       return NextResponse.json({ success: false, message: msg.fail }, { status: 401 });
     }
 
-    // NextAuth'ın döndürdüğü session cookie'lerini geçir
+    // NextAuth session cookie’lerini geçir
     const setCookieHeader = cbRes.headers.get("set-cookie");
     const res = NextResponse.json({ success: true, message: msg.success }, { status: 200 });
-
     if (setCookieHeader) {
-      // Birden fazla Set-Cookie olabilirse ayırmayı dene (güvenli olmayan virgül bölmeleri varsa yine ilk cookie en kritik olan session’dır)
-      // Modern Node/undici çoğu durumda tek header döndürür; bunu aynen iletmek yeterlidir.
       res.headers.append("set-cookie", setCookieHeader);
     }
-
-    // Önbellek devre dışı
     res.headers.set("cache-control", "no-store");
     return res;
 
-  } catch (err) {
-    // GENEL HATA: generic mesaj
-    return NextResponse.json({ success: false, message: MESSAGES[locale].fail }, { status: 500 });
+  } catch {
+    return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
   }
 }
