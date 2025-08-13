@@ -301,7 +301,6 @@ export default function Page() {
             </div>
 
             <button
-
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
@@ -310,9 +309,10 @@ export default function Page() {
             >
               <span className="w-6 h-6 mr-1 inline-block align-middle" aria-hidden="true">
                 <Image src="/google.svg" width={24} height={24} alt="" priority />
-              </span>              
+              </span>
               {t("googleBtn")}
             </button>
+
           </form>
           <div className="mt-6 text-gray-400 text-sm">
             {t("noAccount")}{" "}
