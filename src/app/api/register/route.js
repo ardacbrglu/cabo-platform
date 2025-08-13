@@ -127,22 +127,21 @@ export const POST = withCsrfProtection(async (req) => {
 
   // 3) GOOGLE AKIŞI: precheck cookie (5 dk, imzalı)
   if (flow === "google") {
-    const token = jwt.sign(
-      { scope: "google_registration_precheck" },
-      JWT_SECRET,
-      { expiresIn: "5m" }
-    );
+    const payload = { scope: "google_registration_precheck", iat: Math.floor(Date.now()/1000) };
+    const cookieValue = jwt.sign(payload, JWT_SECRET, { expiresIn: "5m" });
 
     const res = json({ success: true, precheck: true, message: msg.ok }, { status: 200 });
-    res.cookies.set("google_reg_precheck", token, {
+    // SECURITY: HttpOnly + Strict + 5 dk
+    res.cookies.set("google_reg_precheck", cookieValue, {
       httpOnly: true,
       sameSite: "strict",
       secure: true,
-      maxAge: 5 * 60,
+      maxAge: 300,
       path: "/",
     });
     return res;
   }
+
 
   // 4) MANUEL AKIŞ
   const name = (body?.name || "").toString();

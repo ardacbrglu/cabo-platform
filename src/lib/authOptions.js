@@ -35,7 +35,7 @@ function verifyGooglePrecheckCookie() {
     const payload = jwt.verify(c, JWT_SECRET);
     return payload && payload.scope === "google_registration_precheck";
   } catch {
-    return false;
+    return false; // exp/invalid vs.
   }
 }
 
