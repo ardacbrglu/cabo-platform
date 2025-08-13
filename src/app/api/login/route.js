@@ -1,14 +1,13 @@
 // app/api/login/route.js
 // Sorumluluk: Manuel login (Credentials) için güvenli giriş proxy'si.
-// Google login zaten /api/auth/[...nextauth] üzerinden çalışır (hesap otomatik oluşturulup aktif açılır).
+// Google login zaten /api/auth/[...nextauth] üzerinden çalışır.
 //
 // SECURITY NOTES
-// - Auth: NextAuth (custom JWT yok). Bu endpoint, NextAuth Credentials callback'ine sunucu-tarafı proxy yapar.
+// - Tek oturum kaynağı NextAuth; custom JWT yok.
 // - CSRF: Header (x-csrf-token | csrf-token) + cookie (csrf_token) eşleşmesi zorunlu.
-// - Rate limit: IP bazlı (6/dk) → Retry-After başlığı döner.
-// - Brute force: failedAttempts + geçici lock (15dk).
-// - Mesajlar generic; kullanıcı enumeration yok.
-// - Yanıt: JSON; başarılıysa NextAuth session cookie’lerini Set-Cookie ile geçirir.
+// - Rate limit: IP bazlı (6/dk).
+// - Brute force: failedAttempts + lock (15 dk).
+// - Yanıt: JSON; başarılıysa NextAuth session çerezlerini Set-Cookie ile geçirir.
 
 export const dynamic = "force-dynamic";
 
@@ -25,29 +24,29 @@ const ACCOUNT_LOCK_DURATION_MS = 15 * 60 * 1000; // 15 dk
 
 const MESSAGES = {
   en: {
-    fill:      "Please enter your email and password.",
-    invalid:   "Incorrect email or password.",
-    merchant:  "Merchants cannot log in here.",
-    google:    "You signed up with Google. Please use Google login.",
-    inactive:  "Your account has not been activated yet.",
-    locked:    "Too many failed attempts. Please try again later.",
-    success:   "Login successful!",
-    fail:      "Login failed. Please try again.",
+    fill: "Please enter your email and password.",
+    invalid: "Incorrect email or password.",
+    merchant: "Merchants cannot log in here.",
+    google: "You signed up with Google. Please use Google login.",
+    inactive: "Your account has not been activated yet.",
+    locked: "Too many failed attempts. Please try again later.",
+    success: "Login successful!",
+    fail: "Login failed. Please try again.",
     ratelimit: "Too many requests. Please wait.",
-    csrf:      "Invalid CSRF token."
+    csrf: "Invalid CSRF token.",
   },
   tr: {
-    fill:      "Lütfen e-posta ve şifrenizi girin.",
-    invalid:   "E-posta veya şifre yanlış.",
-    merchant:  "Satıcı hesapları buradan giriş yapamaz.",
-    google:    "Google ile kayıt oldunuz. Lütfen Google ile giriş yapın.",
-    inactive:  "Hesabınız henüz aktifleştirilmedi.",
-    locked:    "Çok fazla hatalı deneme. Lütfen daha sonra tekrar deneyin.",
-    success:   "Giriş başarılı!",
-    fail:      "Giriş başarısız. Lütfen tekrar deneyin.",
+    fill: "Lütfen e-posta ve şifrenizi girin.",
+    invalid: "E-posta veya şifre yanlış.",
+    merchant: "Satıcı hesapları buradan giriş yapamaz.",
+    google: "Google ile kayıt oldunuz. Lütfen Google ile giriş yapın.",
+    inactive: "Hesabınız henüz aktifleştirilmedi.",
+    locked: "Çok fazla hatalı deneme. Lütfen daha sonra tekrar deneyin.",
+    success: "Giriş başarılı!",
+    fail: "Giriş başarısız. Lütfen tekrar deneyin.",
     ratelimit: "Çok fazla istek. Lütfen bekleyin.",
-    csrf:      "Geçersiz CSRF anahtarı."
-  }
+    csrf: "Geçersiz CSRF anahtarı.",
+  },
 };
 
 function pickLocale(req) {
@@ -59,18 +58,18 @@ function getClientIp(req) {
   return xf ? xf.split(",")[0].trim() : (req.headers.get("x-real-ip") || "unknown");
 }
 
-// "Set-Cookie" başlığındaki birden fazla çerezi güvenle ayır
+// Çoklu Set-Cookie başlığını güvenle ayır
 function splitSetCookies(headerVal) {
   return headerVal ? headerVal.split(/,(?=[^,; ]+=)/g) : [];
 }
 // Set-Cookie listesi içinden istenen cookie'nin "name=value" çiftini döndür
 function pickCookiePair(setCookieHeader, cookieNameLower /* lower-case */) {
   for (const c of splitSetCookies(setCookieHeader)) {
-    const pair = c.split(";")[0].trim();        // name=value
+    const pair = c.split(";")[0].trim(); // name=value
     const eq = pair.indexOf("=");
     if (eq > 0) {
       const name = pair.slice(0, eq).trim().toLowerCase();
-      if (name === cookieNameLower) return pair; // değeri orijinal haliyle döndür
+      if (name === cookieNameLower) return pair; // değeri aynen döndür
     }
   }
   return "";
@@ -82,14 +81,14 @@ export async function POST(req) {
   const ip = getClientIp(req);
 
   try {
-    // 1) CSRF (header + cookie eşleşmeli)
+    // 1) CSRF header+cookie doğrulaması
     try {
       await validateCsrfToken(req);
     } catch {
       return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 });
     }
 
-    // 2) Rate limit (IP bazlı)
+    // 2) Rate limit
     const { ok, resetMs } = await checkRateLimit({
       key: `login:ip:${ip}`,
       limit: RATE_LIMIT_COUNT,
@@ -98,7 +97,13 @@ export async function POST(req) {
     if (!ok) {
       return new NextResponse(
         JSON.stringify({ success: false, message: msg.ratelimit }),
-        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || RATE_LIMIT_WINDOW_MS)/1000)), "Content-Type": "application/json" } }
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.ceil((resetMs || RATE_LIMIT_WINDOW_MS) / 1000)),
+            "Content-Type": "application/json",
+          },
+        }
       );
     }
 
@@ -115,14 +120,11 @@ export async function POST(req) {
       return NextResponse.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
-    // 4) User fetch (minimum alanlar)
+    // 4) Kullanıcı & kapılar
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      // Generic mesaj (enumeration yok)
       return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
     }
-
-    // 5) Rol / durum kapıları + Google-only uyarısı
     if (user.role === "merchant") {
       return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
     }
@@ -130,46 +132,40 @@ export async function POST(req) {
       return NextResponse.json({ success: false, message: msg.locked }, { status: 403 });
     }
     if (!user.passwordHash) {
-      // Google ile kayıt: manuel login yasak (şifre oluşturmadıkça)
       return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
     }
     if (user.status !== "active") {
       return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
     }
 
-    // 6) Parola doğrulama + brute-force sayaçları
+    // 5) Parola doğrulama + brute-force sayaçları
     const okPass = await bcrypt.compare(password, user.passwordHash);
     if (!okPass) {
       const nextFailed = (user.failedAttempts || 0) + 1;
-      const willLock = nextFailed >= MAX_FAILED_ATTEMPTS;
       await prisma.user.update({
         where: { id: user.id },
         data: {
           failedAttempts: nextFailed,
-          lockUntil: willLock ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS) : user.lockUntil
-        }
+          lockUntil:
+            nextFailed >= MAX_FAILED_ATTEMPTS
+              ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS)
+              : user.lockUntil,
+        },
       });
       return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
     }
-
-    // Başarılı giriş → sayaç sıfırla
+    // Başarılı giriş → sayaçları sıfırla
     await prisma.user.update({
       where: { id: user.id },
-      data: { failedAttempts: 0, lockUntil: null }
+      data: { failedAttempts: 0, lockUntil: null },
     });
 
-    /**
-     * 7) SESSION KURULUMU — NextAuth Credentials callback'e sunucu-tarafı proxy
-     * Akış:
-     *   a) /api/auth/csrf → csrfToken + (Set-Cookie: next-auth.csrf-token=...)
-     *   b) /api/auth/callback/credentials?json=true&redirect=false (POST, urlencoded)
-     *      → (Set-Cookie: next-auth.session-token[|__Secure-...])
-     */
+    // 6) NextAuth Credentials callback’e sunucu-tarafı proxy
     const scheme = req.headers.get("x-forwarded-proto") || "http";
     const host = req.headers.get("host");
     const origin = req.nextUrl?.origin || `${scheme}://${host}`;
 
-    // a) NextAuth CSRF al
+    // a) /api/auth/csrf → csrfToken + Set-Cookie(...)
     const csrfRes = await fetch(`${origin}/api/auth/csrf`, {
       method: "GET",
       headers: { accept: "application/json" },
@@ -179,38 +175,57 @@ export async function POST(req) {
     if (!nextAuthCsrfToken) {
       return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
     }
-    // NextAuth, callback’te aynı request’te CSRF cookie’sini görmek ister → sadece name=value olarak gönder
-    const rawSetCookie = csrfRes.headers.get("set-cookie") || "";
-    const csrfCookiePair = pickCookiePair(rawSetCookie, "next-auth.csrf-token");
 
-    // b) Credentials callback (redirect=false + json=true)
+    // Çerez kavanozu: olası iki CSRF cookie adı + callback-url
+    const rawSetCookie = csrfRes.headers.get("set-cookie") || "";
+    const cookieJar = [
+      pickCookiePair(rawSetCookie, "__secure-next-auth.csrf-token"),
+      pickCookiePair(rawSetCookie, "next-auth.csrf-token"),
+      pickCookiePair(rawSetCookie, "next-auth.callback-url"),
+    ]
+      .filter(Boolean)
+      .join("; ");
+
+    // b) /api/auth/callback/credentials?json=true&redirect=false
     const form = new URLSearchParams();
     form.set("csrfToken", nextAuthCsrfToken);
     form.set("email", email);
     form.set("password", password);
     form.set("redirect", "false");
-    form.set("callbackUrl", origin); // opsiyonel
+    form.set("callbackUrl", origin);
 
-    const cbRes = await fetch(`${origin}/api/auth/callback/credentials?json=true&redirect=false`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        "accept": "application/json",
-        ...(csrfCookiePair ? { cookie: csrfCookiePair } : {}),
-      },
-      body: form.toString(),
-      redirect: "manual",
-    });
+    const cbRes = await fetch(
+      `${origin}/api/auth/callback/credentials?json=true&redirect=false`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "application/json",
+          ...(cookieJar ? { cookie: cookieJar } : {}),
+        },
+        body: form.toString(),
+        redirect: "manual",
+      }
+    );
 
     let cbJson = {};
-    try { cbJson = await cbRes.json(); } catch {}
+    try {
+      cbJson = await cbRes.json();
+    } catch {}
 
     if (!cbRes.ok || cbJson?.error) {
-      return NextResponse.json({ success: false, message: msg.fail }, { status: 401 });
+      // İstemciye generic dön; (debug gerekirse reason alanını açabilirsiniz)
+      return NextResponse.json(
+        { success: false, message: msg.fail /*, reason: cbJson?.error */ },
+        { status: 401 }
+      );
     }
 
-    // NextAuth session cookie’lerini TEK TEK geçir
-    const res = NextResponse.json({ success: true, message: msg.success }, { status: 200 });
+    // c) NextAuth session çerezlerini tek tek geçir
+    const res = NextResponse.json(
+      { success: true, message: msg.success },
+      { status: 200 }
+    );
     const setCookieHeader = cbRes.headers.get("set-cookie");
     if (setCookieHeader) {
       for (const c of splitSetCookies(setCookieHeader)) {
@@ -219,7 +234,6 @@ export async function POST(req) {
     }
     res.headers.set("cache-control", "no-store");
     return res;
-
   } catch {
     return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
   }

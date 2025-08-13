@@ -41,6 +41,7 @@ function verifyGooglePrecheckCookie() {
 
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
+  trustHost: true,
 
   providers: [
     GoogleProvider({

@@ -1,32 +1,30 @@
 // app/login/page.js
 // Amaç: Kullanıcı girişi (manuel + Google) için güvenli, backend ile tam uyumlu sayfa.
-// Özet:
-// - CSRF header'ı otomatik ekler (useCsrfToken hook).
-// - Backend'in döndürdüğü tüm mesajları gösterir (Google ile kayıt oldu -> Google ile giriş vb.).
-// - Accept-Language header'ını locale'e göre gönderir.
-// - Başarılı aktivasyon sonrası banner ( ?activated=1 ).
-// - Basit input doğrulama (email pattern), erişilebilirlik ve mobil uyum.
 //
-// SECURITY NOTE:
-// - State-changing isteklerde CSRF header zorunludur. Bu sayfa /api/login'e CSRF header gönderir.
-// - Google login NextAuth üzerinden çalışır; manuel login NextAuth session cookie kurar (HttpOnly, SameSite=Strict).
+// Notlar
+// - /api/login'e CSRF header (useCsrfToken) ve Accept-Language gönderilir.
+// - Backend'in döndürdüğü mesajlar aynen gösterilir (Google-only uyarısı özel ele alınır).
+// - Başarılıysa ?from=... varsa oraya, yoksa /dashboard'a yönlendirir.
+// - Aktivasyon sonrası /login?activated=1 banner'ı.
+// - credentials:'include' ile session cookie'leri tarayıcıya yazdırılır.
 
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { signIn } from 'next-auth/react';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { signIn } from "next-auth/react";
 
-import PublicLayout from '@/components/PublicLayout';
-import { useLocale } from '@/context/LocaleContext';
-import { useCsrfToken } from '@/hooks/useCsrfToken';
+import PublicLayout from "@/components/PublicLayout";
+import { useLocale } from "@/context/LocaleContext";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const translations = {
   en: {
     title: "User Login",
     infoTitle: "Start earning by sharing",
-    infoDesc: "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
+    infoDesc:
+      "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
     infoStrong: "Promote products, earn commission, track your stats in real-time.",
     li1: "Each product you claim generates a unique referral link",
     li2: "You get paid when people buy through your link",
@@ -46,13 +44,14 @@ const translations = {
     googleBtn: "Sign in with Google",
     googleSignInError: "Google sign-in failed.",
     serverError: "Server error. Please try again later.",
-    setPassword: "You signed up with Google. Please log in with your google account.",
-    activatedBanner: "Your account has been activated! You can now log in."
+    setPassword: "You signed up with Google. Please log in with your Google account.",
+    activatedBanner: "Your account has been activated! You can now log in.",
   },
   tr: {
     title: "Kullanıcı Girişi",
     infoTitle: "Paylaş, kazanmaya başla",
-    infoDesc: "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
+    infoDesc:
+      "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
     infoStrong: "Ürünleri tanıt, komisyon kazan, istatistiklerini anlık takip et.",
     li1: "Her ürün için sana özel referans linki oluşur",
     li2: "Birileri senin linkinden alışveriş yaparsa ödeme alırsın",
@@ -73,104 +72,108 @@ const translations = {
     googleSignInError: "Google ile giriş başarısız oldu.",
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
     setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap.",
-    activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz."
-  }
+    activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
+  },
 };
 
 export default function Page() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
-
-  // ✅ useCsrfToken doğru kullanım (destructure)
   const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const t = useMemo(() => {
-    const lang = locale === 'tr' ? 'tr' : 'en';
+    const lang = locale === "tr" ? "tr" : "en";
     return (key) => translations[lang][key] ?? key;
   }, [locale]);
 
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [loading, setLoading]   = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
+  const firstInputRef = useRef(null);
 
-  // Aktivasyon sonrası banner: /login?activated=1
+  // Aktivasyon sonrası banner ve ?from desteği
   useEffect(() => {
-    if (searchParams?.get('activated') === '1') {
+    if (searchParams?.get("activated") === "1") {
       setJustActivated(true);
-      // URL'i temizleyelim (güzel görünüm)
       const url = new URL(window.location.href);
-      url.searchParams.delete('activated');
-      window.history.replaceState({}, '', url.toString());
+      url.searchParams.delete("activated");
+      window.history.replaceState({}, "", url.toString());
     }
   }, [searchParams]);
 
-  // Locale veya CSRF hazır değilse render etmeyelim (yanlış 403 riskini azaltır)
+  // İlk odak
+  useEffect(() => {
+    firstInputRef.current?.focus();
+  }, []);
+
   if (!ready || !csrfReady) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
+
     if (!email || !password) {
-      setError(t('errorFill'));
+      setError(t("errorFill"));
       return;
     }
     if (!validateEmail(email)) {
-      setError(t('errorEmailFormat'));
+      setError(t("errorEmailFormat"));
       return;
     }
 
-    setError('');
+    setError("");
     setLoading(true);
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
+      const res = await fetch("/api/login", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken || '',
-          'accept-language': locale || 'en'
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken || "",
+          "accept-language": locale || "en",
         },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-        credentials: 'include'
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+        credentials: "include",
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        router.push('/dashboard');
+        const go = searchParams?.get("from") || "/dashboard";
+        router.replace(go);
       } else {
         const msg = data?.message;
-
-        // ✅ Backend "Google ile kayıt" mesajı için doğru karşılaştırma
-        if (
-          msg === translations.en.google ||
-          msg === translations.tr.google
-        ) {
-          setError(t('setPassword'));
-        } else if (typeof msg === 'string' && msg.length > 0) {
+        if (msg === translations.en.google || msg === translations.tr.google) {
+          setError(t("setPassword"));
+        } else if (typeof msg === "string" && msg.length > 0) {
           setError(msg);
         } else {
-          setError(t('serverError'));
+          setError(t("serverError"));
         }
       }
     } catch {
-      setError(t('serverError'));
+      setError(t("serverError"));
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
+    if (loading) return;
     setLoading(true);
-    setError('');
+    setError("");
     try {
-      await signIn('google', { callbackUrl: '/dashboard' });
+      const callbackUrl = searchParams?.get("from") || "/dashboard";
+      await signIn("google", { callbackUrl });
     } catch {
-      setError(t('googleSignInError'));
-    } finally {
+      setError(t("googleSignInError"));
       setLoading(false);
     }
   };
@@ -178,50 +181,63 @@ export default function Page() {
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* INFO SECTION */}
+        {/* INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t('infoTitle')}
+              {t("infoTitle")}
             </h2>
-            <p className="text-gray-300 text-lg mb-4">{t('infoDesc')}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">{t('infoStrong')}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
-              <li>{t('li1')}</li>
-              <li>{t('li2')}</li>
-              <li>{t('li3')}</li>
-              <li>{t('li4')}</li>
+            <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">
+              {t("infoStrong")}
+            </p>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
+              <li>{t("li1")}</li>
+              <li>{t("li2")}</li>
+              <li>{t("li3")}</li>
+              <li>{t("li4")}</li>
             </ul>
             <div className="text-gray-400 text-sm mb-2">
-              {t('faq')}
-              <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-                {locale === 'tr' ? 'SSS' : 'FAQ'}
+              {t("faq")}
+              <Link
+                href="/faq"
+                className="text-[#81d742] underline hover:text-[#b3ffb3]"
+              >
+                {locale === "tr" ? "SSS" : "FAQ"}
               </Link>
             </div>
           </div>
         </div>
 
-        {/* LOGIN FORM */}
+        {/* FORM */}
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
-            {t('title')}
-          </h3>
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
 
           {justActivated && (
-            <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
-              {t('activatedBanner')}
+            <div
+              className="text-green-400 text-base text-center mb-3"
+              role="status"
+              aria-live="polite"
+            >
+              {t("activatedBanner")}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">{t('emailPlaceholder')}</label>
+            <label className="sr-only" htmlFor="email">
+              {t("emailPlaceholder")}
+            </label>
             <input
+              ref={firstInputRef}
               id="email"
               type="email"
               inputMode="email"
-              placeholder={t('emailPlaceholder')}
+              placeholder={t("emailPlaceholder")}
               value={email}
-              onChange={e => setEmail(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
               autoComplete="username"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
@@ -230,13 +246,15 @@ export default function Page() {
               aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">{t('passwordPlaceholder')}</label>
+            <label className="sr-only" htmlFor="password">
+              {t("passwordPlaceholder")}
+            </label>
             <input
               id="password"
               type="password"
-              placeholder={t('passwordPlaceholder')}
+              placeholder={t("passwordPlaceholder")}
               value={password}
-              onChange={e => setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
               autoComplete="current-password"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
@@ -249,14 +267,18 @@ export default function Page() {
               <button
                 type="button"
                 className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition"
-                onClick={() => router.push('/password_reset')}
+                onClick={() => router.push("/password_reset")}
               >
-                {t('forgot')}
+                {t("forgot")}
               </button>
             </div>
 
             {error && (
-              <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
+              <div
+                className="text-red-500 text-base text-center"
+                role="alert"
+                aria-live="assertive"
+              >
                 {error}
               </div>
             )}
@@ -265,14 +287,14 @@ export default function Page() {
               type="submit"
               disabled={loading}
               className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
-              aria-busy={loading ? 'true' : 'false'}
+              aria-busy={loading ? "true" : "false"}
             >
-              {loading ? t('loggingIn') : t('loginBtn')}
+              {loading ? t("loggingIn") : t("loginBtn")}
             </button>
 
             <div className="flex items-center my-4">
               <span className="flex-1 h-px bg-[#232323]" />
-              <span className="px-3 text-gray-400 text-sm font-semibold">{t('or')}</span>
+              <span className="px-3 text-gray-400 text-sm font-semibold">{t("or")}</span>
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
 
@@ -281,27 +303,29 @@ export default function Page() {
               onClick={handleGoogleLogin}
               disabled={loading}
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full"
-              aria-label={t('googleBtn')}
+              aria-label={t("googleBtn")}
             >
-              {/* Google Icon (inline svg) */}
               <span className="w-6 h-6 mr-1 inline-block align-middle" aria-hidden="true">
                 <svg width="24" height="24" viewBox="0 0 48 48">
                   <g>
-                    <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..." />
+                    <path
+                      fill="#4285F4"
+                      d="M44.5 20H24v8.5h11.7C34.9 33 30.2 36 24 36..."
+                    />
                     <path fill="#34A853" d="..." />
                     <path fill="#FBBC05" d="..." />
                     <path fill="#EA4335" d="..." />
                   </g>
                 </svg>
               </span>
-              {t('googleBtn')}
+              {t("googleBtn")}
             </button>
           </form>
 
           <div className="mt-6 text-gray-400 text-sm">
-            {t('noAccount')}{' '}
+            {t("noAccount")}{" "}
             <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-              {t('registerHere')}
+              {t("registerHere")}
             </Link>
           </div>
         </div>
