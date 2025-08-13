@@ -4,22 +4,40 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { cookies } from "next/headers";
 
 /**
  * SECURITY NOTES
- * - Custom JWT/cookie yok; NextAuth tek oturum kaynağı.
+ * - Tek oturum kaynağı NextAuth (custom JWT/cookie yok).
  * - Credentials.authorize: brute-force sayaçları ve status/role kapıları var.
- * - Google: yeni affiliate kullanıcıyı aktif oluşturuyoruz; pending ise giriş reddedilir.
+ * - Google: Yeni kullanıcı oluşturulacaksa önce /api/register (flow:"google") ile
+ *   terms+reCAPTCHA "precheck" zorunlu. Precheck → HttpOnly, imzalı cookie: google_reg_precheck.
+ *   Precheck doğrulanırsa yeni kullanıcı affiliate+active açılır ve otomatik login olur.
+ *   Mevcut kullanıcı login’inde precheck zorunlu değildir (yalnızca kayıt anı için gereklidir).
  */
 
 if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET is not defined!");
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
   throw new Error("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET is missing!");
 }
-// NEXTAUTH_URL prod'da zorunlu olmalı; local geliştirmede Next dev ayarlıyor.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error("JWT_SECRET is not defined!");
 
+// Credentials brute-force
 const MAX_FAILED_ATTEMPTS = 5;
 const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dk
+
+function verifyGooglePrecheckCookie() {
+  try {
+    const c = cookies().get("google_reg_precheck")?.value;
+    if (!c) return false;
+    const payload = jwt.verify(c, JWT_SECRET);
+    return payload && payload.scope === "google_registration_precheck";
+  } catch {
+    return false;
+  }
+}
 
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
@@ -101,16 +119,30 @@ export const authOptions = {
   },
 
   callbacks: {
-    async jwt({ token, user, account, profile }) {
+    async jwt({ token, user }) {
       // İlk girişte user alanlarını JWT'ye yaz
       if (user) {
         token.sub = user.id;
         token.email = user.email;
         token.role = user.role;
         token.status = user.status;
+      } else if (token?.email) {
+        // Kullanıcı güncellemeleri için taze değerleri DB'den çek (status/role değişmiş olabilir)
+        try {
+          const u = await prisma.user.findUnique({
+            where: { email: token.email },
+            select: { id: true, role: true, status: true },
+          });
+          if (u) {
+            token.sub = u.id;
+            token.role = u.role;
+            token.status = u.status;
+          }
+        } catch {}
       }
       return token;
     },
+
     async session({ session, token }) {
       if (session.user && token?.sub) {
         session.user.id = token.sub;
@@ -119,28 +151,73 @@ export const authOptions = {
       }
       return session;
     },
+
     async signIn({ user, account }) {
-      // Google akışı
+      // Yalnız Google akışına özel kurallar
       if (account?.provider === "google" && user?.email) {
-        // Kullanıcı yoksa oluştur (affiliate, aktif)
-        let existing = await prisma.user.findUnique({ where: { email: user.email } });
+        const email = user.email.toLowerCase();
+
+        // Varsa mevcut kullanıcıyı çek
+        let existing = await prisma.user.findUnique({ where: { email } });
+
+        // Merchant hesapların Google ile girmesine izin verme
+        if (existing?.role === "merchant") return false;
+
         if (!existing) {
-          await prisma.user.create({
+          // YENİ KAYIT: Precheck cookie zorunlu
+          const ok = verifyGooglePrecheckCookie();
+          if (!ok) return false; // terms+captcha yapılmamışsa reddet
+          // Not: Kullanıcıyı burada yaratmıyoruz, PrismaAdapter yeni user'ı oluşturacak.
+          // createUser event'inde status/role/terms/emailVerified alanlarını finalize edeceğiz.
+          return true;
+        }
+
+        // MEVCUT KULLANICI:
+        // Eski dönemde 'pending' açılmış Google kullanıcıları olabilir.
+        // Precheck varsa otomatik aktive et, yoksa reddet (kayıt akışından gelmiyor demektir).
+        if (existing.status === "pending") {
+          const ok = verifyGooglePrecheckCookie();
+          if (!ok) return false;
+          await prisma.user.update({
+            where: { id: existing.id },
             data: {
-              name: user.name || "Google User",
-              email: user.email,
-              termsAccepted: true,
               status: "active",
-              role: "affiliate",
-              emailVerified: new Date(),
+              termsAccepted: true,
+              emailVerified: existing.emailVerified ?? new Date(),
+              role: existing.role || "affiliate",
             },
           });
+          return true;
         }
-        existing = await prisma.user.findUnique({ where: { email: user.email } });
-        // pending ise izin verme
-        if (existing?.status === "pending") return false;
+
+        // Active kullanıcı → login serbest
+        return existing.status === "active";
       }
+
       return true;
+    },
+  },
+
+  // İlk Google login'inde (kullanıcı yoksa) PrismaAdapter user oluşturduktan sonra tetiklenir
+  events: {
+    async createUser({ user, account }) {
+      // Sadece Google kaydında alanları finalize et
+      if (account?.provider === "google" && user?.email) {
+        try {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              // Google ile "register" anında aktif + affiliate
+              status: "active",
+              role: "affiliate",
+              termsAccepted: true,
+              emailVerified: user.emailVerified ?? new Date(),
+            },
+          });
+        } catch {
+          // Sessiz geç: başarısızsa default değerlerle kalır, sonraki login'de jwt/session günceller
+        }
+      }
     },
   },
 

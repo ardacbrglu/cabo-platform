@@ -1,6 +1,14 @@
 // app/api/register/route.js
-// Sorumluluk: Kullanıcı kaydı (CSRF, Rate Limit, reCAPTCHA, bcrypt, aktivasyon maili)
-// SECURITY: CSRF wrapper, IP bazlı rate limit, generic error mesajları, Google-only hesabı kontrolü.
+// Sorumluluk: Kullanıcı kaydı
+// - MANUEL: CSRF + RateLimit + reCAPTCHA + bcrypt + aktivasyon maili → status: "pending"
+// - GOOGLE: CSRF + RateLimit + reCAPTCHA + terms → sadece "precheck" (imzalı, 5dk HttpOnly cookie)
+//   Not: Oturumu NextAuth kurar. Yeni Google kullanıcısı oluşturulurken authOptions.signIn içinde
+//   bu precheck cookie doğrulanırsa hesap "active" açılır ve otomatik login olur.
+//
+// Güvenlik Zinciri: auth(session yok) → CSRF → rate-limit → validation → işlem
+// CSRF: withCsrfProtection header(cookie eşleşmesi) zorunlu
+// RateLimit: IP bazlı (8/dk) → "Retry-After" header
+// reCAPTCHA: server-side doğrulama (Google siteverify)
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +45,7 @@ const messages = {
     limitExceeded: "Activation email already sent 3 times today. Please try again tomorrow.",
     alreadyActive: "This email is already registered and activated. Try logging in or resetting your password.",
     mailfail: "Activation email could not be sent. Please try again later.",
+    ok: "OK",
   },
   tr: {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
@@ -54,38 +63,51 @@ const messages = {
     limitExceeded: "Aktivasyon e-postası bugün 3 kez gönderildi. Lütfen yarın tekrar deneyin.",
     alreadyActive: "Bu e-posta zaten kayıtlı ve aktif. Giriş yapabilir veya şifrenizi sıfırlayabilirsiniz.",
     mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen tekrar deneyin.",
+    ok: "Tamam",
   },
 };
 
-// CSRF: wrapper ile koru
+// JSON helper: no-store
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
 export const POST = withCsrfProtection(async (req) => {
   const langHeader = req.headers.get("accept-language") || "";
-  const locale = langHeader.startsWith("tr") ? "tr" : "en";
+  const locale = langHeader.toLowerCase().startsWith("tr") ? "tr" : "en";
   const msg = messages[locale];
 
   // Rate limit (IP bazlı 8/dk)
   const rlKey = makeRateLimitKey(req, { scope: "register" });
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 8, windowMs: 60_000 });
   if (!ok) {
-    return NextResponse.json(
+    return json(
       { success: false, message: msg.ratelimit },
       { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
     );
   }
 
-  // Body parse
+  // Body
   let body;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ success: false, message: msg.required }, { status: 400 });
-  }
-  const { name, email, password, termsAccepted, captcha } = body || {};
-  if (!termsAccepted || !name || !email || !password || !captcha) {
-    return NextResponse.json({ success: false, message: msg.required }, { status: 400 });
+    return json({ success: false, message: msg.required }, { status: 400 });
   }
 
-  // reCAPTCHA doğrulaması (server-side)
+  // flow: "manual" | "google"
+  const flow = (body?.flow || "manual").toString();
+  const termsAccepted = Boolean(body?.termsAccepted);
+  const captcha = (body?.captcha || "").toString();
+
+  // 1) Terms zorunlu (her iki akış)
+  if (!termsAccepted) {
+    return json({ success: false, message: msg.terms }, { status: 400 });
+  }
+
+  // 2) reCAPTCHA (her iki akış)
   try {
     const verifyRes = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
@@ -97,48 +119,74 @@ export const POST = withCsrfProtection(async (req) => {
     });
     const captchaData = await verifyRes.json().catch(() => ({}));
     if (!captchaData?.success) {
-      return NextResponse.json({ success: false, message: msg.captcha }, { status: 400 });
+      return json({ success: false, message: msg.captcha }, { status: 400 });
     }
   } catch {
-    // Fail-soft ama başarı sayma
-    return NextResponse.json({ success: false, message: msg.captcha }, { status: 400 });
+    return json({ success: false, message: msg.captcha }, { status: 400 });
   }
 
-  // Validasyon
-  const cleanEmail = String(email).trim().toLowerCase();
-  const cleanName = String(name).trim();
+  // 3) GOOGLE AKIŞI: precheck cookie (5 dk, imzalı)
+  if (flow === "google") {
+    const token = jwt.sign(
+      { scope: "google_registration_precheck" },
+      JWT_SECRET,
+      { expiresIn: "5m" }
+    );
 
+    const res = json({ success: true, precheck: true, message: msg.ok }, { status: 200 });
+    res.cookies.set("google_reg_precheck", token, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: true,
+      maxAge: 5 * 60,
+      path: "/",
+    });
+    return res;
+  }
+
+  // 4) MANUEL AKIŞ
+  const name = (body?.name || "").toString();
+  const email = (body?.email || "").toString();
+  const password = (body?.password || "").toString();
+
+  if (!name || !email || !password) {
+    return json({ success: false, message: msg.required }, { status: 400 });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = name.trim().replace(/[^a-zA-Z0-9_]/g, ""); // whitelist
   if (!emailRegex.test(cleanEmail)) {
-    return NextResponse.json({ success: false, message: msg.email }, { status: 400 });
+    return json({ success: false, message: msg.email }, { status: 400 });
   }
   if (!nameRegex.test(cleanName)) {
-    return NextResponse.json({ success: false, message: msg.username }, { status: 400 });
+    return json({ success: false, message: msg.username }, { status: 400 });
   }
-  if (String(password).length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
-    return NextResponse.json({ success: false, message: msg.password }, { status: 400 });
+  if (password.length < 8 || !/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
+    return json({ success: false, message: msg.password }, { status: 400 });
   }
 
-  // Eğer Google hesabı ise manuel kayıt engelle
+  // Google hesapla çakışma → manuel engelle
   const googleAccount = await prisma.account.findFirst({
     where: { provider: "google", user: { email: cleanEmail } },
   });
   if (googleAccount) {
-    return NextResponse.json({ success: false, message: msg.googleReg }, { status: 409 });
+    return json({ success: false, message: msg.googleReg }, { status: 409 });
   }
 
-  // Kullanıcı mevcut mu?
+  // Kullanıcı var mı?
   const existing = await prisma.user.findFirst({ where: { email: cleanEmail } });
   if (existing) {
     if (existing.status === "active") {
-      return NextResponse.json({ success: false, message: msg.alreadyActive }, { status: 409 });
+      return json({ success: false, message: msg.alreadyActive }, { status: 409 });
     }
-    // pending ise: günde en fazla 3 aktivasyon e-postası
+
+    // pending → günde en fazla 3 mail
     const now = new Date();
     const lastSent = existing.lastActivationRequestAt || new Date(0);
     const isSameDay = now.toDateString() === lastSent.toDateString();
     const count = isSameDay ? existing.activationRequestedCount || 0 : 0;
     if (count >= 3) {
-      return NextResponse.json({ success: false, message: msg.limitExceeded }, { status: 429 });
+      return json({ success: false, message: msg.limitExceeded }, { status: 429 });
     }
 
     const newToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
@@ -148,20 +196,21 @@ export const POST = withCsrfProtection(async (req) => {
         activationToken: newToken,
         lastActivationRequestAt: now,
         activationRequestedCount: count + 1,
+        termsAccepted: true,
       },
     });
 
     try {
       await sendActivationEmail(cleanEmail, newToken, locale);
     } catch {
-      return NextResponse.json({ success: false, message: msg.mailfail }, { status: 500 });
+      return json({ success: false, message: msg.mailfail }, { status: 500 });
     }
-    return NextResponse.json({ success: true, message: msg.success }, { status: 200 });
+    return json({ success: true, message: msg.success }, { status: 200 });
   }
 
-  // Yeni kullanıcı oluştur
-  const passwordHash = await bcrypt.hash(String(password), 10);
-  const token = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
+  // Yeni kullanıcı (manuel): pending + mail
+  const passwordHash = await bcrypt.hash(password, 10);
+  const activationToken = jwt.sign({ email: cleanEmail }, JWT_SECRET, { expiresIn: "1d" });
 
   await prisma.user.create({
     data: {
@@ -171,17 +220,17 @@ export const POST = withCsrfProtection(async (req) => {
       role: "affiliate",
       status: "pending",
       termsAccepted: true,
-      activationToken: token,
+      activationToken,
       activationRequestedCount: 1,
       lastActivationRequestAt: new Date(),
     },
   });
 
   try {
-    await sendActivationEmail(cleanEmail, token, locale);
+    await sendActivationEmail(cleanEmail, activationToken, locale);
   } catch {
-    return NextResponse.json({ success: false, message: msg.mailfail }, { status: 500 });
+    return json({ success: false, message: msg.mailfail }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, message: msg.success }, { status: 200 });
+  return json({ success: true, message: msg.success }, { status: 200 });
 });
