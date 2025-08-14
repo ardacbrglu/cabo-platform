@@ -1,38 +1,36 @@
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import ProfileDropdown from './ProfileDropdown';
-import {
-  BarChart2, Link2, ShoppingCart, Wallet2, Home as HomeIcon
-} from 'lucide-react';
-import { useIsMobile } from '../hooks/useIsMobile';
-import HamburgerMenu from './HamburgerMenu';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import ProfileDropdown from "./ProfileDropdown";
+import { BarChart2, Link2, ShoppingCart, Wallet2, Home as HomeIcon } from "lucide-react";
+import { useIsMobile } from "../hooks/useIsMobile";
+import HamburgerMenu from "./HamburgerMenu";
 
-import { useUser } from '@/context/UserContext';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useUser } from "@/context/UserContext";
+import useTranslation from "@/hooks/useTranslation"; // ⬅️ default import
 
-const COLOR_CABO = '#d1ffd0';
+const COLOR_CABO = "#d1ffd0";
 
 export default function Layout({ children }) {
   const pathname = usePathname();
   const isMobile = useIsMobile();
   const { user } = useUser();
-  const t = useTranslation(user?.language_preference || "en");
+  const { t } = useTranslation(); // ⬅️ destructure
 
   const navItemClass = (path) => `
     inline-flex flex-row items-center gap-2
     transition hover:text-[#81d742] hover:scale-[1.015]
-    ${pathname === path ? 'text-[#81d742] font-semibold' : 'text-gray-200'}
+    ${pathname === path ? "text-[#81d742] font-semibold" : "text-gray-200"}
   `;
 
   const navItemStyle = {
-    display: 'inline-flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: '0.5rem',
-    verticalAlign: 'middle',
-    whiteSpace: 'nowrap',
-    textAlign: 'left',
-    padding: '12px 10px'
+    display: "inline-flex",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: "0.5rem",
+    verticalAlign: "middle",
+    whiteSpace: "nowrap",
+    textAlign: "left",
+    padding: "12px 10px",
   };
 
   return (
@@ -43,7 +41,7 @@ export default function Layout({ children }) {
           style={{
             color: COLOR_CABO,
             letterSpacing: "-0.02em",
-            textShadow: "0 2px 12px rgba(129,215,66,0.09)"
+            textShadow: "0 2px 12px rgba(129,215,66,0.09)",
           }}
         >
           Cabo
@@ -54,31 +52,31 @@ export default function Layout({ children }) {
           <nav>
             <ul className="flex gap-8 text-sm font-medium items-center">
               <li>
-                <Link href="/dashboard" className={navItemClass('/dashboard')} style={navItemStyle}>
+                <Link href="/dashboard" className={navItemClass("/dashboard")} style={navItemStyle}>
                   <HomeIcon size={22} />
                   <span>{t("home")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/products" className={navItemClass('/products')} style={navItemStyle}>
+                <Link href="/products" className={navItemClass("/products")} style={navItemStyle}>
                   <ShoppingCart size={22} />
                   <span>{t("productMarket")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/mylinks" className={navItemClass('/mylinks')} style={navItemStyle}>
+                <Link href="/mylinks" className={navItemClass("/mylinks")} style={navItemStyle}>
                   <Link2 size={22} />
                   <span>{t("myLinks")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/performance" className={navItemClass('/performance')} style={navItemStyle}>
+                <Link href="/performance" className={navItemClass("/performance")} style={navItemStyle}>
                   <BarChart2 size={22} />
                   <span>{t("performance.title")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/wallet" className={navItemClass('/wallet')} style={navItemStyle}>
+                <Link href="/wallet" className={navItemClass("/wallet")} style={navItemStyle}>
                   <Wallet2 size={22} />
                   <span>{t("wallet")}</span>
                 </Link>
