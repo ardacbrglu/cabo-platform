@@ -99,8 +99,9 @@ export const authOptions = {
         // Hesap aktif değilse login yok
         if (user.status !== "active") return null;
 
+        // ⬇️ ÖNEMLİ: id'yi string döndür (NextAuth/JWT uyumu için)
         return {
-          id: user.id,
+          id: String(user.id),
           name: user.name,
           email: user.email,
           role: user.role,
@@ -123,7 +124,7 @@ export const authOptions = {
     async jwt({ token, user }) {
       // İlk girişte user alanlarını JWT'ye yaz
       if (user) {
-        token.sub = user.id;
+        token.sub = String(user.id); // id -> string
         token.email = user.email;
         token.role = user.role;
         token.status = user.status;
@@ -135,18 +136,21 @@ export const authOptions = {
             select: { id: true, role: true, status: true },
           });
           if (u) {
-            token.sub = u.id;
+            token.sub = String(u.id); // id -> string
             token.role = u.role;
             token.status = u.status;
           }
-        } catch {}
+        } catch {
+          // sessiz geç
+        }
       }
       return token;
     },
 
     async session({ session, token }) {
       if (session.user && token?.sub) {
-        session.user.id = token.sub;
+        // session.user.id string kalsın (tüm yerlerde tutarlı)
+        session.user.id = String(token.sub);
         session.user.role = token.role;
         session.user.status = token.status;
       }
