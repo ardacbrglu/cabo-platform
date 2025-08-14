@@ -3,10 +3,7 @@ export const runtime = "nodejs";
 
 /**
  * /api/login  — Credentials login'i server-side proxy eder.
- * Tasarım: Tarayıcının gönderdiği COOKIE'yi aynen callback'e iletiriz.
- *          csrfToken (form alanı) = request'teki next-auth.csrf-token çerezinin "token|hash" biçiminden token kısmı.
- *
- * Güvenlik Zinciri: CSRF (platform) → rate-limit → kullanıcı kapıları → bcrypt → NextAuth callback
+ * Güvenlik Zinciri: CSRF → rate-limit → kullanıcı kapıları → bcrypt → NextAuth callback
  */
 
 import { NextResponse } from "next/server";
@@ -62,7 +59,6 @@ function withDebug(res, reason) {
   return res;
 }
 
-/** Cookie header’ından istenen isim(ler)deki çerezi {name,value} olarak bul */
 function findCookieKV(req, names) {
   const list = Array.isArray(names) ? names : [names];
   const header = req.headers.get("cookie") || "";
@@ -70,12 +66,10 @@ function findCookieKV(req, names) {
     const re = new RegExp(`(?:^|;\\s*)(${name})=([^;]+)`);
     const m = header.match(re);
     if (m) return { name: m[1], value: m[2] };
-    // isimler büyük/küçük harf hassas; NextAuth çerezleri sabit yazılır.
   }
   return null;
 }
 
-/** "token|hash" → "token" */
 function tokenFromCookieValue(raw) {
   if (!raw) return null;
   let v = raw;
@@ -90,11 +84,14 @@ export async function POST(req) {
   const ip = getClientIp(req);
 
   try {
-    // 1) Platform CSRF
-    try { validateCsrfToken(req); }
-    catch { return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 }); }
+    // 1) CSRF kontrolü
+    try {
+      validateCsrfToken(req);
+    } catch {
+      return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 });
+    }
 
-    // 2) Rate limit
+    // 2) Rate Limit
     const { ok } = await checkRateLimit({
       key: `login:ip:${ip}`,
       limit: RATE_LIMIT_COUNT,
@@ -103,9 +100,16 @@ export async function POST(req) {
     if (!ok) return NextResponse.json({ success: false, message: msg.ratelimit }, { status: 429 });
 
     // 3) Body
-    let body; try { body = await req.json(); } catch { body = null; }
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      body = null;
+    }
+
     const email = String(body?.email || "").trim().toLowerCase();
     const password = String(body?.password || "");
+
     if (!email || !password) {
       return NextResponse.json({ success: false, message: msg.fill }, { status: 400 });
     }
@@ -119,7 +123,7 @@ export async function POST(req) {
     if (!user.passwordHash) return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
     if (user.status !== "active") return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
 
-    // 5) Parola
+    // 5) Şifre kontrolü
     const okPass = await bcrypt.compare(password, user.passwordHash);
     if (!okPass) {
       const nextFailed = (user.failedAttempts || 0) + 1;
@@ -136,14 +140,13 @@ export async function POST(req) {
     }
     await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
-    // 6) Tarayıcıdan gelen NextAuth CSRF çerezini ve tüm cookie header'ını kullan
+    // 6) NextAuth CSRF token'ı bul
     const csrfKV = findCookieKV(req, [
       "__Host-next-auth.csrf-token",
       "__Secure-next-auth.csrf-token",
       "next-auth.csrf-token",
     ]);
     if (!csrfKV) {
-      // Kullanıcı daha önce /api/auth/signin'e uğrayıp CSRF cookie almamışsa
       return withDebug(
         NextResponse.json({ success: false, message: msg.fail }, { status: 500 }),
         "no_nextauth_csrf_cookie"
@@ -158,12 +161,9 @@ export async function POST(req) {
     }
 
     const fullCookieHeader = req.headers.get("cookie") || "";
+    const origin = process.env.NEXTAUTH_URL || `${req.headers.get("x-forwarded-proto") || "https"}://${req.headers.get("host")}`;
 
-    // 7) Credentials callback (NextAuth)
-    const scheme = req.headers.get("x-forwarded-proto") || "https";
-    const host = req.headers.get("host");
-    const origin = req.nextUrl?.origin || `${scheme}://${host}`;
-
+    // 7) NextAuth callback'e yönlendir
     const form = new URLSearchParams();
     form.set("csrfToken", nextAuthCsrfToken);
     form.set("email", email);
@@ -176,7 +176,6 @@ export async function POST(req) {
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         accept: "application/json",
-        // Kritik: Tarayıcıdan gelen COOKIE'yi aynen ilet
         ...(fullCookieHeader ? { cookie: fullCookieHeader } : {}),
         origin,
         referer: `${origin}/login`,
@@ -186,24 +185,27 @@ export async function POST(req) {
     });
 
     let cbJson = {};
-    try { cbJson = await cbRes.json(); } catch { /* no-op */ }
+    try {
+      cbJson = await cbRes.json();
+    } catch {}
 
     if (!cbRes.ok || cbJson?.error) {
-      // NextAuth tarafı 401/400 vb. dönerse generic mesaj veriyoruz
       return withDebug(
         NextResponse.json({ success: false, message: msg.fail }, { status: 401 }),
         `cb_fail:${cbRes.status}:${cbJson?.error || "unknown"}`
       );
     }
 
-    // 8) Session cookie'leri forward
+    // 8) Oturum cookie'lerini forward et
     const res = withDebug(
       NextResponse.json({ success: true, message: msg.success }, { status: 200 }),
       "ok"
     );
     const setCookieHeader = cbRes.headers.get("set-cookie");
     if (setCookieHeader) {
-      for (const c of setCookieHeader.split(/,(?=[^,; ]+=)/g)) res.headers.append("set-cookie", c);
+      for (const c of setCookieHeader.split(/,(?=[^,; ]+=)/g)) {
+        res.headers.append("set-cookie", c);
+      }
     }
     res.headers.set("cache-control", "no-store");
     res.headers.set("vary", "cookie");
@@ -211,7 +213,7 @@ export async function POST(req) {
 
   } catch (e) {
     return withDebug(
-      NextResponse.json({ success: false, message: MESSAGES[pickLocale(req)].fail }, { status: 500 }),
+      NextResponse.json({ success: false, message: msg.fail }, { status: 500 }),
       `outer:${e?.message || "err"}`
     );
   }
