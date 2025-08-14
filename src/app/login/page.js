@@ -1,13 +1,4 @@
 // app/login/page.js
-// Amaç: Kullanıcı girişi (manuel + Google) için güvenli, backend ile tam uyumlu sayfa.
-//
-// Notlar
-// - /api/login'e CSRF header (useCsrfToken) ve Accept-Language gönderilir.
-// - Backend'in döndürdüğü mesajlar aynen gösterilir (Google-only uyarısı özel ele alınır).
-// - Başarılıysa ?from=... varsa oraya, yoksa /dashboard'a yönlendirir.
-// - Aktivasyon sonrası /login?activated=1 banner'ı.
-// - credentials:'include' ile session cookie'leri tarayıcıya yazdırılır.
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -95,7 +86,12 @@ export default function Page() {
   const [justActivated, setJustActivated] = useState(false);
   const firstInputRef = useRef(null);
 
-  // Aktivasyon sonrası banner ve ?from desteği
+  // NextAuth CSRF çerezini hazırla (cookie bootstrap)
+  useEffect(() => {
+    fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
+  }, []);
+
+  // Aktivasyon sonrası banner
   useEffect(() => {
     if (searchParams?.get("activated") === "1") {
       setJustActivated(true);
@@ -105,7 +101,6 @@ export default function Page() {
     }
   }, [searchParams]);
 
-  // İlk odak
   useEffect(() => {
     firstInputRef.current?.focus();
   }, []);
@@ -113,6 +108,26 @@ export default function Page() {
   if (!ready || !csrfReady) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+
+  async function tryLoginOnce() {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfToken || "",
+        "accept-language": locale || "en",
+      },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        password,
+      }),
+      credentials: "include",
+    });
+
+    let data = {};
+    try { data = await res.json(); } catch {}
+    return { res, data };
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -130,21 +145,20 @@ export default function Page() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",
-          "accept-language": locale || "en",
-        },
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          password,
-        }),
-        credentials: "include",
-      });
+      // 1. deneme
+      let { res, data } = await tryLoginOnce();
 
-      const data = await res.json().catch(() => ({}));
+      // DEBUG_AUTH=1 ise backend x-debug-reason başlığı bırakır — otomatik kurtarma
+      const debug = res.headers?.get?.("x-debug-reason") || "";
+      const needCsrfBootstrap =
+        debug.includes("no_nextauth_csrf_cookie") ||
+        debug.includes("csrf_cookie_parse_fail") ||
+        debug.includes("cb_fail:302");
+
+      if (!res.ok && needCsrfBootstrap) {
+        try { await fetch("/api/auth/csrf", { credentials: "include" }); } catch {}
+        ({ res, data } = await tryLoginOnce());
+      }
 
       if (res.ok && data?.success) {
         const go = searchParams?.get("from") || "/dashboard";
@@ -152,9 +166,9 @@ export default function Page() {
       } else {
         const msg = data?.message;
         if (msg === translations.en.google || msg === translations.tr.google) {
-          setError(t("setPassword"));
+          setError(t("setPassword")); // Google-only hesap, manuel giriş denemesi
         } else if (typeof msg === "string" && msg.length > 0) {
-          setError(msg);
+          setError(msg); // merchant/inactive/locked gibi backend mesajlarını direkt göster
         } else {
           setError(t("serverError"));
         }
@@ -166,26 +180,13 @@ export default function Page() {
     }
   };
 
-  // <<< GÜNCELLENEN BUTON HANDLER (precheck + signIn) >>>
+  // Google login — SADECE giriş (yeni kayıt Register sayfasından yapılır)
   const handleGoogleLogin = async () => {
     if (loading) return;
     setLoading(true);
     setError("");
 
     const callbackUrl = searchParams?.get("from") || "/dashboard";
-
-    // 1) (önerilen) precheck → yeni kullanıcı akışı için işaret çerezini bırakır.
-    try {
-      await fetch("/api/register/google-precheck", {
-        method: "POST",
-        credentials: "include",
-        headers: { "cache-control": "no-store" },
-      });
-    } catch {
-      // sessiz geç (mevcut kullanıcı için gerekli değil)
-    }
-
-    // 2) Google’a yönlendir
     try {
       await signIn("google", { callbackUrl });
     } catch {
@@ -207,10 +208,7 @@ export default function Page() {
             <p className="text-[#81d742] font-semibold text-lg mb-6">
               {t("infoStrong")}
             </p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -218,10 +216,7 @@ export default function Page() {
             </ul>
             <div className="text-gray-400 text-sm mb-2">
               {t("faq")}
-              <Link
-                href="/faq"
-                className="text-[#81d742] underline hover:text-[#b3ffb3]"
-              >
+              <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
                 {locale === "tr" ? "SSS" : "FAQ"}
               </Link>
             </div>
@@ -233,19 +228,13 @@ export default function Page() {
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
 
           {justActivated && (
-            <div
-              className="text-green-400 text-base text-center mb-3"
-              role="status"
-              aria-live="polite"
-            >
+            <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
               {t("activatedBanner")}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">
-              {t("emailPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
             <input
               ref={firstInputRef}
               id="email"
@@ -262,9 +251,7 @@ export default function Page() {
               aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">
-              {t("passwordPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
             <input
               id="password"
               type="password"
@@ -290,11 +277,7 @@ export default function Page() {
             </div>
 
             {error && (
-              <div
-                className="text-red-500 text-base text-center"
-                role="alert"
-                aria-live="assertive"
-              >
+              <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
                 {error}
               </div>
             )}
@@ -339,12 +322,8 @@ export default function Page() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem !important;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 1rem !important;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem !important; }
+          .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
         }
       `}</style>
     </PublicLayout>

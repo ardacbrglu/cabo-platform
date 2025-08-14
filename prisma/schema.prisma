@@ -58,12 +58,15 @@ model User {
 model PasswordResetToken {
   id        Int      @id @default(autoincrement())
   userId    Int
-  tokenHash String   @unique @db.VarChar(255)
-  expiresAt DateTime
+  token     String   @unique            // <— tekil
   used      Boolean  @default(false)
-  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
 
-  @@index([userId])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, used])              // aktif/temizleme sorguları hızlı
+  @@index([expiresAt])                 // cron temizliği kolay
+  @@map("password_reset_tokens")
 }
 
 model Account {

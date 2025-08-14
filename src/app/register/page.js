@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
@@ -101,6 +101,11 @@ export default function RegisterPage() {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // NextAuth CSRF çerezini önden bırak (Google akışında edge-case’leri azaltır)
+  useEffect(() => {
+    fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
+  }, []);
+
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
 
@@ -108,7 +113,6 @@ export default function RegisterPage() {
     setTimeout(() => router.push("/login"), 1800);
   };
 
-  // Ortak eksik nedenleri (butonlar disabled iken görünür uyarı)
   const manualMissing = useMemo(() => {
     const arr = [];
     if (!name || !email || !password) arr.push(t("required"));
@@ -126,7 +130,7 @@ export default function RegisterPage() {
     return arr;
   }, [terms, captcha, csrfReady, csrfToken, locale]);
 
-  // Google ile kayıt/giriş (Precheck → signIn)
+  // Google: precheck → signIn
   const handleGoogleSignIn = async () => {
     setError("");
     setSuccess("");
@@ -137,7 +141,6 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      // 1) Precheck: terms+captcha zorunluluğunu server tarafında kanıtla
       const precheck = await fetch("/api/register", {
         method: "POST",
         headers: {
@@ -145,6 +148,7 @@ export default function RegisterPage() {
           "x-csrf-token": csrfToken || "",
           "accept-language": locale || "en",
         },
+        credentials: "include",
         body: JSON.stringify({ termsAccepted: true, captcha, flow: "google" }),
       });
 
@@ -155,7 +159,6 @@ export default function RegisterPage() {
         return;
       }
 
-      // 2) NextAuth Google → yeni kullanıcıysa active yaratılacak ve otomatik login
       await signIn("google", { callbackUrl: "/dashboard" });
     } catch {
       setError(locale === "tr" ? "Google ile giriş başarısız oldu." : "Google sign-in failed.");
@@ -163,7 +166,7 @@ export default function RegisterPage() {
     }
   };
 
-  // Manuel kayıt submit
+  // Manuel kayıt
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -188,7 +191,6 @@ export default function RegisterPage() {
 
       const data = await res.json().catch(() => ({}));
 
-      // CSRF özel hata mesajını kullanıcıya geçir
       if (res.status === 403 && (data?.error?.toLowerCase?.().includes("csrf") || data?.message?.toLowerCase?.().includes("csrf"))) {
         setError(t("csrf"));
         setLoading(false);
@@ -200,7 +202,7 @@ export default function RegisterPage() {
         setError("");
         handleSuccessRedirect();
       } else if (data && data.message) {
-        // Pending user’a tekrar aktivasyon maili durumu
+        // pending user’a tekrar aktivasyon maili durumu
         if (
           data.message.includes("check your email") ||
           data.message.includes("Aktivasyon") ||
@@ -233,15 +235,10 @@ export default function RegisterPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t("infoTitle")}
-            </h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
             <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -257,19 +254,11 @@ export default function RegisterPage() {
         </div>
 
         {/* REGISTER FORM */}
-        <form
-          onSubmit={handleSubmit}
-          className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
-          autoComplete="off"
-        >
-          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">
-            {t("title")}
-          </h3>
+        <form onSubmit={handleSubmit} className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center" autoComplete="off">
+          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">{t("title")}</h3>
 
           <div className="w-full">
-            <label htmlFor="name" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t("username")}
-            </label>
+            <label htmlFor="name" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">{t("username")}</label>
             <input
               id="name"
               type="text"
@@ -287,9 +276,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="w-full">
-            <label htmlFor="email" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t("email")}
-            </label>
+            <label htmlFor="email" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">{t("email")}</label>
             <input
               id="email"
               type="email"
@@ -305,9 +292,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="w-full">
-            <label htmlFor="password" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
-              {t("password")}
-            </label>
+            <label htmlFor="password" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">{t("password")}</label>
             <input
               id="password"
               type="password"
@@ -322,14 +307,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="flex items-center gap-2 w-full">
-            <input
-              id="terms"
-              type="checkbox"
-              checked={terms}
-              onChange={e => setTerms(e.target.checked)}
-              required
-              className="accent-[#81d742] h-5 w-5"
-            />
+            <input id="terms" type="checkbox" checked={terms} onChange={e => setTerms(e.target.checked)} required className="accent-[#81d742] h-5 w-5" />
             <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
               {t("terms")}
             </label>
@@ -338,15 +316,11 @@ export default function RegisterPage() {
           {/* reCAPTCHA */}
           <Captcha onChange={setCaptcha} lang={locale} />
 
-          {/* Inline uyarılar (butonlar disabled iken nedenlerini göster) */}
           {(manualMissing.length > 0 || googleMissing.length > 0) && (
             <div className="w-full -mt-2">
               <div className="text-gray-400 text-sm mb-1">{t("missingReasons")}</div>
               <ul className="text-red-500 text-sm list-disc pl-5 space-y-1">
-                {/* Listeyi minimal tutmak için yalnız bir kez gösteriyoruz (manuel ile aynı maddeler olduğundan uniqleyelim) */}
-                {[...new Set([...manualMissing, ...googleMissing])].map((m, i) => (
-                  <li key={i}>{m}</li>
-                ))}
+                {[...new Set([...manualMissing, ...googleMissing])].map((m, i) => (<li key={i}>{m}</li>))}
               </ul>
             </div>
           )}
@@ -364,13 +338,14 @@ export default function RegisterPage() {
             {loading ? (locale === "tr" ? "Kaydediliyor..." : "Registering...") : t("registerBtn")}
           </button>
 
-          {/* Google ile kayıt/login */}
+          {/* Bölücü */}
           <div className="w-full flex items-center justify-between my-3">
-            <span className="flex-1 h-px bg-[#232323]"></span>
+            <span className="flex-1 h-px bg-[#232323]" />
             <span className="px-2 text-gray-400 text-sm">{t("or")}</span>
-            <span className="flex-1 h-px bg-[#232323]"></span>
+            <span className="flex-1 h-px bg-[#232323]" />
           </div>
 
+          {/* Google kayıt/giriş */}
           <button
             type="button"
             onClick={handleGoogleSignIn}
@@ -390,14 +365,11 @@ export default function RegisterPage() {
           </div>
         </form>
       </div>
+
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 3rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem; }
+          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>
