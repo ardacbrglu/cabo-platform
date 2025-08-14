@@ -1,19 +1,11 @@
-// lib/authOptions.js
+// lib/authOptions.js (NextAuth v5 - JS)
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { PrismaAdapter } from "@auth/prisma-adapter"; // v5
+import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
-
-/**
- * Kurallar:
- * - Manuel kullanıcı girişi /api/login ile (NextAuth burada zorunlu değil).
- * - Google girişi: register API'de flow:"google" ile bırakılan
- *   "google_reg_precheck" HttpOnly cookie ZORUNLU (terms + captcha kanıtı).
- * - Merchant rolü user portalına giremez.
- */
 
 if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET is not defined!");
 if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
@@ -36,18 +28,6 @@ function verifyGooglePrecheckCookie() {
   }
 }
 
-function clearGooglePrecheckCookie() {
-  try {
-    cookies().set("google_reg_precheck", "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-    });
-  } catch {}
-}
-
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
   trustHost: true,
@@ -58,10 +38,12 @@ export const authOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     }),
 
-    // İstersen tamamen kaldırabilirsin; /api/login kullanıyoruz.
     CredentialsProvider({
       name: "Credentials",
-      credentials: { email: { label: "Email", type: "text" }, password: { label: "Password", type: "password" } },
+      credentials: {
+        email: { label: "Email", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
       async authorize(credentials) {
         const email = credentials?.email?.trim().toLowerCase();
         const password = credentials?.password || "";
@@ -70,16 +52,15 @@ export const authOptions = {
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        // Merchant reddi
+        // Merchant portal değil → reddet
         if (user.role === "merchant") return null;
 
-        // Google-only hesap (parola yok) reddi
+        // Google-only (şifre yok) → credentials ile giriş reddi
         if (!user.passwordHash) return null;
 
-        // Kilitli hesap
+        // Kilitli hesap?
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) return null;
 
-        // Parola kontrolü + brute-force sayaç
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) {
           const nextFailed = (user.failedAttempts || 0) + 1;
@@ -87,21 +68,22 @@ export const authOptions = {
             where: { id: user.id },
             data: {
               failedAttempts: nextFailed,
-              lockUntil: nextFailed >= MAX_FAILED_ATTEMPTS
-                ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
-                : user.lockUntil,
+              lockUntil:
+                nextFailed >= MAX_FAILED_ATTEMPTS
+                  ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
+                  : user.lockUntil,
             },
           });
           return null;
         }
 
-        // Başarılı giriş → sayaç sıfırla
+        // Başarılı → sayaç sıfırla
         await prisma.user.update({
           where: { id: user.id },
           data: { failedAttempts: 0, lockUntil: null },
         });
 
-        // Aktif değilse reddet
+        // Aktif olmayan hesap → reddet
         if (user.status !== "active") return null;
 
         return {
@@ -115,9 +97,14 @@ export const authOptions = {
     }),
   ],
 
-  pages: { signIn: "/login" },
+  pages: {
+    signIn: "/login",
+  },
 
-  session: { strategy: "jwt", maxAge: 60 * 60 * 24 }, // 1 gün
+  session: {
+    strategy: "jwt",
+    maxAge: 60 * 60 * 24, // 1 gün
+  },
 
   callbacks: {
     async jwt({ token, user }) {
@@ -127,7 +114,6 @@ export const authOptions = {
         token.role = user.role;
         token.status = user.status;
       } else if (token?.email) {
-        // Role/Status değişmiş olabilir → tazele
         try {
           const u = await prisma.user.findUnique({
             where: { email: token.email },
@@ -153,20 +139,17 @@ export const authOptions = {
     },
 
     async signIn({ user, account }) {
-      // Google akışı kuralları
       if (account?.provider === "google" && user?.email) {
         const email = user.email.toLowerCase();
-        const existing = await prisma.user.findUnique({ where: { email } });
+        let existing = await prisma.user.findUnique({ where: { email } });
 
         // Merchant → reddet
         if (existing?.role === "merchant") return false;
 
         if (!existing) {
-          // YENİ kullanıcı: precheck şart
+          // Yeni kullanıcı → precheck cookie zorunlu
           const ok = verifyGooglePrecheckCookie();
-          if (!ok) return false;
-          clearGooglePrecheckCookie();
-          return true; // PrismaAdapter user'ı oluşturur
+          return !!ok; // PrismaAdapter user'ı yaratacak
         }
 
         if (existing.status === "pending") {
@@ -181,11 +164,9 @@ export const authOptions = {
               role: existing.role || "affiliate",
             },
           });
-          clearGooglePrecheckCookie();
           return true;
         }
 
-        // Active kullanıcı → izin
         return existing.status === "active";
       }
 
@@ -194,7 +175,6 @@ export const authOptions = {
   },
 
   events: {
-    // Google ile ilk kez user yaratıldığında
     async createUser({ user, account }) {
       if (account?.provider === "google" && user?.email) {
         try {

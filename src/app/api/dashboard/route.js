@@ -15,17 +15,24 @@ function getDeviceType(userAgent = "") {
   return "Other";
 }
 
-export async function GET(req) {
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  return res;
+}
+
+export async function GET() {
   try {
     // ✅ NextAuth session kontrolü
     const session = await getServerSession(authOptions);
     if (!session || !session.user?.id) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return json({ error: "unauthorized" }, { status: 401 });
     }
 
     // ✅ Rol kontrolü: Sadece affiliate kullanıcılar erişebilir
     if (session.user.role !== "affiliate") {
-      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+      return json({ error: "forbidden" }, { status: 403 });
     }
 
     const userId = session.user.id;
@@ -34,9 +41,9 @@ export async function GET(req) {
     let minPayout = 100;
     try {
       const config = await prisma.platformConfig.findUnique({
-        where: { keyName: "min_payout" }
+        where: { keyName: "min_payout" },
       });
-      if (config && config.value) minPayout = Number(config.value);
+      if (config?.value) minPayout = Number(config.value);
     } catch {
       minPayout = 100;
     }
@@ -44,7 +51,7 @@ export async function GET(req) {
     // Kullanıcı banka & iban & ad bilgisi
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { name: true, email: true, iban: true, bankName: true, realUserFullname: true }
+      select: { name: true, email: true, iban: true, bankName: true, realUserFullname: true },
     });
     const iban = user?.iban || "";
     const bankName = user?.bankName || "";
@@ -55,14 +62,14 @@ export async function GET(req) {
 
     // Kullanıcının sahip olduğu productId'ler
     const userLinks = await prisma.affiliateLink.findMany({
-      where: { userId: userId },
-      select: { productId: true, linkId: true }
+      where: { userId },
+      select: { productId: true, linkId: true },
     });
-    const productIds = userLinks.map(l => l.productId);
-    const linkIds = userLinks.map(l => l.linkId);
+    const productIds = userLinks.map((l) => l.productId);
+    const linkIds = userLinks.map((l) => l.linkId);
 
     if (!productIds.length) {
-      return NextResponse.json({
+      return json({
         totalClicks: 0,
         totalSales: 0,
         totalEarnings: 0,
@@ -77,73 +84,67 @@ export async function GET(req) {
         recentActions: [],
         leaderboard: [],
         lastConversion: null,
-        lastClick: null
+        lastClick: null,
       });
     }
 
     // Toplam tıklama
     const totalClicks = await prisma.click.count({
-      where: { linkId: { in: linkIds } }
+      where: { linkId: { in: linkIds } },
     });
 
     // Toplam satış adedi
     const totalSalesData = await prisma.affiliateUserSale.aggregate({
       _sum: { quantity: true },
-      where: { productId: { in: productIds }, userId }
+      where: { productId: { in: productIds }, userId },
     });
     const totalSales = Number(totalSalesData._sum.quantity) || 0;
 
     // Toplam confirmed kazanç
     const totalEarningsData = await prisma.affiliateUserSale.aggregate({
       _sum: { commissionAffiliate: true },
-      where: { productId: { in: productIds }, userId, status: 'confirmed' }
+      where: { productId: { in: productIds }, userId, status: "confirmed" },
     });
     const totalEarnings = Number(totalEarningsData._sum.commissionAffiliate) || 0;
     const balance = totalEarnings;
 
     // Son 5 satış (confirmed)
     const recentConversions = await prisma.affiliateUserSale.findMany({
-      where: { productId: { in: productIds }, status: 'confirmed' },
-      orderBy: { convertedAt: 'desc' },
+      where: { productId: { in: productIds }, status: "confirmed" },
+      orderBy: { convertedAt: "desc" },
       take: 5,
-      include: { merchantProduct: { select: { name: true } } }
+      include: { merchantProduct: { select: { name: true } } },
     });
 
-    // Leaderboard: En çok kazanan ilk 3 affiliate
+    // Leaderboard
     const leaderboardRaw = await prisma.user.findMany({
-      where: { role: 'affiliate' },
-      select: {
-        name: true,
-        affiliateLinks: {
-          select: { productId: true }
-        }
-      }
+      where: { role: "affiliate" },
+      select: { name: true, affiliateLinks: { select: { productId: true } } },
     });
 
     const leaderboard = await Promise.all(
-      leaderboardRaw.map(async u => {
-        const pids = u.affiliateLinks.map(l => l.productId);
+      leaderboardRaw.map(async (u) => {
+        const pids = u.affiliateLinks.map((l) => l.productId);
         if (!pids.length) return { name: u.name, value: 0 };
         const sum = await prisma.affiliateUserSale.aggregate({
           _sum: { commissionAffiliate: true },
-          where: { productId: { in: pids }, status: 'confirmed' }
+          where: { productId: { in: pids }, status: "confirmed" },
         });
         return { name: u.name, value: Number(sum._sum.commissionAffiliate || 0) };
       })
     );
-
     leaderboard.sort((a, b) => b.value - a.value);
 
-    // Son satış (son 24 saat)
+    // Son satış (24h)
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: {
         userId,
         status: "confirmed",
         productId: { in: productIds },
-        convertedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        convertedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
       },
       orderBy: { convertedAt: "desc" },
-      include: { merchantProduct: { select: { name: true } } }
+      include: { merchantProduct: { select: { name: true } } },
     });
 
     let lastConversionData = null;
@@ -153,22 +154,15 @@ export async function GET(req) {
         time: lastConversion.convertedAt,
         productName: lastConversion.merchantProduct?.name || "Unknown Product",
         commission: Number(lastConversion.commissionAffiliate || 0),
-        quantity: lastConversion.quantity || 1
+        quantity: lastConversion.quantity || 1,
       };
     }
 
-    // Son click (son 24 saat)
+    // Son click (24h)
     const lastClick = await prisma.click.findFirst({
-      where: {
-        linkId: { in: linkIds },
-        clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-      },
+      where: { linkId: { in: linkIds }, clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
       orderBy: { clickedAt: "desc" },
-      include: {
-        affiliateLink: {
-          include: { product: true }
-        }
-      }
+      include: { affiliateLink: { include: { product: true } } },
     });
 
     let lastClickData = null;
@@ -177,11 +171,11 @@ export async function GET(req) {
         type: "click",
         time: lastClick.clickedAt,
         productName: lastClick.affiliateLink?.product?.name || "Unknown Product",
-        extra: getDeviceType(lastClick.userAgent)
+        extra: getDeviceType(lastClick.userAgent),
       };
     }
 
-    return NextResponse.json({
+    return json({
       totalClicks,
       totalSales,
       totalEarnings,
@@ -193,21 +187,17 @@ export async function GET(req) {
       ibanMissing,
       bankMissing,
       realNameMissing,
-      recentActions: (recentConversions || []).map(conv => ({
+      recentActions: (recentConversions || []).map((conv) => ({
         amount: `+${Number(conv.commissionAffiliate).toFixed(2)}₺`,
-        desc: `Sale: ${conv.merchantProduct?.name || 'Product'} (${conv.quantity || 1} adet)`,
-        date: conv.convertedAt.toISOString().slice(0, 10)
+        desc: `Sale: ${conv.merchantProduct?.name || "Product"} (${conv.quantity || 1} adet)`,
+        date: conv.convertedAt.toISOString().slice(0, 10),
       })),
-      leaderboard: leaderboard.slice(0, 3).map(l => ({
-        name: l.name,
-        value: `₺${l.value.toFixed(2)}`
-      })),
+      leaderboard: leaderboard.slice(0, 3).map((l) => ({ name: l.name, value: `₺${l.value.toFixed(2)}` })),
       lastConversion: lastConversionData,
-      lastClick: lastClickData
+      lastClick: lastClickData,
     });
-
   } catch (err) {
-    console.error('Dashboard API error:', err);
-    return NextResponse.json({ error: "dashboard_fetch_error" }, { status: 500 });
+    console.error("Dashboard API error:", err);
+    return json({ error: "dashboard_fetch_error" }, { status: 500 });
   }
 }
