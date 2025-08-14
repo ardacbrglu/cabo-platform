@@ -34,10 +34,13 @@ export function UserProvider({ children }) {
   const [user, setUser] = useState(undefined);
   const [lastError, setLastError] = useState(null);
   const acRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const fetchMe = useCallback(async () => {
     // Önceki isteği iptal et
-    if (acRef.current) acRef.current.abort();
+    try {
+      acRef.current?.abort();
+    } catch {}
     const ac = new AbortController();
     acRef.current = ac;
 
@@ -53,6 +56,8 @@ export function UserProvider({ children }) {
         signal: ac.signal,
         cache: "no-store",
       });
+
+      if (!mountedRef.current) return;
 
       if (!res.ok) {
         // 401/403/404/429 → anon kabul et (enumeration yok)
@@ -72,6 +77,7 @@ export function UserProvider({ children }) {
         setLastError(null);
       }
     } catch (e) {
+      if (!mountedRef.current) return;
       if (e?.name !== "AbortError") {
         setUser(null);
         setLastError(e);
@@ -81,11 +87,15 @@ export function UserProvider({ children }) {
 
   // İlk yükleme (ve refreshUser -> user = undefined olduğunda)
   useEffect(() => {
+    mountedRef.current = true;
     if (user === undefined) {
       fetchMe();
     }
     return () => {
-      acRef.current?.abort();
+      mountedRef.current = false;
+      try {
+        acRef.current?.abort();
+      } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
