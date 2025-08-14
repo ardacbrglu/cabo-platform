@@ -57,7 +57,7 @@ function splitSetCookies(headerVal) {
   return headerVal ? headerVal.split(/,(?=[^,; ]+=)/g) : [];
 }
 
-// NextAuth'ın döndürebileceği tüm olası cookie adlarını toplayıp "a=b; c=d" döndür
+// NextAuth'ın döndürebileceği tüm olası cookie adlarını topla -> "a=b; c=d"
 function collectNextAuthCookies(setCookieHeader) {
   const wanted = new Set([
     "next-auth.csrf-token",
@@ -79,6 +79,7 @@ function collectNextAuthCookies(setCookieHeader) {
   return pairs.join("; ");
 }
 
+// DEBUG_AUTH=1 ise yalnızca response header'a sebep yazar (prod'da sessiz)
 const DEBUG = process.env.DEBUG_AUTH === "1";
 function withDebug(res, reason) {
   if (DEBUG && reason) res.headers.set("x-debug-reason", reason);
@@ -129,12 +130,14 @@ export async function POST(req) {
     // 4) Kullanıcı & kapılar
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
-    if (user.role === "merchant") return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
-    if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
+    if (user.role === "merchant")
+      return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
+    if (user.lockUntil && new Date(user.lockUntil) > new Date())
       return NextResponse.json({ success: false, message: msg.locked }, { status: 403 });
-    }
-    if (!user.passwordHash) return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
-    if (user.status !== "active") return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
+    if (!user.passwordHash)
+      return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
+    if (user.status !== "active")
+      return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
 
     // 5) Parola + brute-force sayaçları
     const okPass = await bcrypt.compare(password, user.passwordHash);
@@ -155,31 +158,30 @@ export async function POST(req) {
     await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
     // 6) NextAuth Credentials callback’e proxy
-    // Base URL'i env'den zorunlu tercih et (proxy’lerde daha stabil)
     const scheme = req.headers.get("x-forwarded-proto") || "http";
     const host = req.headers.get("host");
     const requestOrigin = req.nextUrl?.origin || `${scheme}://${host}`;
     const baseUrl = (process.env.NEXTAUTH_URL || requestOrigin).replace(/\/$/, "");
 
-    // a) CSRF token’ı /api/auth/signin?json=true ile al (cookie de set eder)
-    const signinRes = await fetch(`${baseUrl}/api/auth/signin?json=true&callbackUrl=${encodeURIComponent(baseUrl)}`, {
+    // a) DOĞRU: CSRF'i buradan al → /api/auth/csrf
+    const csrfRes = await fetch(`${baseUrl}/api/auth/csrf`, {
       method: "GET",
       headers: { accept: "application/json" },
       cache: "no-store",
       redirect: "manual",
     });
-    if (!signinRes.ok) {
+    if (!csrfRes.ok) {
       const res = NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
-      return withDebug(res, "csrf_fetch_fail");
+      return withDebug(res, `csrf_fetch_${csrfRes.status}`);
     }
-    let signinJson = {};
-    try { signinJson = await signinRes.json(); } catch {}
-    const nextAuthCsrfToken = signinJson?.csrfToken;
+    let csrfJson = {};
+    try { csrfJson = await csrfRes.json(); } catch {}
+    const nextAuthCsrfToken = csrfJson?.csrfToken;
     if (!nextAuthCsrfToken) {
       const res = NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
       return withDebug(res, "no_nextauth_csrf");
     }
-    const cookieJar = collectNextAuthCookies(signinRes.headers.get("set-cookie") || "");
+    const cookieJar = collectNextAuthCookies(csrfRes.headers.get("set-cookie") || "");
 
     // b) Credentials callback (redirect=false + json=true)
     const form = new URLSearchParams();
@@ -219,6 +221,6 @@ export async function POST(req) {
     return res;
 
   } catch {
-    return NextResponse.json({ success: false, message: msg.fail }, { status: 500 });
+    return NextResponse.json({ success: false, message: MESSAGES.en.fail }, { status: 500 });
   }
 }

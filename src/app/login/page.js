@@ -13,13 +13,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { signIn } from "next-auth/react";
 
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
-import Image from "next/image";
-
 
 const translations = {
   en: {
@@ -167,12 +166,27 @@ export default function Page() {
     }
   };
 
+  // <<< GÜNCELLENEN BUTON HANDLER (precheck + signIn) >>>
   const handleGoogleLogin = async () => {
     if (loading) return;
     setLoading(true);
     setError("");
+
+    const callbackUrl = searchParams?.get("from") || "/dashboard";
+
+    // 1) (önerilen) precheck → yeni kullanıcı akışı için işaret çerezini bırakır.
     try {
-      const callbackUrl = searchParams?.get("from") || "/dashboard";
+      await fetch("/api/register/google-precheck", {
+        method: "POST",
+        credentials: "include",
+        headers: { "cache-control": "no-store" },
+      });
+    } catch {
+      // sessiz geç (mevcut kullanıcı için gerekli değil)
+    }
+
+    // 2) Google’a yönlendir
+    try {
       await signIn("google", { callbackUrl });
     } catch {
       setError(t("googleSignInError"));
@@ -312,8 +326,8 @@ export default function Page() {
               </span>
               {t("googleBtn")}
             </button>
-
           </form>
+
           <div className="mt-6 text-gray-400 text-sm">
             {t("noAccount")}{" "}
             <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
