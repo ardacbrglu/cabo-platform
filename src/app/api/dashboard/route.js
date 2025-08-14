@@ -1,4 +1,3 @@
-// app/api/dashboard/route.js
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -7,11 +6,11 @@ import { authOptions } from "@/lib/authOptions";
 import { getServerSession } from "next-auth";
 
 function getDeviceType(userAgent = "") {
-  userAgent = (userAgent || "").toLowerCase();
-  if (userAgent.includes("android")) return "Android";
-  if (userAgent.includes("iphone") || userAgent.includes("ipad") || userAgent.includes("ios")) return "iPhone";
-  if (userAgent.includes("windows")) return "Windows";
-  if (userAgent.includes("mac")) return "Mac";
+  const ua = (userAgent || "").toLowerCase();
+  if (ua.includes("android")) return "Android";
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ios")) return "iPhone";
+  if (ua.includes("windows")) return "Windows";
+  if (ua.includes("mac")) return "Mac";
   return "Other";
 }
 
@@ -24,43 +23,51 @@ function json(data, init = {}) {
 
 export async function GET() {
   try {
-    // ✅ NextAuth session kontrolü
+    // 1) Session
     const session = await getServerSession(authOptions);
-    if (!session || !session.user?.id) {
-      return json({ error: "unauthorized" }, { status: 401 });
-    }
+    const email = session?.user?.email?.toLowerCase?.();
+    if (!email) return json({ error: "unauthorized" }, { status: 401 });
 
-    // ✅ Rol kontrolü: Sadece affiliate kullanıcılar erişebilir
-    if (session.user.role !== "affiliate") {
-      return json({ error: "forbidden" }, { status: 403 });
-    }
+    // 2) Kullanıcıyı DB’den e-posta ile çek (id tip uyumsuzluğu riskini kaldırır)
+    const dbUser = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        name: true,
+        email: true,
+        iban: true,
+        bankName: true,
+        realUserFullname: true,
+      },
+    });
+    if (!dbUser) return json({ error: "unauthorized" }, { status: 401 });
 
-    const userId = session.user.id;
+    // 3) Rol/Status kapıları
+    if (dbUser.role !== "affiliate") return json({ error: "forbidden" }, { status: 403 });
+    if (dbUser.status !== "active") return json({ error: "inactive" }, { status: 403 });
 
-    // Platform config'ten min payout
+    const userId = dbUser.id;
+
+    // 4) Min payout (platform config)
     let minPayout = 100;
     try {
-      const config = await prisma.platformConfig.findUnique({
-        where: { keyName: "min_payout" },
-      });
-      if (config?.value) minPayout = Number(config.value);
+      const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
+      if (cfg?.value) minPayout = Number(cfg.value);
     } catch {
-      minPayout = 100;
+      /* default 100 */
     }
 
-    // Kullanıcı banka & iban & ad bilgisi
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, email: true, iban: true, bankName: true, realUserFullname: true },
-    });
-    const iban = user?.iban || "";
-    const bankName = user?.bankName || "";
-    const realName = user?.realUserFullname || "";
+    // 5) Banka bilgileri & eksik alanlar
+    const iban = dbUser.iban || "";
+    const bankName = dbUser.bankName || "";
+    const realName = dbUser.realUserFullname || "";
     const ibanMissing = !iban || iban.length !== 26 || !iban.startsWith("TR");
     const bankMissing = !bankName || !bankName.trim();
     const realNameMissing = !realName || realName.trim().split(" ").length < 2;
 
-    // Kullanıcının sahip olduğu productId'ler
+    // 6) Kullanıcının linkleri / ürünleri
     const userLinks = await prisma.affiliateLink.findMany({
       where: { userId },
       select: { productId: true, linkId: true },
@@ -75,7 +82,7 @@ export async function GET() {
         totalEarnings: 0,
         balance: 0,
         minPayout,
-        username: user?.name || "",
+        username: dbUser.name || "",
         iban,
         bankName,
         ibanMissing,
@@ -88,27 +95,23 @@ export async function GET() {
       });
     }
 
-    // Toplam tıklama
-    const totalClicks = await prisma.click.count({
-      where: { linkId: { in: linkIds } },
-    });
+    // 7) Ana sayılar
+    const totalClicks = await prisma.click.count({ where: { linkId: { in: linkIds } } });
 
-    // Toplam satış adedi
-    const totalSalesData = await prisma.affiliateUserSale.aggregate({
+    const totalSalesAgg = await prisma.affiliateUserSale.aggregate({
       _sum: { quantity: true },
       where: { productId: { in: productIds }, userId },
     });
-    const totalSales = Number(totalSalesData._sum.quantity) || 0;
+    const totalSales = Number(totalSalesAgg._sum.quantity) || 0;
 
-    // Toplam confirmed kazanç
-    const totalEarningsData = await prisma.affiliateUserSale.aggregate({
+    const totalEarnAgg = await prisma.affiliateUserSale.aggregate({
       _sum: { commissionAffiliate: true },
       where: { productId: { in: productIds }, userId, status: "confirmed" },
     });
-    const totalEarnings = Number(totalEarningsData._sum.commissionAffiliate) || 0;
+    const totalEarnings = Number(totalEarnAgg._sum.commissionAffiliate) || 0;
     const balance = totalEarnings;
 
-    // Son 5 satış (confirmed)
+    // 8) Son 5 confirmed satış
     const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { productId: { in: productIds }, status: "confirmed" },
       orderBy: { convertedAt: "desc" },
@@ -116,12 +119,11 @@ export async function GET() {
       include: { merchantProduct: { select: { name: true } } },
     });
 
-    // Leaderboard
+    // 9) Leaderboard (ilk 3)
     const leaderboardRaw = await prisma.user.findMany({
       where: { role: "affiliate" },
       select: { name: true, affiliateLinks: { select: { productId: true } } },
     });
-
     const leaderboard = await Promise.all(
       leaderboardRaw.map(async (u) => {
         const pids = u.affiliateLinks.map((l) => l.productId);
@@ -135,7 +137,7 @@ export async function GET() {
     );
     leaderboard.sort((a, b) => b.value - a.value);
 
-    // Son satış (24h)
+    // 10) Son 24 saat satış/click
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: {
         userId,
@@ -158,9 +160,11 @@ export async function GET() {
       };
     }
 
-    // Son click (24h)
     const lastClick = await prisma.click.findFirst({
-      where: { linkId: { in: linkIds }, clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+      where: {
+        linkId: { in: linkIds },
+        clickedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
       orderBy: { clickedAt: "desc" },
       include: { affiliateLink: { include: { product: true } } },
     });
@@ -175,22 +179,23 @@ export async function GET() {
       };
     }
 
+    // 11) Yanıt
     return json({
       totalClicks,
       totalSales,
       totalEarnings,
       balance,
       minPayout,
-      username: user?.name || "",
+      username: dbUser.name || "",
       iban,
       bankName,
       ibanMissing,
       bankMissing,
       realNameMissing,
-      recentActions: (recentConversions || []).map((conv) => ({
-        amount: `+${Number(conv.commissionAffiliate).toFixed(2)}₺`,
-        desc: `Sale: ${conv.merchantProduct?.name || "Product"} (${conv.quantity || 1} adet)`,
-        date: conv.convertedAt.toISOString().slice(0, 10),
+      recentActions: (recentConversions || []).map((c) => ({
+        amount: `+${Number(c.commissionAffiliate).toFixed(2)}₺`,
+        desc: `Sale: ${c.merchantProduct?.name || "Product"} (${c.quantity || 1} adet)`,
+        date: c.convertedAt.toISOString().slice(0, 10),
       })),
       leaderboard: leaderboard.slice(0, 3).map((l) => ({ name: l.name, value: `₺${l.value.toFixed(2)}` })),
       lastConversion: lastConversionData,
