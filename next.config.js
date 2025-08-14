@@ -1,24 +1,60 @@
 /** @type {import('next').NextConfig} */
+const isDev = process.env.NODE_ENV !== "production";
+
+const googleHosts = [
+  "www.google.com",
+  "www.gstatic.com",
+  "accounts.google.com",
+  "www.recaptcha.net",        // reCAPTCHA bölgesel fallback
+  "www.googleapis.com",       // bazı GSI/kimlik istekleri
+];
+
+function cspValue() {
+  // NOT: Prod'da 'unsafe-eval' KALDIRILDI. Dev'da HMR/Hydration için gerekli.
+  const scriptSrc = [
+    "'self'",
+    "'unsafe-inline'",
+    ...(isDev ? ["'unsafe-eval'"] : []),
+    ...googleHosts,
+  ];
+
+  // Dev HMR/WebSocket ve harici kimlik/recaptcha konuşmaları için connect-src
+  const connectSrc = [
+    "'self'",
+    ...(isDev ? ["ws:", "wss:"] : []),
+    ...googleHosts,
+  ];
+
+  // reCAPTCHA/GSI iframe’leri ve OAuth akışları
+  const frameSrc = ["'self'", ...googleHosts];
+
+  // Dış görseller (Google avatar vs.) için https: açıldı
+  const imgSrc = ["'self'", "data:", "blob:", "https:"];
+
+  const styleSrc = ["'self'", "'unsafe-inline'"]; // Tailwind/inline style’lar için
+
+  const fontSrc = ["'self'", "data:"];
+
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSrc.join(" ")}`,
+    `style-src ${styleSrc.join(" ")}`,
+    `img-src ${imgSrc.join(" ")}`,
+    `font-src ${fontSrc.join(" ")}`,
+    `connect-src ${connectSrc.join(" ")}`,
+    `frame-src ${frameSrc.join(" ")}`,
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    // Prod tamamen HTTPS ise açılabilir:
+    // "upgrade-insecure-requests"
+  ].join("; ");
+}
+
 const nextConfig = {
   reactStrictMode: true,
 
   async headers() {
-    const csp = [
-      "default-src 'self'",
-      // NextJS dev için 'unsafe-eval' gerekir; prod’da kaldıysa kaldırmayı düşün.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' www.google.com www.gstatic.com",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self' data:",
-      "connect-src 'self'",
-      // reCAPTCHA iframe ve OAuth yönlendirmeleri
-      "frame-src 'self' www.google.com",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      // upgrade-insecure-requests // prod’da sadece https ise açabilirsin
-    ].join("; ");
-
     return [
       {
         source: "/(.*)",
@@ -33,17 +69,17 @@ const nextConfig = {
           { key: "X-XSS-Protection", value: "1; mode=block" },
           // Referrer
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          // COOP (izolasyon, OAuth’a engel olmaz)
-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          // COEP/CORP aşırı kısıtlayıcı olduğundan kaldırıldı (Google OAuth, reCAPTCHA vb. kırılabiliyor)
+          // OAuth popupları kırılmasın:
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+          // COEP/CORP genelde OAuth/GSI/recaptcha’yı kırar, kapalı kalsın
           // { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
           // { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
 
-          // Permissions-Policy (yeni sözdizimi)
+          // Permissions-Policy
           { key: "Permissions-Policy", value: "geolocation=(), microphone=(), camera=()" },
 
-          // CSP – projen büyüdükçe domain’leri burada açarsın
-          { key: "Content-Security-Policy", value: csp },
+          // CSP
+          { key: "Content-Security-Policy", value: cspValue() },
         ],
       },
     ];
