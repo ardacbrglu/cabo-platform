@@ -1,11 +1,6 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/**
- * /api/login  — Credentials login'i server-side proxy eder.
- * Güvenlik Zinciri: CSRF → rate-limit → kullanıcı kapıları → bcrypt → NextAuth callback
- */
-
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
@@ -13,7 +8,6 @@ import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/ratelimit";
 
 const DEBUG = process.env.DEBUG_AUTH === "1";
-
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_COUNT = 6;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -58,7 +52,6 @@ function withDebug(res, reason) {
   if (DEBUG && reason) res.headers.set("x-debug-reason", reason);
   return res;
 }
-
 function findCookieKV(req, names) {
   const list = Array.isArray(names) ? names : [names];
   const header = req.headers.get("cookie") || "";
@@ -69,7 +62,6 @@ function findCookieKV(req, names) {
   }
   return null;
 }
-
 function tokenFromCookieValue(raw) {
   if (!raw) return null;
   let v = raw;
@@ -84,14 +76,11 @@ export async function POST(req) {
   const ip = getClientIp(req);
 
   try {
-    // 1) CSRF kontrolü
-    try {
-      validateCsrfToken(req);
-    } catch {
+    try { validateCsrfToken(req); }
+    catch {
       return NextResponse.json({ success: false, message: msg.csrf }, { status: 403 });
     }
 
-    // 2) Rate Limit
     const { ok } = await checkRateLimit({
       key: `login:ip:${ip}`,
       limit: RATE_LIMIT_COUNT,
@@ -99,22 +88,14 @@ export async function POST(req) {
     });
     if (!ok) return NextResponse.json({ success: false, message: msg.ratelimit }, { status: 429 });
 
-    // 3) Body
     let body;
-    try {
-      body = await req.json();
-    } catch {
-      body = null;
-    }
-
+    try { body = await req.json(); } catch { body = null; }
     const email = String(body?.email || "").trim().toLowerCase();
     const password = String(body?.password || "");
-
     if (!email || !password) {
       return NextResponse.json({ success: false, message: msg.fill }, { status: 400 });
     }
 
-    // 4) Kullanıcı kapıları
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return NextResponse.json({ success: false, message: msg.invalid }, { status: 401 });
     if (user.role === "merchant") return NextResponse.json({ success: false, message: msg.merchant }, { status: 403 });
@@ -123,7 +104,6 @@ export async function POST(req) {
     if (!user.passwordHash) return NextResponse.json({ success: false, message: msg.google }, { status: 401 });
     if (user.status !== "active") return NextResponse.json({ success: false, message: msg.inactive }, { status: 403 });
 
-    // 5) Şifre kontrolü
     const okPass = await bcrypt.compare(password, user.passwordHash);
     if (!okPass) {
       const nextFailed = (user.failedAttempts || 0) + 1;
@@ -140,7 +120,6 @@ export async function POST(req) {
     }
     await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
-    // 6) NextAuth CSRF token'ı bul
     const csrfKV = findCookieKV(req, [
       "__Host-next-auth.csrf-token",
       "__Secure-next-auth.csrf-token",
@@ -163,7 +142,6 @@ export async function POST(req) {
     const fullCookieHeader = req.headers.get("cookie") || "";
     const origin = process.env.NEXTAUTH_URL || `${req.headers.get("x-forwarded-proto") || "https"}://${req.headers.get("host")}`;
 
-    // 7) NextAuth callback'e yönlendir
     const form = new URLSearchParams();
     form.set("csrfToken", nextAuthCsrfToken);
     form.set("email", email);
@@ -185,9 +163,7 @@ export async function POST(req) {
     });
 
     let cbJson = {};
-    try {
-      cbJson = await cbRes.json();
-    } catch {}
+    try { cbJson = await cbRes.json(); } catch {}
 
     if (!cbRes.ok || cbJson?.error) {
       return withDebug(
@@ -196,7 +172,6 @@ export async function POST(req) {
       );
     }
 
-    // 8) Oturum cookie'lerini forward et
     const res = withDebug(
       NextResponse.json({ success: true, message: msg.success }, { status: 200 }),
       "ok"
