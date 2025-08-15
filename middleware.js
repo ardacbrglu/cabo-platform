@@ -1,56 +1,47 @@
-// middleware.js  (TS YOK, düz JS)
-// NextAuth v5 ile çalışır. Role kontrolü token'dan yapılır.
-import { withAuth } from "next-auth/middleware";
+// /src/middleware.js
+import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 
-const AFFILIATE_PREFIXES = [
-  "/dashboard",
-  "/products",
-  "/mylinks",
-  "/performance",
-  "/wallet",
-  "/settings",
-];
+export async function middleware(req) {
+  const url = req.nextUrl;
+  const path = url.pathname;
 
-const MERCHANT_PREFIX = "/merchant";
+  const session = await auth(); // NextAuth v5
+  const role = session?.user?.role;
+  const loggedIn = !!session;
 
-export default withAuth({
-  pages: { signIn: "/login" },
+  // Merchant bölgesi
+  if (path.startsWith("/merchant")) {
+    if (!loggedIn) return NextResponse.redirect(new URL("/login", url));
+    if (role !== "merchant" && role !== "admin") {
+      return NextResponse.redirect(new URL("/", url));
+    }
+    return NextResponse.next();
+  }
 
-  callbacks: {
-    authorized: ({ token, req }) => {
-      // token yoksa login'e
-      if (!token) return false;
+  // Affiliate sayfaları
+  const affPaths = new Set([
+    "/dashboard",
+    "/mylinks",
+    "/performance",
+    "/wallet",
+  ]);
+  if (affPaths.has(path)) {
+    if (!loggedIn) return NextResponse.redirect(new URL("/login", url));
+    if (role !== "affiliate" && role !== "admin") {
+      return NextResponse.redirect(new URL("/", url));
+    }
+  }
 
-      const p = req.nextUrl.pathname || "";
+  return NextResponse.next();
+}
 
-      // Merchant alanı
-      if (p.startsWith(MERCHANT_PREFIX)) {
-        return token.role === "merchant" || token.role === "admin";
-      }
-
-      // Affiliate alanları
-      if (AFFILIATE_PREFIXES.some((pre) => p === pre || p.startsWith(pre + "/"))) {
-        return token.role === "affiliate" || token.role === "admin";
-      }
-
-      // Diğer sayfalar herkese açık
-      return true;
-    },
-  },
-});
-
-// Sadece korumak istediklerimizi yakala:
 export const config = {
   matcher: [
-    // affiliate alanları
     "/dashboard",
-    "/products/:path*",
-    "/mylinks/:path*",
-    "/performance/:path*",
-    "/wallet/:path*",
-    "/settings/:path*",
-
-    // merchant alanları
+    "/mylinks",
+    "/performance",
+    "/wallet",
     "/merchant/:path*",
   ],
 };

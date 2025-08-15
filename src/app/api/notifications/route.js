@@ -1,4 +1,3 @@
-// app/api/notifications/route.js  (JS)
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -7,8 +6,8 @@ import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
-function noStoreJson(body, init = {}) {
-  const res = NextResponse.json(body, init);
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   return res;
@@ -18,12 +17,13 @@ export async function GET(req) {
   try {
     const session = await auth();
     const userId = session?.user?.id;
-    if (!userId) return noStoreJson({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) return json({ error: "Unauthorized" }, { status: 401 });
 
+    // rate limit
     const rlKey = makeRateLimitKey(req, { scope: "notif:list", userId });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
     if (!ok) {
-      return noStoreJson(
+      return json(
         { error: "Too many requests" },
         { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
@@ -33,22 +33,32 @@ export async function GET(req) {
     const unreadOnly = url.searchParams.get("unreadOnly") === "true";
     const where = { userId, isDeleted: false, ...(unreadOnly ? { read: false } : {}) };
 
-    const [total, notifications] = await Promise.all([
-      prisma.notification.count({ where }),
-      prisma.notification.findMany({ where, orderBy: { createdAt: "desc" } }),
-    ]);
+    let total = 0;
+    let notifications = [];
 
-    return noStoreJson({ total, notifications });
-  } catch (err) {
-    console.error("GET /api/notifications error:", err);
-
-    // Tablo yoksa / schema uymuyorsa — uygulamayı çökertme, boş dön
-    const code = err?.code || "";
-    const msg = String(err?.message || "");
-    if (["P2021", "P2022", "P2010"].includes(code) || /table .* does not exist/i.test(msg)) {
-      return noStoreJson({ total: 0, notifications: [] });
+    // Prisma tablo/şema hatalarında 200 + boş dön
+    try {
+      total = await prisma.notification.count({ where });
+      notifications = await prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+      });
+    } catch (e) {
+      const msg = String(e?.message || "");
+      const code = e?.code;
+      if (
+        code === "P2021" || // table not found
+        code === "P2023" || // relation issues
+        /table|relation.*does not exist/i.test(msg)
+      ) {
+        return json({ total: 0, notifications: [] });
+      }
+      throw e;
     }
 
-    return noStoreJson({ error: "Internal Server Error" }, { status: 500 });
+    return json({ total, notifications });
+  } catch (err) {
+    console.error("GET /api/notifications error:", err);
+    return json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

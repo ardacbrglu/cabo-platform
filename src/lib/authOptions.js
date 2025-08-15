@@ -1,4 +1,3 @@
-// src/lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -37,8 +36,6 @@ export const authOptions = {
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      // Google e-postaları verified olduğu için email-match ile linking güvenlidir.
-      // allowDangerousEmailAccountLinking: false (default)
     }),
 
     CredentialsProvider({
@@ -109,15 +106,20 @@ export const authOptions = {
   callbacks: {
     // OAuth (Google) ve Credentials girişlerinde token'ı zenginleştir
     async jwt({ token, user }) {
+      // 1) user geldiyse en az id/email'i yaz
       if (user) {
         token.sub = String(user.id);
         token.email = user.email;
-        token.role = user.role;
-        token.status = user.status;
-      } else if (token?.email) {
+        // bazı sağlayıcılarda role/status user içinde olmayabilir
+        if (user.role) token.role = user.role;
+        if (user.status) token.status = user.status;
+      }
+
+      // 2) role/status eksikse DB'den tamamla (ilk login'i kurtarır)
+      if (!token.role || !token.status) {
         try {
           const u = await prisma.user.findUnique({
-            where: { email: token.email },
+            where: { email: (token.email || user?.email || "").toLowerCase() },
             select: { id: true, role: true, status: true },
           });
           if (u) {
@@ -127,6 +129,7 @@ export const authOptions = {
           }
         } catch {}
       }
+
       return token;
     },
 
@@ -164,8 +167,7 @@ export const authOptions = {
         return !!ok; // PrismaAdapter user'ı yaratacak
       }
 
-      // Mevcut manuel veya Google kullanıcı:
-      // status aktifse İZİN VER → adapter Google Account'u var olan kullanıcıya bağlar.
+      // Mevcut kullanıcı: status aktifse izin ver
       return existing.status === "active";
     },
   },
