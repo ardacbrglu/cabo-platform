@@ -1,17 +1,10 @@
-// /hooks/useNotifications.js
-/**
- * useNotifications — kullanıcı bildirimleri (polling)
- * SECURITY NOTES:
- * - Mutating isteklerde CSRF header (x-csrf-token) zorunlu.
- * - credentials: "include" ile session cookie taşınır.
- * - Rate limit / auth backend'de ayrıca korunmalıdır.
- */
+// hooks/useNotifications.js  (JS)
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const POLL_MS = 12_000;
 
-export function useNotifications() {
+export function useNotifications(enabled = true) {
   const { csrfToken } = useCsrfToken();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -25,6 +18,7 @@ export function useNotifications() {
   }, []);
 
   const fetchNotifications = useCallback(async () => {
+    if (!enabled) return; // 🔑 login değilken hiç deneme
     if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -35,38 +29,35 @@ export function useNotifications() {
       const res = await fetch("/api/notifications", {
         method: "GET",
         credentials: "include",
-        headers: {
-          accept: "application/json",
-          "cache-control": "no-cache",
-        },
+        headers: { accept: "application/json", "cache-control": "no-cache" },
         signal: ac.signal,
       });
+
+      if (res.status === 401 || res.status === 403) {
+        setNotifications([]); setUnreadCount(0);
+        return;
+      }
       if (!res.ok) throw new Error(`fetch notifications failed: ${res.status}`);
+
       const data = await res.json();
       const nots = Array.isArray(data.notifications) ? data.notifications : [];
       setNotifications(nots);
       setUnreadCount(computeUnread(nots));
     } catch (e) {
+      if (e?.name === "AbortError") return;
       setLastError(e);
-      // basit backoff: başarısızsa 5 sn sonra tek seferlik dene
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        fetchNotifications().catch(() => {});
-      }, 5000);
     } finally {
       setLoading(false);
     }
-  }, [computeUnread]);
+  }, [enabled, computeUnread]);
 
   useEffect(() => {
+    if (!enabled) return; // 🔑
     fetchNotifications().catch(() => {});
-    // düzenli polling
-    const tick = () => fetchNotifications().catch(() => {});
-    timerRef.current = setInterval(tick, POLL_MS);
+    timerRef.current = setInterval(() => fetchNotifications().catch(() => {}), POLL_MS);
 
-    // sekme tekrar görünür olunca hızlı güncelle
     const onVis = () => {
-      if (document.visibilityState === "visible") tick();
+      if (document.visibilityState === "visible") fetchNotifications().catch(() => {});
     };
     document.addEventListener("visibilitychange", onVis);
 
@@ -75,91 +66,72 @@ export function useNotifications() {
       clearInterval(timerRef.current);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [fetchNotifications]);
+  }, [enabled, fetchNotifications]);
 
-  const markSelectedAsRead = useCallback(
-    async (ids) => {
-      if (!Array.isArray(ids) || ids.length === 0) return;
-      try {
-        const res = await fetch("/api/notifications/mark-read", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-            "x-csrf-token": csrfToken || "",
-          },
-          body: JSON.stringify({ ids }),
-        });
-        if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
+  const markSelectedAsRead = useCallback(async (ids) => {
+    if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
+    try {
+      const res = await fetch("/api/notifications/mark-read", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          "x-csrf-token": csrfToken || "",
+        },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
 
-        setNotifications((prev = []) =>
-          Array.isArray(prev)
-            ? prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n))
-            : []
+      setNotifications((prev = []) =>
+        Array.isArray(prev) ? prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)) : []
+      );
+      setUnreadCount((_) => {
+        const next = (Array.isArray(notifications) ? notifications : []).map((n) =>
+          ids.includes(n.id) ? { ...n, read: true } : n
         );
-        setUnreadCount((prev) => {
-          const next = (Array.isArray(notifications) ? notifications : []).map((n) =>
-            ids.includes(n.id) ? { ...n, read: true } : n
-          );
-          return computeUnread(next);
-        });
-      } catch (e) {
-        setLastError(e);
-        // geri çek: poll ile zaten güncellenecek
-      }
-    },
-    [csrfToken, notifications, computeUnread]
-  );
+        return computeUnread(next);
+      });
+    } catch (e) {
+      // sessiz geç; bir sonraki poll düzeltecek
+    }
+  }, [enabled, csrfToken, notifications, computeUnread]);
 
-  const markAllAsRead = useCallback(async () => {
+  const markAllAsRead = useCallback(() => {
     const unreadIds = (Array.isArray(notifications) ? notifications : [])
       .filter((n) => !n.read)
       .map((n) => n.id);
-    if (unreadIds.length === 0) return;
-    await markSelectedAsRead(unreadIds);
+    return markSelectedAsRead(unreadIds);
   }, [notifications, markSelectedAsRead]);
 
-  const deleteNotifications = useCallback(
-    async (ids) => {
-      if (!Array.isArray(ids) || ids.length === 0) return;
-      try {
-        const res = await fetch("/api/notifications/delete", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-            "x-csrf-token": csrfToken || "",
-          },
-          body: JSON.stringify({ ids }),
-        });
-        if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+  const deleteNotifications = useCallback(async (ids) => {
+    if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
+    try {
+      const res = await fetch("/api/notifications/delete", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          "x-csrf-token": csrfToken || "",
+        },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 
-        setNotifications((prev = []) =>
-          Array.isArray(prev) ? prev.filter((n) => !ids.includes(n.id)) : []
+      setNotifications((prev = []) =>
+        Array.isArray(prev) ? prev.filter((n) => !ids.includes(n.id)) : []
+      );
+      setUnreadCount((_) => {
+        const next = (Array.isArray(notifications) ? notifications : []).filter(
+          (n) => !ids.includes(n.id)
         );
-        setUnreadCount((prev) => {
-          const next = (Array.isArray(notifications) ? notifications : []).filter(
-            (n) => !ids.includes(n.id)
-          );
-          return computeUnread(next);
-        });
-      } catch (e) {
-        setLastError(e);
-      }
-    },
-    [csrfToken, notifications, computeUnread]
-  );
+        return computeUnread(next);
+      });
+    } catch (e) {
+      // sessiz
+    }
+  }, [enabled, csrfToken, notifications, computeUnread]);
 
-  return {
-    notifications,
-    unreadCount,
-    loading,
-    lastError,
-    fetchNotifications,
-    markAllAsRead,
-    markSelectedAsRead,
-    deleteNotifications,
-  };
+  return { notifications, unreadCount, loading, lastError, fetchNotifications, markAllAsRead, markSelectedAsRead, deleteNotifications };
 }

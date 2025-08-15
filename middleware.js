@@ -1,45 +1,56 @@
-// src/middleware.ts
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+// middleware.js  (TS YOK, düz JS)
+// NextAuth v5 ile çalışır. Role kontrolü token'dan yapılır.
+import { withAuth } from "next-auth/middleware";
 
-// Korunacak path’ler — ihtiyacına göre ekle/çıkar
-const PROTECTED = [
+const AFFILIATE_PREFIXES = [
   "/dashboard",
   "/products",
   "/mylinks",
   "/performance",
   "/wallet",
   "/settings",
-  "/support",
-  "/notifications",
-  "/merchant",              // merchant alanı da login istiyorsa
 ];
 
-export default auth((req) => {
-  const { nextUrl } = req;
-  const path = nextUrl.pathname;
+const MERCHANT_PREFIX = "/merchant";
 
-  // Bu istek authenticated mi?
-  const isLoggedIn = !!req.auth?.user;
+export default withAuth({
+  pages: { signIn: "/login" },
 
-  // Protected path mi?
-  const isProtected = PROTECTED.some((p) => path === p || path.startsWith(p + "/"));
+  callbacks: {
+    authorized: ({ token, req }) => {
+      // token yoksa login'e
+      if (!token) return false;
 
-  // Login değilse ve protected bir sayfaysa → /login’e yönlendir
-  if (!isLoggedIn && isProtected) {
-    const url = nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("callbackUrl", path + nextUrl.search);
-    return NextResponse.redirect(url);
-  }
+      const p = req.nextUrl.pathname || "";
 
-  // Aksi halde devam
-  return NextResponse.next();
+      // Merchant alanı
+      if (p.startsWith(MERCHANT_PREFIX)) {
+        return token.role === "merchant" || token.role === "admin";
+      }
+
+      // Affiliate alanları
+      if (AFFILIATE_PREFIXES.some((pre) => p === pre || p.startsWith(pre + "/"))) {
+        return token.role === "affiliate" || token.role === "admin";
+      }
+
+      // Diğer sayfalar herkese açık
+      return true;
+    },
+  },
 });
 
-// Sadece sayfa rotalarına çalışsın; _next, statikler ve API hariç
+// Sadece korumak istediklerimizi yakala:
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|images/|api/).*)",
+    // affiliate alanları
+    "/dashboard",
+    "/products/:path*",
+    "/mylinks/:path*",
+    "/performance/:path*",
+    "/wallet/:path*",
+    "/settings/:path*",
+
+    // merchant alanları
+    "/merchant/:path*",
   ],
 };
