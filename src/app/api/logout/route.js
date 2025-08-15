@@ -1,21 +1,28 @@
 // app/api/logout/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey, logApiEvent } from "@/lib/ratelimit";
 
 /**
- * SECURITY NOTES
- * - Sadece POST; CSRF zorunlu (header + cookie).
- * - NextAuth JWT stratejisinde session cookie’lerini temizlemek yeterli.
- * - Üretimde __Secure-* isimleri de silinir. Custom cabo_token KULLANMIYORUZ, ama varsa idempotent silinir.
+ * SECURITY
+ * - Sadece POST; CSRF zorunlu.
+ * - JWT strategy: session cookie’lerini silmek yeterli.
+ * - __Secure- ve __Host- varyantlarını da temizliyoruz.
  */
 
 const isProd = process.env.NODE_ENV === "production";
 const SECURE = isProd ? " Secure;" : "";
+
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  return res;
+}
 
 export async function POST(req) {
   const ip =
@@ -29,30 +36,42 @@ export async function POST(req) {
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
   if (!ok) {
     try { await logApiEvent?.({ endpoint: "logout", ip, ua, event: "ratelimit" }); } catch {}
-    return NextResponse.json(
+    return json(
       { error: "Too many requests" },
       { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
     );
   }
 
   try {
-    // 2) CSRF
-    await validateCsrfToken(req);
+    // 2) CSRF (header+cookie doğrulaması)
+    try {
+      await validateCsrfToken(req);
+    } catch {
+      try { await logApiEvent?.({ endpoint: "logout", ip, ua, event: "csrf_fail" }); } catch {}
+      return json({ error: "Invalid CSRF token" }, { status: 403 });
+    }
 
-    // 3) Opsiyonel: mevcut oturum
-    const session = await getServerSession(authOptions);
+    // 3) Oturumu (opsiyonel) log için oku
+    const session = await auth();
 
-    const res = NextResponse.json({ success: true }, { status: 200 });
+    // 4) Yanıt
+    const res = json({ success: true }, { status: 200 });
 
-    // 4) NextAuth cookie isimleri (prod/dev varyasyonları)
+    // 5) NextAuth cookie isimleri (tüm varyasyonlar)
     const cookieNames = [
+      // session
+      "__Host-next-auth.session-token",
       "__Secure-next-auth.session-token",
       "next-auth.session-token",
+      // callback-url
+      "__Host-next-auth.callback-url",
       "__Secure-next-auth.callback-url",
       "next-auth.callback-url",
+      // csrf
+      "__Host-next-auth.csrf-token",
       "__Secure-next-auth.csrf-token",
       "next-auth.csrf-token",
-      // Legacy: varsa temizle (custom kullanılmıyor artık)
+      // legacy/custom: varsa temizle
       "cabo_token",
     ];
 
@@ -78,6 +97,6 @@ export async function POST(req) {
     try {
       await logApiEvent?.({ endpoint: "logout", ip, ua, event: "error", error: err?.message || String(err) });
     } catch {}
-    return NextResponse.json({ error: "Logout failed" }, { status: 400 });
+    return json({ error: "Logout failed" }, { status: 400 });
   }
 }

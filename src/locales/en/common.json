@@ -296,6 +296,11 @@
   "activation.invalid": "Invalid activation token.",
   "activation.error": "❌ An error occurred. Please try again.",
   "activation.loginLink": "Go to login page",
+  "approved": "Approved",
+  "locked": "Locked",
+  "cancelUntil": "Cancel until",
+  "updateBankForThisRequest": "Update bank for this request",
+
 
 
   "api": {
@@ -329,8 +334,8 @@
   "activationFailed": "Activation failed or the link is invalid.",
   "redirectingToLogin": "Redirecting to login page..."
 
-
 }
+
 
 
 

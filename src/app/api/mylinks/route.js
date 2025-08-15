@@ -1,11 +1,12 @@
-// app/api/my-links/route.js
-// PURPOSE: Kullanıcının My Links listesini okuma (GET) ve bir linki gizleme (POST)
-// SECURITY: NextAuth oturumu, CSRF (POST), rate limit (GET/POST), generic error mesajları
+// app/api/mylinks/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+// PURPOSE: Kullanıcının My Links listesini okuma (GET) ve bir linki gizleme (POST)
+// SECURITY: NextAuth (auth()), CSRF (POST), rate limit (GET/POST), generic error mesajları
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
@@ -18,10 +19,8 @@ import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 async function checkAndDeactivateProduct(product) {
   if (!product) return product;
 
-  const max =
-    typeof product.max_sales_limit === "number" ? product.max_sales_limit : null;
-  const total =
-    typeof product.total_purchases === "number" ? product.total_purchases : null;
+  const max = typeof product.max_sales_limit === "number" ? product.max_sales_limit : null;
+  const total = typeof product.total_purchases === "number" ? product.total_purchases : null;
 
   if (product.isActive && max !== null && total !== null && total >= max) {
     await prisma.merchantProduct.update({
@@ -34,45 +33,39 @@ async function checkAndDeactivateProduct(product) {
 }
 
 /**
- * GET /api/my-links
- * Kullanıcının görünür ve süresi dolmamış linklerini, ürün ve kullanıcıya özel istatistiklerle döner.
+ * GET /api/mylinks
+ * Kullanıcının görünür ve süresi dolmamış linklerini (expiresAt NULL **veya** gelecekte),
+ * ürün ve kullanıcıya özel istatistiklerle döner.
  */
 export async function GET(req) {
   try {
-    // Auth
-    const session = await getServerSession(authOptions);
+    // Auth (NextAuth v5)
+    const session = await auth();
     const userId = session?.user?.id;
     const role = session?.user?.role;
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (role !== "affiliate") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (role !== "affiliate") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // Rate limit (IP/user scope)
+    // Rate limit
     const rlKey = makeRateLimitKey(req, { scope: "my-links:get", userId });
-    const { ok, resetMs } = await checkRateLimit({
-      key: rlKey,
-      limit: 60,
-      windowMs: 60_000,
-    });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
     if (!ok) {
       return NextResponse.json(
         { error: "Too many requests" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) },
-        }
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
     }
 
-    // Data
+    // Data (expiresAt NULL da kabul edilsin → non-expiring)
+    const now = new Date();
     const links = await prisma.affiliateLink.findMany({
       where: {
         userId,
         isVisible: true,
-        expiresAt: { gt: new Date() },
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: now } },
+        ],
       },
       include: {
         product: {
@@ -99,11 +92,7 @@ export async function GET(req) {
       links.map(async (link) => {
         const p = link.product;
         let remaining_sales = null;
-        if (
-          p &&
-          typeof p.max_sales_limit === "number" &&
-          typeof p.total_purchases === "number"
-        ) {
+        if (p && typeof p.max_sales_limit === "number" && typeof p.total_purchases === "number") {
           remaining_sales = Math.max(0, p.max_sales_limit - p.total_purchases);
         }
 
@@ -130,6 +119,7 @@ export async function GET(req) {
           where: { linkId: link.linkId },
         });
 
+        // Şemanızdaki alan adı buysa kalsın; bazı şemalarda affiliateLinkId olabilir.
         const salesAgg = await prisma.affiliateUserSale.aggregate({
           _sum: { commissionAffiliate: true, quantity: true },
           where: { affiliate_linkId: link.linkId, userId },
@@ -149,48 +139,36 @@ export async function GET(req) {
       { headers: { "Cache-Control": "no-store", Vary: "Cookie" } }
     );
   } catch (err) {
-    console.error("GET /api/my-links error:", err);
+    console.error("GET /api/mylinks error:", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
 
 /**
- * POST /api/my-links
+ * POST /api/mylinks
  * Body: { token: string }
  * Etki: İlgili linki kullanıcının “My Links” görünümünden kaldırır (isVisible = false).
- * NOTE: DB kaydı silinmez, sadece görünürlüğü kapatılır.
+ * NOTE: Silmiyor, sadece görünürlüğü kapatıyor.
  */
 export async function POST(req) {
   try {
     // Auth
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     const userId = session?.user?.id;
     const role = session?.user?.role;
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (role !== "affiliate") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (role !== "affiliate") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // CSRF (mutating endpoint)
-    // SECURITY: Header x-csrf-token === cookie csrf_token olmalı
+    // CSRF (mutating)
     validateCsrfToken(req);
 
     // Rate limit
     const rlKey = makeRateLimitKey(req, { scope: "my-links:hide", userId });
-    const { ok, resetMs } = await checkRateLimit({
-      key: rlKey,
-      limit: 20,
-      windowMs: 60_000,
-    });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
     if (!ok) {
       return NextResponse.json(
         { error: "Too many requests" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) },
-        }
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
     }
 
@@ -212,12 +190,9 @@ export async function POST(req) {
       );
     }
 
-    return NextResponse.json(
-      { success: true },
-      { headers: { "Cache-Control": "no-store" } }
-    );
+    return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
-    console.error("POST /api/my-links error:", err);
+    console.error("POST /api/mylinks error:", err);
     // CSRF dahil tüm hatalar generic döndürülür
     return NextResponse.json({ error: "Failed to update link" }, { status: 500 });
   }

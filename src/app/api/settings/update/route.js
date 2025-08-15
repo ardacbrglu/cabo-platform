@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -7,12 +8,10 @@ import prisma from "@/lib/prisma";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/ratelimit";
 
-// Basit güvenli isim temizleyici (validation dosyan yoksa)
+// Basit güvenli isim temizleyici
 function sanitizeName(input) {
   if (typeof input !== "string") return "";
-  // HTML taglarını ve kontrol karakterlerini at
   const noTags = input.replace(/<[^>]*>/g, "");
-  // Trim ve soft normalize
   return noTags.trim().slice(0, 80);
 }
 
@@ -26,19 +25,34 @@ async function getSupportedLanguages() {
 }
 
 async function getSupportedCurrencies() {
-  const currencies = await prisma.currency.findMany();
+  const currencies = await prisma.currency.findMany({ select: { code: true } });
   return currencies.map((c) => c.code);
+}
+
+function secureJson(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-site");
+  return res;
 }
 
 export async function POST(req) {
   try {
+    // Content-Type
+    const ct = String(req.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      return secureJson({ error: "Unsupported Media Type" }, { status: 415 });
+    }
+
     // 1) CSRF
-    validateCsrfToken(req);
+    await validateCsrfToken(req);
 
     // 2) Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) return secureJson({ error: "Unauthorized" }, { status: 401 });
 
     // 3) Rate limit
     const { ok, resetMs } = await checkRateLimit({
@@ -47,14 +61,14 @@ export async function POST(req) {
       windowMs: 60_000,
     });
     if (!ok) {
-      return NextResponse.json(
+      return secureJson(
         { error: "Too many requests" },
         { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
     }
 
     // 4) Body + dinamik doğrulama
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { name, languagePreference, currencyCode } = body || {};
 
     const supportedLangs = await getSupportedLanguages();
@@ -66,7 +80,7 @@ export async function POST(req) {
       !supportedLangs.includes(languagePreference) ||
       !supportedCurrencies.includes(currencyCode)
     ) {
-      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+      return secureJson({ error: "Invalid input" }, { status: 400 });
     }
 
     const nameClean = sanitizeName(name);
@@ -80,9 +94,9 @@ export async function POST(req) {
       },
     });
 
-    return NextResponse.json({ success: true });
+    return secureJson({ success: true });
   } catch (err) {
     console.error("POST /api/settings/update error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return secureJson({ error: "Server error" }, { status: 500 });
   }
 }

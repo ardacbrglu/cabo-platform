@@ -308,13 +308,18 @@
   "activationSuccess": "Aktivasyon başarılı! Şimdi giriş yapabilirsiniz.",
   "activationFailed": "Aktivasyon başarısız veya link geçersiz.",
   "redirectingToLogin": "Giriş sayfasına yönlendiriliyorsunuz...",
+  "approved": "Onaylandı",
+  "locked": "Kilitli",
+  "cancelUntil": "İptal için son tarih",
+  "updateBankForThisRequest": "Bu talep için banka bilgisini güncelle",
+
   "homepage": {
     "heroTitleA": "Drop your link. ",
     "heroTitleB": "Let the money flow.",
     "heroDesc": "Cabo, sadece ürün linki paylaşarak para kazanmanı sağlar. Birileri satın aldığında para hesabına yatar.",
     "loginBtn": "Hemen Kazanmaya Başla"
   },
-  
+
   "api": {
     "payoutDetails": {
       "unauthorized": "Yetkisiz erişim",

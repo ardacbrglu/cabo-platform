@@ -1,4 +1,5 @@
-'use client';
+// /components/ProfileDropdown.jsx
+"use client";
 
 import { useState, useRef, useEffect } from 'react';
 import { useUser } from '@/context/UserContext';
@@ -9,16 +10,16 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
-import { useNotifications} from '@/hooks/useNotifications';
+import { useNotifications } from '@/hooks/useNotifications';
 import NotificationBadge from './NotificationBadge';
 
 export default function ProfileDropdown({ alwaysVisible = false }) {
   const [open, setOpen] = useState(false);
   const { user, setUser } = useUser();
   const router = useRouter();
-  const csrfToken = useCsrfToken();
+  const { csrfToken } = useCsrfToken();        // ✅ doğru kullanım
   const dropdownRef = useRef();
-  const t = useTranslation();
+  const { t } = useTranslation();              // ✅ doğru kullanım (destructure)
   const { ready } = useLocale();
   const { unreadCount } = useNotifications();
 
@@ -39,13 +40,18 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
 
   async function handleLogout(e) {
     e.preventDefault();
-    await fetch('/api/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'x-csrf-token': csrfToken || ''
-      }
-    });
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'x-csrf-token': csrfToken || ''
+        }
+      });
+    } catch {
+      // no-op; yine de local cookie’yi temizleyip yönlendireceğiz
+    }
+    // Legacy cookie temizliği
     document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
     document.cookie = "cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=" + window.location.hostname + ";";
     setUser && setUser(null);
@@ -55,7 +61,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
   if (!ready) {
     return (
       <div className="relative flex items-center">
-        <button className="..." disabled>
+        <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border-2 border-white text-white opacity-60" disabled>
           <User2 size={20} />
           <span className="truncate">{user?.name || ""}</span>
         </button>
@@ -88,7 +94,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
       >
         <span className="relative">
           <User2 size={20} />
-          {/* PROFİL İKONUNUN SAĞ ÜSTÜNDE BADGE */}
+          {/* Profil ikonunun sağ üstünde badge */}
           <NotificationBadge show={unreadCount > 0} size={10} />
         </span>
         <span className="truncate max-w-[90px]">{user?.name || ""}</span>
@@ -97,6 +103,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
           <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
         </svg>
       </button>
+
       {/* Dropdown */}
       {open && (
         <div
@@ -122,6 +129,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
             href="/notifications"
             className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition relative"
             style={{ position: "relative" }}
+            onClick={() => setOpen(false)}
           >
             <span className="relative flex items-center">
               <Bell size={16} />
@@ -129,16 +137,24 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
             </span>
             {t("notifications")}
           </Link>
-          <Link href="/settings" className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition">
+          <Link
+            href="/settings"
+            className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition"
+            onClick={() => setOpen(false)}
+          >
             <Settings size={16} /> {t("settings")}
           </Link>
-          <Link href="/support" className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition">
+          <Link
+            href="/support"
+            className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition"
+            onClick={() => setOpen(false)}
+          >
             <Headset size={16} /> {t("support")}
           </Link>
           <div className="border-t border-[#232323] my-1" />
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-red-500 transition"
+            className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-red-500 transition w-full"
             style={{ background: "transparent", outline: "none" }}
             type="button"
           >

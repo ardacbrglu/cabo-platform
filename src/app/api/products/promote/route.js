@@ -1,150 +1,171 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { validateCsrfToken } from "@/lib/csrf";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || "";
 const TOKEN_LIFETIME_DAYS = 14;
 
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  return res;
+}
+
 function generateToken() {
+  // 8 byte → 16 hex (64-bit entropi)
   return crypto.randomBytes(8).toString("hex");
+}
+
+// DB-level unique + yarış koşulu için retry
+async function createLinkWithUniqueToken(data, tries = 5) {
+  for (let i = 0; i < tries; i++) {
+    const token = generateToken();
+    try {
+      return await prisma.affiliateLink.create({
+        data: { ...data, token },
+      });
+    } catch (e) {
+      if (e?.code === "P2002" && Array.isArray(e.meta?.target) && e.meta.target.includes("token")) {
+        // token çakıştı → tekrar dene
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("Could not allocate a unique token after several attempts.");
 }
 
 export async function POST(req) {
   try {
-    // KULLANICI DOĞRULAMA
-    const cookieStore = await cookies();
-    const token = cookieStore.get('cabo_token')?.value;
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // --- CSRF (mutating endpoint) ---
+    validateCsrfToken(req);
+
+    // --- Rate limit (user/IP bazlı 10/dk) ---
+    const rlKey = makeRateLimitKey(req, { scope: "products_promote" });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
+    if (!ok) {
+      return json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
+
+    // --- Auth (JWT cookie) ---
+    const cookieStore = cookies();
+    const raw = cookieStore.get("cabo_token")?.value;
+    if (!raw || !JWT_SECRET) return json({ error: "Unauthorized" }, { status: 401 });
 
     let payload;
     try {
-      payload = jwt.verify(token, JWT_SECRET);
+      payload = jwt.verify(raw, JWT_SECRET);
     } catch {
-      return NextResponse.json({ error: "Invalid token" }, { status: 403 });
+      return json({ error: "Invalid token" }, { status: 403 });
     }
 
-    const userId = payload.userId;
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = Number(payload?.userId);
+    if (!Number.isFinite(userId)) return json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await req.json();
-    const { productId } = body;
-    // Güvenlik: productId sayısal mı?
-    if (!productId || isNaN(Number(productId))) {
-      return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
+    // --- Input ---
+    const body = await req.json().catch(() => ({}));
+    const productId = Number(body?.productId);
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return json({ error: "Invalid productId" }, { status: 400 });
     }
 
-    // 1️⃣ Ürün aktif/uygun mu?
+    // --- Ürün uygun mu? ---
     const product = await prisma.merchantProduct.findUnique({
-      where: { productId: Number(productId) },
+      where: { productId },
       select: {
         isActive: true,
         activatedByAdmin: true,
         totalPurchases: true,
-        maxSalesLimit: true
-      }
+        maxSalesLimit: true,
+      },
     });
     if (!product || !product.isActive) {
-      return NextResponse.json({ error: "This product is not active." }, { status: 403 });
+      return json({ error: "This product is not active." }, { status: 403 });
     }
     if (!product.activatedByAdmin) {
-      return NextResponse.json({ error: "This product is not yet approved by admin." }, { status: 403 });
+      return json({ error: "This product is not yet approved by admin." }, { status: 403 });
     }
     if (product.maxSalesLimit != null && product.totalPurchases >= product.maxSalesLimit) {
-      return NextResponse.json({ error: "This product has reached its sales quota." }, { status: 403 });
+      return json({ error: "This product has reached its sales quota." }, { status: 403 });
     }
 
-    // 2️⃣ Kullanıcıya ait bu ürün için link var mı?
-    let existing = await prisma.affiliateLink.findFirst({
-      where: {
-        userId: userId,
-        productId: Number(productId)
-      }
+    // --- Var olan link var mı? ---
+    const now = new Date();
+    const existing = await prisma.affiliateLink.findFirst({
+      where: { userId, productId },
+      select: { linkId: true, isVisible: true, expiresAt: true, token: true },
     });
 
-    const now = new Date();
+    // Expired ise eskiyi görünmez yapıp yeni üret
+    if (existing && existing.expiresAt && new Date(existing.expiresAt) < now) {
+      await prisma.affiliateLink.update({
+        where: { linkId: existing.linkId },
+        data: { isVisible: false },
+      });
 
-    if (existing) {
-      // Eğer expire olmuşsa yeni token oluştur
-      if (existing.expiresAt && new Date(existing.expiresAt) < now) {
-        // Eskiyi inaktif yap
-        await prisma.affiliateLink.update({
-          where: { linkId: existing.linkId },
-          data: { isVisible: false }
-        });
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
 
-        // Yeni token üret ve kaydet
-        let newToken, tokenExists = true;
-        while (tokenExists) {
-          newToken = generateToken();
-          tokenExists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
-        }
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
+      const created = await createLinkWithUniqueToken({
+        userId,
+        productId,
+        isVisible: true,
+        createdAt: new Date(),
+        expiresAt,
+      });
 
-        const created = await prisma.affiliateLink.create({
-          data: {
-            userId: userId,
-            productId: Number(productId),
-            token: newToken,
-            isVisible: true,
-            createdAt: new Date(),
-            expiresAt: expiresAt
-          },
-        });
-
-        return NextResponse.json({
-          message: "Created new token (expired before)",
-          token: created.token,
-          expiresAt: created.expiresAt
-        });
-      }
-      // Hala aktif, sadece görünebilir yap ve token döndür
-      if (!existing.isVisible) {
-        await prisma.affiliateLink.update({
-          where: { linkId: existing.linkId },
-          data: { isVisible: true }
-        });
-      }
-      return NextResponse.json({
-        message: "Already exists",
-        token: existing.token,
-        expiresAt: existing.expiresAt
+      return json({
+        message: "Created new token (expired before)",
+        token: created.token,
+        expiresAt: created.expiresAt,
       });
     }
 
-    // 3️⃣ İlk defa token üret
-    let newToken;
-    let tokenExists = true;
-    while (tokenExists) {
-      newToken = generateToken();
-      tokenExists = await prisma.affiliateLink.findFirst({ where: { token: newToken } });
+    // Mevcut ve aktifse görünür yapıp aynı token'ı döndür
+    if (existing) {
+      if (!existing.isVisible) {
+        await prisma.affiliateLink.update({
+          where: { linkId: existing.linkId },
+          data: { isVisible: true },
+        });
+      }
+      return json({
+        message: "Already exists",
+        token: existing.token,
+        expiresAt: existing.expiresAt || null,
+      });
     }
 
+    // İlk kez oluştur
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
 
-    const created = await prisma.affiliateLink.create({
-      data: {
-        userId: userId,
-        productId: Number(productId),
-        token: newToken,
-        isVisible: true,
-        createdAt: new Date(),
-        expiresAt: expiresAt
-      },
+    const created = await createLinkWithUniqueToken({
+      userId,
+      productId,
+      isVisible: true,
+      createdAt: new Date(),
+      expiresAt,
     });
 
-    return NextResponse.json({
+    return json({
       message: "Created",
       token: created.token,
-      expiresAt: created.expiresAt
+      expiresAt: created.expiresAt,
     });
-
   } catch (err) {
     console.error("Promote API error:", err);
-    return NextResponse.json({ error: err.message || "Server error" }, { status: 500 });
+    return json({ error: err?.message || "Server error" }, { status: 500 });
   }
 }

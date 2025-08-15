@@ -1,9 +1,8 @@
-// SORUMLULUK: Şifre sıfırlama formu ve yeni şifre belirleme formunu gösterir (token varsa yeni şifre, yoksa email).
 'use client';
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import useCsrfToken from "@/hooks/useCsrfToken"; // ⬅️ default import
 
 const t = {
   en: {
@@ -58,19 +57,18 @@ export default function PasswordResetContent() {
   const params = useSearchParams();
   const token = params.get("token");
   const langParam = params.get("lang");
-  const locale =(langParam && ["en", "tr"].includes(langParam)) ? langParam: (typeof window !== "undefined" && navigator.language.startsWith("tr") ? "tr" : "en");
+  const locale = (langParam && ["en", "tr"].includes(langParam))
+    ? langParam
+    : (typeof window !== "undefined" && (navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en");
   const trans = t[locale];
 
   useEffect(() => {
     if (token) setStep("confirm");
   }, [token]);
 
-  // E-MAIL İLE RESET TOKEN İSTEĞİ
   const handleRequest = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setLoading(true);
+    setError(""); setSuccess(""); setLoading(true);
     try {
       const res = await fetch("/api/password_reset/request", {
         method: "POST",
@@ -81,12 +79,9 @@ export default function PasswordResetContent() {
         },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setSuccess(trans.emailSent);
-      } else {
-        setError(data.message || trans.server);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) setSuccess(trans.emailSent);
+      else setError(data.message || trans.server);
     } catch {
       setError(trans.server);
     } finally {
@@ -94,24 +89,14 @@ export default function PasswordResetContent() {
     }
   };
 
-  // YENİ ŞİFRE BELİRLEME
   const handleConfirm = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
+    setError(""); setSuccess("");
 
-    if (!pw || !pw2) {
-      setError(trans.required);
-      return;
-    }
-    if (pw !== pw2) {
-      setError(trans.mismatch);
-      return;
-    }
-    if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) {
-      setError(trans.weak);
-      return;
-    }
+    if (!pw || !pw2) return setError(trans.required);
+    if (pw !== pw2) return setError(trans.mismatch);
+    if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) return setError(trans.weak);
+
     setLoading(true);
     try {
       const res = await fetch("/api/password_reset/confirm", {
@@ -123,7 +108,7 @@ export default function PasswordResetContent() {
         },
         body: JSON.stringify({ token, password: pw }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         setSuccess(trans.success);
         setTimeout(() => router.replace("/login"), 2000);
@@ -149,7 +134,7 @@ export default function PasswordResetContent() {
                   type="email"
                   placeholder={trans.enterEmail}
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  onChange={(e) => setEmail(e.target.value)}
                   required
                   className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
                 />
@@ -172,7 +157,7 @@ export default function PasswordResetContent() {
                   type="password"
                   placeholder={trans.newPw}
                   value={pw}
-                  onChange={e => setPw(e.target.value)}
+                  onChange={(e) => setPw(e.target.value)}
                   required
                   className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
                 />
@@ -180,7 +165,7 @@ export default function PasswordResetContent() {
                   type="password"
                   placeholder={trans.repeatPw}
                   value={pw2}
-                  onChange={e => setPw2(e.target.value)}
+                  onChange={(e) => setPw2(e.target.value)}
                   required
                   className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
                 />

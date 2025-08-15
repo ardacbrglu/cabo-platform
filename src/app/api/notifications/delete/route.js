@@ -1,17 +1,16 @@
-// ✅ Kullanıcı → Bildirim(leri) sil (soft delete: isDeleted=true)
-// SECURITY: NextAuth, CSRF (POST), rate-limit, only-own records
+// app/api/notifications/delete/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
 export const POST = withCsrfProtection(async (req) => {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     const userId = session?.user?.id;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -26,7 +25,7 @@ export const POST = withCsrfProtection(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const idsRaw = Array.isArray(body?.ids) ? body.ids : [];
-    const ids = idsRaw.map((v) => String(v)).filter((v) => v.length > 0);
+    const ids = idsRaw.map(String).filter(Boolean);
     if (!ids.length) {
       return NextResponse.json({ error: "No ids" }, { status: 400 });
     }

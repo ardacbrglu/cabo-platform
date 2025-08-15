@@ -1,12 +1,8 @@
+// app/api/me/route.js
 export const dynamic = "force-dynamic";
 
-/**
- * /app/api/me/route.js
- */
-
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
@@ -21,12 +17,12 @@ export async function GET(req) {
     );
   }
 
-  // 2) Session
-  const session = await getServerSession(authOptions);
+  // 2) Session (v5)
+  const session = await auth();
   const email = session?.user?.email?.toLowerCase?.();
   if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // 3) Güvenli alanlar (email ile çek → id tip uyumsuzluğu riski yok)
+  // 3) Güvenli alanlar
   const user = await prisma.user.findUnique({
     where: { email },
     select: {
@@ -42,7 +38,6 @@ export async function GET(req) {
 
   if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // 4) UserContext ile uyumlu yanıt
   return NextResponse.json(
     {
       userId: user.id,

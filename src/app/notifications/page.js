@@ -1,14 +1,15 @@
+// app/notifications/page.js
 'use client';
 
 import { useState } from "react";
 import Layout from '@/components/Layout';
-import { useNotifications} from '@/hooks/useNotifications';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useNotifications } from '@/hooks/useNotifications';
+// Doğru kullanım: hook döndürdüğü objeden t çekilir
+import useTranslation from '@/hooks/useTranslation';
 import { Bell, CheckCircle, Trash2 } from "lucide-react";
 
-const notifications_PER_PAGE = 8;
+const NOTIFS_PER_PAGE = 8;
 
-// Bildirim tipine göre küçük renkli nokta
 function NotificationTypeDot({ type }) {
   let color = "#81d742";
   if (type === "important") color = "#ff5555";
@@ -24,57 +25,60 @@ function NotificationTypeDot({ type }) {
         minHeight: 10,
         background: color,
         marginTop: 2,
-        boxShadow: "0 0 0 1.4px #1a1a1a"
+        boxShadow: "0 0 0 1.4px #1a1a1a",
       }}
     />
   );
 }
 
-export default function notificationsPage() {
+export default function NotificationsPage() {
   const { notifications, markSelectedAsRead, deletenotifications, unreadCount } = useNotifications();
-  const t = useTranslation();
+  const { t } = useTranslation(); // ← düzeltildi
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil((notifications?.length || 0) / notifications_PER_PAGE));
+  const totalPages = Math.max(1, Math.ceil((notifications?.length || 0) / NOTIFS_PER_PAGE));
   const pageNotifs = Array.isArray(notifications)
-    ? notifications.slice((page - 1) * notifications_PER_PAGE, page * notifications_PER_PAGE)
+    ? notifications.slice((page - 1) * NOTIFS_PER_PAGE, page * NOTIFS_PER_PAGE)
     : [];
 
-  // Seçili toggle
-  const toggleSelect = id =>
-    setSelected(sel => sel.includes(id) ? sel.filter(i => i !== id) : [...sel, id]);
-  // Tümünü seç
-  const allSelected = pageNotifs.length > 0 && pageNotifs.every(n => selected.includes(n.id));
+  const toggleSelect = (id) =>
+    setSelected((sel) => (sel.includes(id) ? sel.filter((i) => i !== id) : [...sel, id]));
+
+  const allSelected = pageNotifs.length > 0 && pageNotifs.every((n) => selected.includes(n.id));
   const handleSelectAll = () => {
-    if (allSelected) setSelected(sel => sel.filter(id => !pageNotifs.map(n => n.id).includes(id)));
-    else setSelected(sel => [...sel, ...pageNotifs.map(n => n.id).filter(id => !sel.includes(id))]);
+    if (allSelected)
+      setSelected((sel) => sel.filter((id) => !pageNotifs.map((n) => n.id).includes(id)));
+    else
+      setSelected((sel) => [
+        ...sel,
+        ...pageNotifs.map((n) => n.id).filter((id) => !sel.includes(id)),
+      ]);
   };
 
-  // Seçiliyi okundu yap
   const handleMarkAsRead = async () => {
     if (!selected.length) return;
     await markSelectedAsRead(selected);
     setSelected([]);
   };
 
-  // Seçiliyi sil
   const handleDeleteSelected = async () => {
     if (!selected.length) return;
-    await deletenotifications(selected);
+    await deletenotifications(selected); // hook ile uyumluysa kalsın
     setSelected([]);
   };
 
-  // Okundu işareti
-  const renderReadIcon = read =>
-    <CheckCircle size={20} className={read ? "text-[#81d742]" : "text-gray-500 opacity-60"} />;
+  const renderReadIcon = (read) => (
+    <CheckCircle size={20} className={read ? "text-[#81d742]" : "text-gray-500 opacity-60"} />
+  );
 
   return (
     <Layout>
       <div className="flex flex-col items-center justify-center min-h-[78vh] w-full py-7 px-2 bg-transparent">
-        <div className="w-full max-w-xl rounded-2xl bg-[#181818] border border-[#232323] shadow-xl px-6 pt-7 pb-2 mx-auto" style={{ minHeight: 650 }}>
-          {/* Başlık */}
+        <div
+          className="w-full max-w-xl rounded-2xl bg-[#181818] border border-[#232323] shadow-xl px-6 pt-7 pb-2 mx-auto"
+          style={{ minHeight: 650 }}
+        >
           <div className="flex items-center gap-3 mb-3">
             <span className="relative">
               <Bell size={26} className="text-[#81d742] mr-1" />
@@ -85,25 +89,23 @@ export default function notificationsPage() {
             <h2 className="text-2xl font-black font-mono text-white">{t("notifications")}</h2>
           </div>
 
-          {/* Aksiyonlar */}
           <div className="flex gap-3 mb-3 flex-wrap">
             <button
               onClick={handleMarkAsRead}
-              className={`bg-[#81d742] hover:bg-[#aaf966] text-[#181818] font-bold font-mono px-3 py-1.5 rounded-md transition text-sm`}
+              className="bg-[#81d742] hover:bg-[#aaf966] text-[#181818] font-bold font-mono px-3 py-1.5 rounded-md transition text-sm disabled:opacity-50"
               disabled={!selected.length}
             >
               {t("markSelectedAsRead")}
             </button>
             <button
               onClick={handleDeleteSelected}
-              className="bg-[#ff5555] hover:bg-[#ff7a7a] text-white font-bold font-mono px-3 py-1.5 rounded-md transition text-sm"
+              className="bg-[#ff5555] hover:bg-[#ff7a7a] text-white font-bold font-mono px-3 py-1.5 rounded-md transition text-sm disabled:opacity-50"
               disabled={!selected.length}
             >
               {t("deleteSelected")}
             </button>
           </div>
 
-          {/* Select all */}
           <div className="flex items-center mb-3">
             <input
               type="checkbox"
@@ -112,50 +114,41 @@ export default function notificationsPage() {
               className="accent-[#81d742] w-4 h-4 mr-2"
               id="select-all"
             />
-            <label htmlFor="select-all" className="text-white text-sm font-mono">{t("selectAll")}</label>
+            <label htmlFor="select-all" className="text-white text-sm font-mono">
+              {t("selectAll")}
+            </label>
           </div>
 
-          {/* Bildirimler */}
           <div className="flex flex-col gap-2 pb-1 min-h-[378px]">
             {pageNotifs.length === 0 && (
-              <div className="text-gray-400 font-mono text-sm py-10 text-center flex-1">{t("nonotifications")}</div>
+              <div className="text-gray-400 font-mono text-sm py-10 text-center flex-1">
+                {t("nonotifications")}
+              </div>
             )}
-            {pageNotifs.map(n => (
+            {pageNotifs.map((n) => (
               <div
                 key={n.id}
-                className={`
-                  flex items-center gap-2 w-full rounded-xl px-5 py-3 border
+                className={`flex items-center gap-2 w-full rounded-xl px-5 py-3 border
                   ${selected.includes(n.id) ? "border-[#81d742] shadow-lg bg-[#202620]" : "border-[#232323]"}
-                  bg-[#191919] transition relative group
-                `}
-                style={{
-                  minHeight: 54,
-                  alignItems: "center",
-                }}
+                  bg-[#191919] transition relative group`}
+                style={{ minHeight: 54, alignItems: "center" }}
               >
-                {/* Checkbox */}
                 <input
                   type="checkbox"
                   checked={selected.includes(n.id)}
                   onChange={() => toggleSelect(n.id)}
                   className="accent-[#81d742] w-4 h-4 mr-1"
                 />
-
-                {/* Type Dot */}
                 <NotificationTypeDot type={n.type} />
-
-                {/* Mesaj + Zaman */}
                 <div className="flex flex-col flex-1 min-w-0">
                   <span className="font-mono text-base font-bold text-white truncate" title={n.message}>
                     {n.message}
                   </span>
-                  <span className="font-mono text-xs text-gray-400">{new Date(n.createdAt).toLocaleString()}</span>
+                  <span className="font-mono text-xs text-gray-400">
+                    {new Date(n.createdAt).toLocaleString()}
+                  </span>
                 </div>
-
-                {/* Okundu */}
                 <span className="mx-1">{renderReadIcon(n.read)}</span>
-
-                {/* Sil */}
                 <button
                   className="ml-2 p-1.5 rounded hover:bg-[#ff555520] transition"
                   onClick={() => deletenotifications([n.id])}
@@ -167,19 +160,24 @@ export default function notificationsPage() {
             ))}
           </div>
 
-          {/* Pagination her zaman en altta */}
           <div className="flex justify-center gap-2 mt-10 mb-2">
             <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
               className="px-3 py-1 rounded bg-[#161616] text-gray-300 font-mono font-bold text-sm disabled:opacity-50"
-            >{"< Prev"}</button>
-            <span className="text-gray-400 font-mono text-sm">{page} / {totalPages}</span>
+            >
+              {"< Prev"}
+            </button>
+            <span className="text-gray-400 font-mono text-sm">
+              {page} / {totalPages}
+            </span>
             <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
               className="px-3 py-1 rounded bg-[#161616] text-gray-300 font-mono font-bold text-sm disabled:opacity-50"
-            >{"Next >"}</button>
+            >
+              {"Next >"}
+            </button>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-// lib/authOptions.js (NextAuth v5 - JS)
+// src/lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -31,11 +31,14 @@ function verifyGooglePrecheckCookie() {
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
   trustHost: true,
+  pages: { signIn: "/login" },
 
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      // Google e-postaları verified olduğu için email-match ile linking güvenlidir.
+      // allowDangerousEmailAccountLinking: false (default)
     }),
 
     CredentialsProvider({
@@ -52,13 +55,13 @@ export const authOptions = {
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        // Merchant portal değil → reddet
+        // Manuel girişten merchant'ı engelle
         if (user.role === "merchant") return null;
 
-        // Google-only (şifre yok) → credentials ile giriş reddi
+        // Google-only (şifre yok) → manuel logine izin verme
         if (!user.passwordHash) return null;
 
-        // Kilitli hesap?
+        // Hesap kilitli mi?
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) return null;
 
         const ok = await bcrypt.compare(password, user.passwordHash);
@@ -86,6 +89,7 @@ export const authOptions = {
         // Aktif olmayan hesap → reddet
         if (user.status !== "active") return null;
 
+        // jwt callback'ine taşınacak güvenli alanlar
         return {
           id: String(user.id),
           name: user.name,
@@ -97,16 +101,13 @@ export const authOptions = {
     }),
   ],
 
-  pages: {
-    signIn: "/login",
-  },
-
   session: {
     strategy: "jwt",
     maxAge: 60 * 60 * 24, // 1 gün
   },
 
   callbacks: {
+    // OAuth (Google) ve Credentials girişlerinde token'ı zenginleştir
     async jwt({ token, user }) {
       if (user) {
         token.sub = String(user.id);
@@ -138,43 +139,39 @@ export const authOptions = {
       return session;
     },
 
+    /**
+     * Google signIn akışı:
+     * - E-posta DB'de yoksa: "precheck" çerezi ZORUNLU → yeni kullanıcı oluşturulur (adapter).
+     * - E-posta DB'de varsa:
+     *    • merchant ise engelle
+     *    • status !== active ise engelle
+     *    • diğer durumda İZİN VER → NextAuth var olan user’a Account kaydını bağlar (linking).
+     */
     async signIn({ user, account }) {
-      if (account?.provider === "google" && user?.email) {
-        const email = user.email.toLowerCase();
-        let existing = await prisma.user.findUnique({ where: { email } });
+      if (account?.provider !== "google") return true;
 
-        // Merchant → reddet
-        if (existing?.role === "merchant") return false;
+      const email = user?.email?.toLowerCase?.();
+      if (!email) return false;
 
-        if (!existing) {
-          // Yeni kullanıcı → precheck cookie zorunlu
-          const ok = verifyGooglePrecheckCookie();
-          return !!ok; // PrismaAdapter user'ı yaratacak
-        }
+      const existing = await prisma.user.findUnique({ where: { email } });
 
-        if (existing.status === "pending") {
-          const ok = verifyGooglePrecheckCookie();
-          if (!ok) return false;
-          await prisma.user.update({
-            where: { id: existing.id },
-            data: {
-              status: "active",
-              termsAccepted: true,
-              emailVerified: existing.emailVerified ?? new Date(),
-              role: existing.role || "affiliate",
-            },
-          });
-          return true;
-        }
+      // Merchant → reddet
+      if (existing?.role === "merchant") return false;
 
-        return existing.status === "active";
+      if (!existing) {
+        // Yeni Google kullanıcısı → precheck cookie zorunlu
+        const ok = verifyGooglePrecheckCookie();
+        return !!ok; // PrismaAdapter user'ı yaratacak
       }
 
-      return true;
+      // Mevcut manuel veya Google kullanıcı:
+      // status aktifse İZİN VER → adapter Google Account'u var olan kullanıcıya bağlar.
+      return existing.status === "active";
     },
   },
 
   events: {
+    // İlk defa OAuth ile oluşan kullanıcıyı patch et (rol/durum)
     async createUser({ user, account }) {
       if (account?.provider === "google" && user?.email) {
         try {

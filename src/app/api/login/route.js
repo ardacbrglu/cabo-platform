@@ -1,4 +1,4 @@
-// app/api/login/route.js
+// src/app/api/login/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -219,7 +219,7 @@ export async function POST(req) {
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         accept: "application/json",
-        cookie: cookieJar,           // Yalnız NextAuth çerezleri
+        cookie: cookieJar,
         origin,
         referer: `${origin}/login`,
       },
@@ -229,7 +229,7 @@ export async function POST(req) {
 
     const setCookieHeader = cbRes.headers.get("set-cookie") || "";
     let cbJson = {};
-    try { cbJson = await cbRes.json(); } catch { /* JSON olmayabilir */ }
+    try { cbJson = await cbRes.json(); } catch {}
 
     const okJson = cbRes.ok && !cbJson?.error;
     const okRedirectWithSession =
@@ -242,14 +242,12 @@ export async function POST(req) {
       );
     }
 
-    // 8) Session çerezlerini forward et (CSRF isteğinden gelenleri de ekleyelim ki tarayıcı tutarlı olsun)
+    // 8) Session çerezlerini forward et (+ CSRF çağrısından gelen faydalı çerezler)
     const res = withDebug(
       NextResponse.json({ success: true, message: msg.success }, { status: 200 }),
       okJson ? "ok:json" : "ok:302_session"
     );
-    // önce callback'in Set-Cookie'leri
     for (const c of splitSetCookies(setCookieHeader)) res.headers.append("set-cookie", c);
-    // ardından CSRF çağrısından gelen (callback-url vs.) faydalı çerezler (tekrarlar zararsız)
     for (const c of splitSetCookies(csrfSetCookie)) res.headers.append("set-cookie", c);
 
     res.headers.set("cache-control", "no-store");

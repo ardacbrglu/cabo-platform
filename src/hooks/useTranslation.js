@@ -1,44 +1,30 @@
 // /hooks/useTranslation.js
-/**
- * useTranslation — minimal i18n (prod-ready, lazy loaded)
- * - Dot-notation key: t("homepage.title")
- * - Fallback: selected -> en -> key
- * - Interpolation: t("msg", { name: "Ali" })
- * - Intl helpers: n(), d(), c()
- * - Lazy load JSON by locale, cache in-memory
- */
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { DEFAULT_LOCALE } from "@/locales";
 
-const dictCache = new Map(); // locale -> dict object
+const dictCache = new Map();
 
 async function loadDict(locale) {
   if (dictCache.has(locale)) return dictCache.get(locale);
-  // Namespace “common” zorunlu değil; tüm stringler bu tek JSON’da da olabilir.
-  // İstersen dosyaları bölebilirsin: common.json, dashboard.json...
   const mod = await import(`@/locales/${locale}/common.json`);
   const dict = mod.default || mod;
   dictCache.set(locale, dict);
   return dict;
 }
 
-// Simple sync wrapper: ilk render’da en-US yoksa “en” dict ile idare eder.
-// SSR/CSR’de ilk anda missing olabilir; ikinci render’da cache dolu olur.
 let enDictPromise = null;
 async function ensureEnDict() {
   if (!enDictPromise) enDictPromise = loadDict("en");
   return enDictPromise;
 }
 
-/* ---------- helpers ---------- */
 function getByPath(obj, path) {
   if (!obj || !path) return undefined;
   let cur = obj;
   for (const seg of String(path).split(".")) {
-    if (cur && Object.prototype.hasOwnProperty.call(cur, seg)) {
-      cur = cur[seg];
-    } else return undefined;
+    if (cur && Object.prototype.hasOwnProperty.call(cur, seg)) cur = cur[seg];
+    else return undefined;
   }
   return cur;
 }
@@ -58,36 +44,29 @@ function warnMissing(key) {
   }
 }
 
-/* ---------- hook ---------- */
 export function useTranslation(nsPrefix = "") {
   const { locale: raw } = useLocale();
   const loc = raw || DEFAULT_LOCALE;
-
-  // prefix “homepage.” gibi
   const prefix = nsPrefix ? (nsPrefix.endsWith(".") ? nsPrefix : nsPrefix + ".") : "";
 
+  // sözlük yüklenince tekrar render için küçük tetik
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    let mounted = true;
+    loadDict(loc).then(() => mounted && setTick((x) => x + 1)).catch(() => {});
+    ensureEnDict().then(() => mounted && setTick((x) => x + 1)).catch(() => {});
+    return () => { mounted = false; };
+  }, [loc]);
+
   return useMemo(() => {
-    // dict getter: async yüklemeyi şimdilik gizleriz; cache yoksa en’e düşer.
-    // CSR’de kısa sürede dict yüklenip sonraki render’da hazır olur.
-    let dict = dictCache.get(loc);
-    let enDict = dictCache.get("en");
-
-    // Lazy kick-off (fire and forget)
-    loadDict(loc).catch(() => {});
-    ensureEnDict().catch(() => {});
-
     function t(key, vars) {
       const fullKey = prefix + key;
       const fromLoc = getByPath(dictCache.get(loc), fullKey);
-      if (fromLoc !== undefined) {
-        return typeof fromLoc === "string" ? interpolate(fromLoc, vars) : fromLoc;
-      }
+      if (fromLoc !== undefined) return typeof fromLoc === "string" ? interpolate(fromLoc, vars) : fromLoc;
       const fromEn = getByPath(dictCache.get("en"), fullKey);
-      if (fromEn !== undefined) {
-        return typeof fromEn === "string" ? interpolate(fromEn, vars) : fromEn;
-      }
+      if (fromEn !== undefined) return typeof fromEn === "string" ? interpolate(fromEn, vars) : fromEn;
       warnMissing(fullKey);
-      return fullKey; // debug amaçlı
+      return fullKey;
     }
 
     function n(number, options) {
@@ -101,9 +80,8 @@ export function useTranslation(nsPrefix = "") {
       } catch { return String(date); }
     }
     function c(amount, currency = "USD", options) {
-      try {
-        return new Intl.NumberFormat(loc, { style: "currency", currency, ...options }).format(amount);
-      } catch { return String(amount); }
+      try { return new Intl.NumberFormat(loc, { style: "currency", currency, ...options }).format(amount); }
+      catch { return String(amount); }
     }
 
     return { t, locale: loc, n, d, c };

@@ -1,4 +1,4 @@
-// /middleware.js
+// src/middleware.js
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 
@@ -31,20 +31,16 @@ export default withAuth(
     const isMerchantArea = pathname.startsWith("/merchant");
     const isProtected = isUserArea || isMerchantArea;
 
-    // Oturumu olmayan → login
     if (!token && isProtected) {
       const url = new URL("/login", req.url);
-      // İstersen geri dönüş için from paramı eklenebilir
       if (pathname && pathname !== "/login") url.searchParams.set("from", pathname + (search || ""));
       return NextResponse.redirect(url);
     }
 
-    // Hesap aktif değilse korumalı alanlara sokma
     if (isProtected && status !== "active") {
       return NextResponse.redirect(new URL("/login", req.url));
     }
 
-    // Rol kapıları
     if (isMerchantArea && role !== "merchant" && role !== "admin") {
       return NextResponse.redirect(new URL("/login", req.url));
     }
@@ -55,14 +51,13 @@ export default withAuth(
     return NextResponse.next();
   },
   {
-    // Token'ı her istekte çöz; yönlendirmeyi içeride yapıyoruz.
     callbacks: {
-      authorized: () => true,
+      authorized: () => true, // token çözülür; yönlendirme içeride
     },
   }
 );
 
-// Sadece sayfa yönlerini yakala (API/public hariç)
+// Yalnız sayfa yönleri (API/public hariç)
 export const config = {
   matcher: [
     "/dashboard/:path*",

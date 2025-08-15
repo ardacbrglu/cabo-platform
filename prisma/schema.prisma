@@ -115,20 +115,31 @@ model AffiliateLink {
   linkId             Int                 @id @default(autoincrement())
   userId             Int
   productId          Int
+
+  // Uygulama 8 byte -> 16 hex üretse de ileride esneme payı için 64
   token              String              @unique @db.VarChar(64)
+
   createdAt          DateTime            @default(now()) @db.DateTime(0)
   isVisible          Boolean             @default(true)
   expiresAt          DateTime?
+
+  // İlişkiler
   affiliateUserSales AffiliateUserSale[] @relation("LinkSales")
   product            MerchantProduct     @relation(fields: [productId], references: [productId])
   user               User                @relation(fields: [userId], references: [id])
   clicks             Click[]
 
+  // Aynı user aynı ürünü bir kez “sahiplenebilsin”
   @@unique([userId, productId], map: "uniq_user_product_link")
+
+  // Sık sorgular
   @@index([userId])
   @@index([productId])
+  @@index([expiresAt])
+
   @@map("affiliateLinks")
 }
+
 
 model AffiliateUserSale {
   saleId              Int                     @id @default(autoincrement())

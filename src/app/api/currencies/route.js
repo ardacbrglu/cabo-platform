@@ -1,22 +1,21 @@
 // app/api/currencies/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import { logApiEvent } from "@/lib/ratelimit";
 
-export async function GET(req) {
+export async function GET() {
   try {
-    // Session kontrolü (eğer endpoint özel olacaksa)
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
     const currencies = await prisma.currency.findMany();
-    const arr = currencies.map(cur => ({
+    const arr = currencies.map((cur) => ({
       value: cur.code,
       label: `${cur.symbol ? cur.symbol + " " : ""}${
         cur.code === "TRY"
@@ -29,19 +28,24 @@ export async function GET(req) {
       }`,
     }));
 
-    return NextResponse.json({ currencies: arr });
-
+    return NextResponse.json(
+      { currencies: arr },
+      { headers: { "Cache-Control": "no-store", Vary: "Cookie" } }
+    );
   } catch (err) {
     console.error("Currencies API error:", err);
-    await logApiEvent({
-      endpoint: "currencies",
-      event: "error",
-      error: String(err),
-    });
+    try {
+      await logApiEvent({
+        endpoint: "currencies",
+        event: "error",
+        error: String(err),
+      });
+    } catch {}
 
-    // Hata durumunda fallback
-    return NextResponse.json({
-      currencies: [{ value: "TRY", label: "₺ Türk Lirası" }],
-    });
+    // Fallback
+    return NextResponse.json(
+      { currencies: [{ value: "TRY", label: "₺ Türk Lirası" }] },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   }
 }

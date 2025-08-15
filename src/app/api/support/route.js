@@ -1,4 +1,4 @@
-// app/api/support/route.js
+// /app/api/support/route.js
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -7,14 +7,19 @@ import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
 import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey, logApiEvent } from "@/lib/ratelimit";
+import { verifyCaptchaServer } from "@/lib/captcha";
 import { z } from "zod";
 
-// Zod şeması: transform yerine .trim() kullan
+// Ayarlar
+const SUPPORT_RATE_LIMIT = { limit: 5, windowMs: 60_000 }; // 5/dk
+const SUPPORT_DAILY_CAP = Number(process.env.SUPPORT_DAILY_CAP ?? "20"); // 20/gün
+
+// Zod şeması
 const supportSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(900, "Message too long"),
 });
 
-// Basit plaintext temizleme (HTML tag + kontrol karakterleri)
+// Basit plaintext sanitize
 function sanitizePlaintext(s) {
   return String(s || "")
     .replace(/<[^>]*>/g, "")
@@ -22,49 +27,53 @@ function sanitizePlaintext(s) {
     .trim();
 }
 
-// (Opsiyonel) reCAPTCHA doğrulama
-async function verifyCaptcha(req) {
-  const token = req.headers.get("x-recaptcha-token");
-  if (!token) return false;
-  const secret = process.env.RECAPTCHA_SECRET;
-  if (!secret) return true; // dev ortamı
-  try {
-    // TODO: buraya gerçek verify isteğini ekle
-    return true;
-  } catch {
-    return false;
-  }
+function getIP(req) {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown"
+  );
+}
+
+function secureJson(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-site");
+  return res;
 }
 
 export const POST = withCsrfProtection(async (req) => {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0] ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
+  const ip = getIP(req);
   const ua = req.headers.get("user-agent") || "";
 
   try {
-    // Content-Type kontrolü
+    // Content-Type
     const ct = req.headers.get("content-type") || "";
     if (!ct.toLowerCase().includes("application/json")) {
-      return NextResponse.json({ error: "Unsupported Media Type" }, { status: 415 });
+      return secureJson({ error: "Unsupported Media Type" }, { status: 415 });
     }
 
     // Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return secureJson({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Rate limit
+    // Rate limit (kullanıcı bazlı)
     const rlKey = makeRateLimitKey(req, { scope: "support", userId });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+    const { ok, resetMs } = await checkRateLimit({
+      key: rlKey,
+      limit: SUPPORT_RATE_LIMIT.limit,
+      windowMs: SUPPORT_RATE_LIMIT.windowMs,
+    });
     if (!ok) {
       await logApiEvent({ endpoint: "/api/support", ip, ua, event: "rate_limited" });
-      return NextResponse.json(
+      return secureJson(
         { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
       );
     }
 
@@ -72,47 +81,62 @@ export const POST = withCsrfProtection(async (req) => {
     const raw = await req.json().catch(() => ({}));
     const parsed = supportSchema.safeParse(raw);
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+      return secureJson({ error: "Invalid payload" }, { status: 400 });
     }
 
-    // Sanitize + tekrar min kontrol (temizlik sonrası boş kalabilir)
+    // Sanitize
     const cleanMessage = sanitizePlaintext(parsed.data.message);
     if (!cleanMessage) {
-      return NextResponse.json({ error: "Message is required" }, { status: 400 });
+      return secureJson({ error: "Message is required" }, { status: 400 });
     }
 
-    // (Opsiyonel) Captcha
-    const captchaOk = await verifyCaptcha(req);
-    if (!captchaOk) {
+    // Günlük kota (ContactMessage.submittedAt alanını kullanıyoruz)
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const dailyCount = await prisma.contactMessage.count({
+      where: { userId, submittedAt: { gte: since } },
+    });
+    if (dailyCount >= SUPPORT_DAILY_CAP) {
+      await logApiEvent({ endpoint: "/api/support", ip, ua, event: "daily_cap" });
+      return secureJson({ error: "Too many requests" }, { status: 429 });
+    }
+
+    // CAPTCHA doğrulama (frontend: header 'x-recaptcha-token')
+    const captchaToken = req.headers.get("x-recaptcha-token");
+    const captchaRes = await verifyCaptchaServer({ token: captchaToken, ip });
+    if (!captchaRes.ok) {
       await logApiEvent({ endpoint: "/api/support", ip, ua, event: "captcha_failed" });
-      return NextResponse.json({ error: "Captcha verification failed" }, { status: 400 });
+      return secureJson({ error: "Captcha verification failed" }, { status: 400 });
     }
 
     // Kullanıcı bilgisi
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: Number(userId) },
       select: { name: true, email: true },
     });
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return secureJson({ error: "User not found" }, { status: 404 });
     }
 
     // Kaydet
     await prisma.contactMessage.create({
       data: {
-        userId,
+        userId: Number(userId),
         name: user.name || null,
         email: user.email || null,
         message: cleanMessage,
+        // submittedAt default(now()) zaten var; override etmeye gerek yok
       },
     });
 
-    await logApiEvent({ endpoint: "/api/support", ip, ua, event: "message_created", email: user.email });
+    await logApiEvent({
+      endpoint: "/api/support",
+      ip,
+      ua,
+      event: "message_created",
+      email: user.email || null,
+    });
 
-    return NextResponse.json(
-      { success: true },
-      { status: 200, headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
-    );
+    return secureJson({ success: true }, { status: 200 });
   } catch (err) {
     await logApiEvent({
       endpoint: "/api/support",
@@ -121,9 +145,6 @@ export const POST = withCsrfProtection(async (req) => {
       event: "error",
       error: err?.message?.slice(0, 200) || String(err).slice(0, 200),
     });
-    return NextResponse.json(
-      { error: "Server error" },
-      { status: 500, headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
-    );
+    return secureJson({ error: "Server error" }, { status: 500 });
   }
 });

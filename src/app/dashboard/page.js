@@ -127,10 +127,6 @@ export default function Dashboard() {
         }
         const data = await res.json();
 
-        let fixedLastClick = data.lastClick;
-        if (fixedLastClick && !fixedLastClick.extra && fixedLastClick.userAgent) {
-          fixedLastClick.extra = getDeviceType(fixedLastClick.userAgent);
-        }
 
         if (!alive) return;
 

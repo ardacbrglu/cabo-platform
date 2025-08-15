@@ -1,13 +1,13 @@
 "use client";
 /**
- * Wallet & Payout UI (prod-ready)
+ * Wallet & Payout UI (final prod)
  * Güvenlik:
  * - NextAuth session cookie: fetch'lerde credentials: "include"
  * - CSRF: tüm POST isteklerinde x-csrf-token header'ı (cookie ile eşleşir)
+ * - Idempotency: payout oluştururken x-idempotency-key
  * - Double-submit önleme: isSubmitting
- * - Hata yönetimi: try/catch + res.ok kontrolleri
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Layout from "@/components/Layout";
 import {
   Wallet2,
@@ -20,9 +20,11 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  Pencil,
+  Save,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { useTranslation } from "@/hooks/useTranslation";
+import useTranslation from "@/hooks/useTranslation";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 const COLOR_CABO = "#d1ffd0";
@@ -68,20 +70,13 @@ function WalletProgress({ value, max }) {
 }
 
 function exportToCSV(sales, date, t) {
-  // CSV injection ve virgül sorunlarına karşı basit kaçış
   const esc = (v) => {
     const s = String(v ?? "");
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const header = [
-    t("orderId"),
-    t("product"),
-    t("amount"),
-    t("commission"),
-    t("quantity"),
-    t("date"),
-  ].join(",") + "\n";
+  const header =
+    [t("orderId"), t("product"), t("amount"), t("commission"), t("quantity"), t("date")].join(",") + "\n";
   const rows = (Array.isArray(sales) ? sales : [])
     .map((s) => [s.orderId, s.product, s.amount, s.commission, s.quantity, s.convertedAt].map(esc).join(","))
     .join("\n");
@@ -94,6 +89,8 @@ function exportToCSV(sales, date, t) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+// HistoryItem type removed (JS only)
 
 export default function WalletPage() {
   const { t } = useTranslation();
@@ -113,8 +110,13 @@ export default function WalletPage() {
   const [bankError, setBankError] = useState("");
   const [realNameError, setRealNameError] = useState("");
   const [history, setHistory] = useState([]);
-  const [payoutState, setPayoutState] = useState({ status: "", message: "" });
-  const [detailsModal, setDetailsModal] = useState({
+  const [payoutState, setPayoutState] = useState({
+    status: "",
+    message: "",
+  });
+
+  // Details modal
+  const [detailsModal, setDetailsModal] = useState<any>({
     open: false,
     sales: [],
     total: 0,
@@ -131,31 +133,32 @@ export default function WalletPage() {
     page: 1,
     totalPages: 1,
     requestId: null,
+    // edit bank for this request
+    canEditBank: false,
+    editIban: "",
+    editBankName: "",
+    editRealName: "",
+    editing: false,
+    editError: "",
+    editSaving: false,
+    cancelUntil: "", // info
   });
+
   const [ibanMissing, setIbanMissing] = useState(true);
   const [bankMissing, setBankMissing] = useState(true);
   const [realNameMissing, setRealNameMissing] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Bekleyen payout
-  const [hasPendingRequest, setHasPendingRequest] = useState(false);
-  const [pendingAmount, setPendingAmount] = useState(0);
-
   // Pagination
   const PAGE_SIZE = 4;
   const [page, setPage] = useState(1);
 
-  // Kullanıcıyı güncelle (Context zaten sağlıyor ama burada isim eksikse çek)
   useEffect(() => {
     if (!user?.name) {
       fetch("/api/me", {
         method: "GET",
         credentials: "include",
-        headers: {
-          accept: "application/json",
-          "cache-control": "no-cache",
-          pragma: "no-cache",
-        },
+        headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
         cache: "no-store",
       })
         .then((res) => (res.ok ? res.json() : null))
@@ -165,7 +168,7 @@ export default function WalletPage() {
               ...u,
               name: data.name,
               email: data.email,
-              userId: data.userId || data.id, // backend /api/me id döndürüyor
+              userId: data.userId || data.id,
               role: data.role,
             }));
           }
@@ -174,17 +177,12 @@ export default function WalletPage() {
     }
   }, [user, setUser]);
 
-  // Ana veri çekme
   const refreshData = () => {
     setLoading(true);
     fetch("/api/wallet", {
       method: "GET",
       credentials: "include",
-      headers: {
-        accept: "application/json",
-        "cache-control": "no-cache",
-        pragma: "no-cache",
-      },
+      headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
       cache: "no-store",
     })
       .then(async (res) => {
@@ -203,21 +201,16 @@ export default function WalletPage() {
         setBankMissing(!!data.bankMissing);
         setRealNameMissing(!!data.realNameMissing);
         setHistory(Array.isArray(data.history) ? data.history : []);
-        setHasPendingRequest(!!data.hasPendingRequest);
-        setPendingAmount(Number(data.pendingAmount) || 0);
       })
-      .catch(() => {
-        // minimal fail-soft
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   };
   useEffect(() => {
     refreshData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Basit client-side validasyon (backend yine doğrulayacak)
-  function validateIban(val) {
+  // client validations
+    function validateIban(val) {
     const s = String(val || "").replace(/\s+/g, "").toUpperCase();
     return s.startsWith("TR") && s.length === 26;
   }
@@ -262,7 +255,6 @@ export default function WalletPage() {
         setIbanSaved(true);
         setTimeout(() => setIbanSaved(false), 2000);
       } else {
-        // backend generic error döndürebilir
         const data = await res.json().catch(() => ({}));
         setIbanError(data?.error || t("unknownError"));
       }
@@ -286,6 +278,7 @@ export default function WalletPage() {
           "Content-Type": "application/json",
           "x-csrf-token": csrfToken,
           accept: "application/json",
+          "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         },
         body: JSON.stringify({ requestPayout: true }),
       });
@@ -349,23 +342,27 @@ export default function WalletPage() {
         },
         body: JSON.stringify({ requestId, page: pageNum, pageSize: 10 }),
       });
-      if (!res.ok) {
-        // İsteğe bağlı: rate limit vs. için Retry-After
-        // const ra = res.headers.get("Retry-After");
-        // console.warn("rate-limited?", ra);
-        return;
-      }
+      if (!res.ok) return;
       const data = await res.json();
-      setDetailsModal((modal) => ({
+
+      // history üzerinden canEditBank & lockAt da al
+      const hist = history.find((h) => h.requestId === requestId);
+  setDetailsModal((modal) => ({
         ...modal,
         ...data,
         open: true,
         page: pageNum,
         totalPages: data.totalPages || 1,
         requestId,
+        canEditBank: hist?.canEditBank ?? false,
+        editIban: data.iban || "",
+        editBankName: data.bankName || "",
+        editRealName: data.realName || "",
+        cancelUntil: hist?.lockAt || "",
+        editError: "",
       }));
     } catch {
-      // sessiz fail-soft
+      /* ignore */
     }
   };
 
@@ -392,11 +389,76 @@ export default function WalletPage() {
       page: 1,
       totalPages: 1,
       requestId: null,
+      canEditBank: false,
+      editIban: "",
+      editBankName: "",
+      editRealName: "",
+      editing: false,
+      editError: "",
+      cancelUntil: "",
     });
   }
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE));
+  async function handleUpdateRequestBank() {
+    if (!detailsModal.requestId || !csrfReady || !csrfToken) return;
+    if (!/^TR\d{24}$/.test(detailsModal.editIban.replace(/\s+/g, "").toUpperCase())) {
+  setDetailsModal((m) => ({ ...m, editError: t("invalidIban") }));
+      return;
+    }
+    if (!String(detailsModal.editBankName).trim()) {
+  setDetailsModal((m) => ({ ...m, editError: t("bankNameRequired") }));
+      return;
+    }
+    const rn = String(detailsModal.editRealName || "").trim();
+    if (rn.split(" ").length < 2) {
+  setDetailsModal((m) => ({ ...m, editError: t("realNameRequired") }));
+      return;
+    }
+
+  setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
+    try {
+      const res = await fetch("/api/wallet", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          updateRequestBank: true,
+          requestId: detailsModal.requestId,
+          iban: detailsModal.editIban,
+          bankName: detailsModal.editBankName,
+          realName: detailsModal.editRealName,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        // modal içindeki snapshot’ı güncelle
+  setDetailsModal((m) => ({
+          ...m,
+          bankName: m.editBankName,
+          iban: m.editIban,
+          realName: m.editRealName,
+          editSaving: false,
+          editing: false,
+          editError: "",
+        }));
+        // history güncel değilse yenile
+        refreshData();
+      } else {
+  setDetailsModal((m) => ({ ...m, editSaving: false, editError: data?.error || t("unknownError") }));
+      }
+    } catch {
+  setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("unknownError") }));
+    }
+  }
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)),
+    [history.length]
+  );
   let paginatedHistory = history.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   if (paginatedHistory.length < PAGE_SIZE) {
     paginatedHistory = [...paginatedHistory, ...Array(PAGE_SIZE - paginatedHistory.length).fill(null)];
@@ -426,16 +488,12 @@ export default function WalletPage() {
         )}
 
         <div className="flex flex-col md:flex-row gap-5 md:gap-8 w-full">
-          {/* Wallet Balance Section */}
+          {/* Wallet Balance */}
           <div className="bg-[#181818] rounded-xl shadow py-5 px-2 sm:py-7 sm:px-8 flex-1 flex flex-col items-center min-w-[240px]">
             <div className="font-extrabold text-xl sm:text-2xl mb-2 font-mono" style={{ color: COLOR_GREEN }}>
               {t("wallet")}
             </div>
-            {loading ? (
-              <Loader2 className="animate-spin text-gray-400 my-7" size={44} />
-            ) : (
-              <WalletProgress value={confirmed} max={minPayout} />
-            )}
+            {loading ? <Loader2 className="animate-spin text-gray-400 my-7" size={44} /> : <WalletProgress value={confirmed} max={minPayout} />}
             <div className="flex flex-col items-center mb-4">
               <span className="font-mono text-gray-400 text-xs">{t("confirmedBalance")}</span>
               <span className="text-xl sm:text-2xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>
@@ -453,15 +511,9 @@ export default function WalletPage() {
             </div>
             <div className="mb-3 text-xs font-mono">
               <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
-              <span className="font-bold" style={{ color: COLOR_GREEN }}>
-                {" "}
-                ₺{minPayout}
-              </span>
+              <span className="font-bold" style={{ color: COLOR_GREEN }}> ₺{minPayout}</span>
             </div>
-            <div
-              className="mt-2 text-xs font-bold animate-pulse font-mono text-center"
-              style={{ color: confirmed < minPayout ? "#e3d67d" : COLOR_GREEN }}
-            >
+            <div className="mt-2 text-xs font-bold animate-pulse font-mono text-center" style={{ color: confirmed < minPayout ? "#e3d67d" : COLOR_GREEN }}>
               {confirmed < minPayout ? (
                 <>
                   {t("earnMoreToPayout")} <span style={{ color: COLOR_CABO }}>{(minPayout - confirmed).toFixed(2)}₺</span>
@@ -473,25 +525,15 @@ export default function WalletPage() {
 
             <button
               className={`mt-4 w-full py-2 rounded font-bold font-mono text-[#181818] ${
-                hasPendingRequest
-                  ? "bg-[#323232] text-yellow-400 cursor-not-allowed"
-                  : payoutDisabled
-                  ? "bg-[#323232] text-gray-500 cursor-not-allowed"
-                  : "bg-[#81d742] hover:bg-[#a9ff72] transition"
+                payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
               } text-base mb-1`}
               style={{ fontSize: "1.05rem" }}
-              disabled={payoutDisabled || hasPendingRequest}
+              disabled={payoutDisabled}
               onClick={handleRequestPayout}
-              aria-disabled={payoutDisabled || hasPendingRequest}
+              aria-disabled={payoutDisabled}
             >
               {loading ? (
                 <Loader2 className="animate-spin" size={18} />
-              ) : hasPendingRequest ? (
-                <span className="flex items-center justify-center gap-1">
-                  <Lock size={17} className="mr-1" />
-                  {/* EN: Pending payout exists */}
-                  Zaten bekleyen ödeme talebiniz var
-                </span>
               ) : payoutDisabled ? (
                 <span className="flex items-center justify-center gap-1">
                   <Lock size={17} className="mr-1" /> {t("walletRequirements")}
@@ -503,11 +545,6 @@ export default function WalletPage() {
               )}
             </button>
 
-            {hasPendingRequest && (
-              <div className="mt-2 text-yellow-400 text-xs font-mono">
-                {t("alreadyPendingPayout")} (₺{pendingAmount.toFixed(2)}).
-              </div>
-            )}
             {payoutState.status === "success" && (
               <div className="flex items-center gap-1 mt-2 text-green-400 text-xs font-bold font-mono">
                 <CheckCircle size={16} /> {payoutState.message}
@@ -582,7 +619,7 @@ export default function WalletPage() {
           </div>
         </div>
 
-        {/* Payout History Section */}
+        {/* Payout History */}
         <div className="bg-[#181818] rounded-xl shadow py-6 px-2 sm:px-8 w-full mt-4 max-h-[340px] overflow-y-auto">
           <div className="flex items-center gap-2 mb-4">
             <BarChart2 className="text-[#81d742]" size={19} />
@@ -624,6 +661,8 @@ export default function WalletPage() {
                                 ? "bg-green-900/60 text-[#81d742]"
                                 : item.status === "rejected"
                                 ? "bg-red-900/60 text-red-400"
+                                : item.status === "approved"
+                                ? "bg-blue-900/60 text-blue-300"
                                 : "bg-yellow-800/60 text-yellow-300"
                             }`}
                           >
@@ -637,11 +676,21 @@ export default function WalletPage() {
                           {item.status === "rejected" && item.rejectedReason && (
                             <span className="ml-1 text-red-400 font-mono text-xs">({item.rejectedReason})</span>
                           )}
+                          {item.status === "pending" && item.lockAt && (
+                            <span className="ml-2 text-gray-400 font-mono text-[11px]">
+                              {(t("cancelUntil") || "Cancel until")}: {new Date(item.lockAt).toLocaleString()}
+                            </span>
+                          )}
+                          {item.status === "pending" && !item.canCancel && (
+                            <span className="ml-2 text-yellow-400 text-[11px] font-mono">
+                              {(t("locked") || "Locked")}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 px-3">{item.method}</td>
                         <td className="py-2 px-3">{item.bankName || "-"}</td>
                         <td className="py-2 px-3 flex items-center gap-1">
-                          {item.status === "pending" && item.requestId && (
+                          {item.status === "pending" && item.requestId && item.canCancel && (
                             <button
                               onClick={() => handleCancelRequest(item.requestId)}
                               disabled={isSubmitting || !csrfReady}
@@ -650,10 +699,7 @@ export default function WalletPage() {
                               <X size={13} /> {t("cancel")}
                             </button>
                           )}
-                          <button
-                            onClick={() => openDetails(item.requestId)}
-                            className="text-blue-400 hover:underline ml-1 text-xs font-mono"
-                          >
+                          <button onClick={() => openDetails(item.requestId)} className="text-blue-400 hover:underline ml-1 text-xs font-mono">
                             {t("details")}
                           </button>
                         </td>
@@ -673,23 +719,15 @@ export default function WalletPage() {
               </tbody>
             </table>
 
-            {/* Pagination Controls */}
+            {/* Pagination */}
             <div className="flex justify-center mt-4 gap-2">
-              <button
-                onClick={() => setPage(page - 1)}
-                disabled={page <= 1}
-                className="px-2 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] disabled:opacity-40"
-              >
+              <button onClick={() => setPage(page - 1)} disabled={page <= 1} className="px-2 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] disabled:opacity-40">
                 <ChevronLeft size={16} />
               </button>
               <span className="text-sm font-mono text-[#d1ffd0] px-2">
                 {t("page")} {page} / {totalPages || 1}
               </span>
-              <button
-                onClick={() => setPage(page + 1)}
-                disabled={page >= totalPages}
-                className="px-2 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] disabled:opacity-40"
-              >
+              <button onClick={() => setPage(page + 1)} disabled={page >= totalPages} className="px-2 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] disabled:opacity-40">
                 <ChevronRight size={16} />
               </button>
             </div>
@@ -704,10 +742,11 @@ export default function WalletPage() {
                 <X size={18} />
               </button>
               <h2 className="font-bold mb-2 text-lg font-mono text-[#d1ffd0]">{t("payoutRequestDetails")}</h2>
+
               <div className="text-xs mb-3 font-mono text-gray-400">
                 {t("date")}: <span>{detailsModal.date?.slice(0, 10)}</span> &nbsp; {t("status")}:{" "}
                 <span className="font-bold">{t(detailsModal.status)}</span> <br />
-                {t("total")}: <span style={{ color: COLOR_GREEN }}>₺{detailsModal.total.toFixed(2)}</span>
+                {t("total")}: <span style={{ color: COLOR_GREEN }}>₺{Number(detailsModal.total || 0).toFixed(2)}</span>
                 {detailsModal.paid_at && (
                   <span>
                     {" "}
@@ -731,9 +770,87 @@ export default function WalletPage() {
                 <span className="text-[#81d742]">{detailsModal.iban || "-"}</span> &nbsp; {t("name")}:{" "}
                 <span className="text-[#81d742]">{detailsModal.realName || "-"}</span>
                 <br />
+                {detailsModal.status === "pending" && detailsModal.cancelUntil && (
+                  <span className="text-gray-400">
+                    {(t("cancelUntil") || "Cancel until")}: {new Date(detailsModal.cancelUntil).toLocaleString()}
+                  </span>
+                )}
+                <br />
                 {t("platformPaid")}: {detailsModal.platform_paid ? <span className="text-green-400">✔</span> : <span className="text-yellow-400">—</span>}
                 {detailsModal.platformPaidAt && <span> {t("at")} {new Date(detailsModal.platformPaidAt).toLocaleDateString()}</span>}
               </div>
+
+              {/* request bank edit (within 24h & not progressed) */}
+              {detailsModal.status === "pending" && detailsModal.canEditBank && (
+                <div className="mb-3 border border-[#2a2a2a] rounded p-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-mono text-[#d1ffd0] font-bold">{t("updateBankForThisRequest") || "Update bank for this request"}</div>
+                    {!detailsModal.editing ? (
+                      <button
+                        className="text-xs font-mono text-blue-300 flex items-center gap-1 hover:underline"
+                        onClick={() => setDetailsModal((m) => ({ ...m, editing: true, editError: "" }))}
+                      >
+                        <Pencil size={14} /> {t("edit") || "Edit"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {detailsModal.editing && (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 gap-2">
+                        <input
+                          className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
+                          placeholder="TR00..."
+                          value={detailsModal.editIban}
+                          onChange={(e) => setDetailsModal((m) => ({ ...m, editIban: e.target.value.toUpperCase() }))}
+                          maxLength={26}
+                        />
+                        <input
+                          className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
+                          placeholder="Bank name"
+                          value={detailsModal.editBankName}
+                          onChange={(e) => setDetailsModal((m) => ({ ...m, editBankName: e.target.value }))}
+                          maxLength={120}
+                        />
+                        <input
+                          className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
+                          placeholder={t("yourLegalName")}
+                          value={detailsModal.editRealName}
+                          onChange={(e) => setDetailsModal((m) => ({ ...m, editRealName: e.target.value }))}
+                          maxLength={120}
+                        />
+                      </div>
+                      {detailsModal.editError && <div className="text-xs text-red-400 font-mono">{detailsModal.editError}</div>}
+                      <div className="flex items-center gap-2">
+                        <button
+                          disabled={detailsModal.editSaving}
+                          onClick={handleUpdateRequestBank}
+                          className="px-3 py-1 rounded bg-[#81d742] text-[#181818] text-xs font-mono font-bold hover:bg-[#a9ff72] disabled:opacity-50 flex items-center gap-1"
+                        >
+                          <Save size={14} /> {t("save")}
+                        </button>
+                        <button
+                          disabled={detailsModal.editSaving}
+                          onClick={() =>
+                            setDetailsModal((m) => ({
+                              ...m,
+                              editing: false,
+                              editError: "",
+                              // revert edits to snapshot
+                              editIban: m.iban,
+                              editBankName: m.bankName,
+                              editRealName: m.realName,
+                            }))
+                          }
+                          className="px-3 py-1 rounded bg-[#232323] text-gray-300 text-xs font-mono hover:bg-[#222] disabled:opacity-50"
+                        >
+                          {t("cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
                 <table className="w-full text-xs mb-2 font-mono">
                   <thead>
@@ -760,7 +877,8 @@ export default function WalletPage() {
                   </tbody>
                 </table>
               </div>
-              {/* Pagination Controls */}
+
+              {/* Details pagination & export */}
               <div className="flex justify-between items-center mt-2">
                 <button
                   onClick={() => fetchDetails(detailsModal.requestId, detailsModal.page - 1)}
@@ -790,6 +908,7 @@ export default function WalletPage() {
           </div>
         )}
       </main>
+
       <style jsx global>{`
         @media (max-width: 640px) {
           .flex.flex-col.md\\:flex-row.gap-5.md\\:gap-8.w-full {

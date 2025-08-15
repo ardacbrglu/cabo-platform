@@ -8,48 +8,55 @@ import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { z } from "zod";
 
-// Body şeması (sayfalama opsiyonel)
+const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function secureJson(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-site");
+  return res;
+}
+
+async function finalizeExpiredPayouts(userId) {
+  const threshold = new Date(Date.now() - CANCELLATION_WINDOW_MS);
+  await prisma.payoutRequest.updateMany({
+    where: { userId, status: "pending", requestedAt: { lte: threshold } },
+    data: { status: "approved", updatedAt: new Date() },
+  });
+}
+
 const bodySchema = z.object({
   requestId: z.number().int().positive(),
   page: z.number().int().positive().optional(),
-  pageSize: z.number().int().positive().max(100).optional(), // üst sınır
+  pageSize: z.number().int().positive().max(100).optional(),
 });
 
 export const POST = withCsrfProtection(async (req) => {
   try {
-    // 1) Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return secureJson({ error: "Unauthorized" }, { status: 401 });
 
-    // 2) Rate limit (kullanıcı bazlı 10/dk)
+    // rate limit
     const rlKey = makeRateLimitKey(req, { scope: "payout-details", userId });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
     if (!ok) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
-      );
+      return secureJson({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } });
     }
 
-    // 3) Body parse + validation
-    let body;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json({ error: "Bad request" }, { status: 400 });
-    }
-    const parsed = bodySchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
-    }
+    const raw = await req.json().catch(() => ({}));
+    const parsed = bodySchema.safeParse(raw);
+    if (!parsed.success) return secureJson({ error: "Invalid payload" }, { status: 400 });
+
     const { requestId } = parsed.data;
     const page = parsed.data.page ?? 1;
     const pageSize = parsed.data.pageSize ?? 10;
 
-    // 4) Payout request kontrol (sadece sahibine göster)
+    // pending → approved (24h) kontrolü
+    await finalizeExpiredPayouts(Number(userId));
+
     const payoutReq = await prisma.payoutRequest.findUnique({
       where: { requestId },
       select: {
@@ -68,38 +75,26 @@ export const POST = withCsrfProtection(async (req) => {
       },
     });
 
-    if (!payoutReq || payoutReq.userId !== userId) {
-      // Var/yok ayrımı sızdırmamak için generic hata
-      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+    if (!payoutReq || payoutReq.userId !== Number(userId)) {
+      return secureJson({ error: "Not authorized" }, { status: 403 });
     }
 
-    // 5) İlgili item’ların satış ID’leri
     const items = await prisma.payoutRequestItem.findMany({
       where: { requestId },
-      select: { sourceSaleIds: true },
+      select: { sourceSaleIds: true, status: true },
     });
 
     const saleIds = items
-      .flatMap((i) =>
-        String(i.sourceSaleIds || "")
-          .split(",")
-          .map((s) => Number(s.trim()))
-      )
+      .flatMap((i) => String(i.sourceSaleIds || "").split(",").map((s) => Number(s.trim())))
       .filter((n) => Number.isInteger(n) && n > 0);
 
-    // 6) Satışları çek + sayfalama
     let totalSales = 0;
     let sales = [];
     if (saleIds.length) {
-      // total count
-      totalSales = await prisma.affiliateUserSale.count({
-        where: { saleId: { in: saleIds }, userId },
-      });
-
-      // sayfalı fetch
+      totalSales = await prisma.affiliateUserSale.count({ where: { saleId: { in: saleIds }, userId: Number(userId) } });
       const skip = (page - 1) * pageSize;
       sales = await prisma.affiliateUserSale.findMany({
-        where: { saleId: { in: saleIds }, userId },
+        where: { saleId: { in: saleIds }, userId: Number(userId) },
         include: { merchantProduct: { select: { name: true } } },
         orderBy: { saleId: "desc" },
         skip,
@@ -109,8 +104,13 @@ export const POST = withCsrfProtection(async (req) => {
 
     const totalPages = Math.max(1, Math.ceil(totalSales / pageSize));
 
-    // 7) Response (frontend’in beklediği isimlerle)
-    return NextResponse.json(
+    const requestedAtMs = payoutReq.requestedAt ? new Date(payoutReq.requestedAt).getTime() : 0;
+    const lockAt = requestedAtMs ? new Date(requestedAtMs + CANCELLATION_WINDOW_MS) : null;
+    const progressed = items.some((it) => it.status === "merchant_paid" || it.status === "platform_confirmed");
+    const now = Date.now();
+    const locked = payoutReq.status !== "pending" || progressed || (lockAt && now >= lockAt.getTime());
+
+    return secureJson(
       {
         sales: sales.map((sale) => ({
           saleId: sale.saleId,
@@ -119,9 +119,7 @@ export const POST = withCsrfProtection(async (req) => {
           amount: Number(sale.amount),
           commission: Number(sale.commissionAffiliate),
           quantity: sale.quantity,
-          convertedAt: sale.convertedAt
-            ? sale.convertedAt.toISOString().slice(0, 19).replace("T", " ")
-            : "",
+          convertedAt: sale.convertedAt ? sale.convertedAt.toISOString().slice(0, 19).replace("T", " ") : "",
         })),
         status: payoutReq.status,
         date: payoutReq.requestedAt ? payoutReq.requestedAt.toISOString() : "",
@@ -137,16 +135,17 @@ export const POST = withCsrfProtection(async (req) => {
         page,
         pageSize,
         totalPages,
+
+        // FE yardımcı alanlar:
+        lockAt: lockAt ? lockAt.toISOString() : null,
+        canCancel: payoutReq.status === "pending" && !locked,
+        canEditBank: payoutReq.status === "pending" && !locked,
+        secondsLeft: lockAt ? Math.max(0, Math.floor((lockAt.getTime() - now) / 1000)) : 0,
       },
-      {
-        headers: {
-          "Cache-Control": "no-store",
-          "Vary": "Cookie",
-        },
-      }
+      { headers: { "Cache-Control": "no-store", "Vary": "Cookie" } }
     );
   } catch (err) {
     console.error("Payout request details error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return secureJson({ error: "Server error" }, { status: 500 });
   }
 });

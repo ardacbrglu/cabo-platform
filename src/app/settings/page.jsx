@@ -1,19 +1,10 @@
 'use client';
 
-/**
- * Settings Page (prod-ready)
- * SECURITY NOTES
- * - Mutating isteklerde CSRF header zorunlu (x-csrf-token) + session cookie (credentials: "include")
- * - /api/me ve liste endpointleri no-store; yetkisiz (401) durumunda kullanıcıya mesaj göster
- * - Double submit önlendi (submitting state)
- * - Dil/para birimi listeleri backend'ten çekiliyor; boş gelirse güvenli varsayılanlar kullanılıyor
- */
-
 import { useState, useEffect, useRef } from "react";
 import Layout from "@/components/Layout";
 import CustomSelect from "@/components/CustomSelect";
 import { useLocale } from "@/context/LocaleContext";
-import { useTranslation } from "@/hooks/useTranslation";
+import useTranslation from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
@@ -35,17 +26,14 @@ export default function SettingsPage() {
   const msgRef = useRef(null);
 
   const { setLocale } = useLocale();
-  const t = useTranslation();
+  const { t } = useTranslation();   // ✅
   const isMobile = useIsMobile();
-  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅ doğru kullanım
+  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅
 
-  // İlk yükleme: diller, para birimleri, kullanıcı profili
   useEffect(() => {
     let mounted = true;
-
     async function fetchAll() {
       try {
-        // Para birimi
         let cur = [{ value: "TRY", label: "₺ Türk Lirası" }];
         try {
           const res = await fetch("/api/currencies", {
@@ -58,13 +46,10 @@ export default function SettingsPage() {
             const data = await res.json();
             if (Array.isArray(data.currencies) && data.currencies.length > 0) cur = data.currencies;
           }
-        } catch {
-          // sessiz fallback: cur zaten TRY
-        }
+        } catch {}
         if (!mounted) return;
         setCurrencies(cur);
 
-        // Diller
         let langs = [
           { value: "tr", label: "Türkçe" },
           { value: "en", label: "English" },
@@ -80,13 +65,10 @@ export default function SettingsPage() {
             const data = await res.json();
             if (Array.isArray(data.languages) && data.languages.length > 0) langs = data.languages;
           }
-        } catch {
-          // fallback: langs sabit
-        }
+        } catch {}
         if (!mounted) return;
         setLanguages(langs);
 
-        // Kullanıcı profili
         const resp = await fetch("/api/me", {
           method: "GET",
           headers: { accept: "application/json", "cache-control": "no-cache" },
@@ -116,7 +98,6 @@ export default function SettingsPage() {
         setLoading(false);
       }
     }
-
     fetchAll();
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,7 +128,6 @@ export default function SettingsPage() {
     setSubmitting(true);
 
     try {
-      // Profil güncelleme
       const profileRes = await fetch("/api/settings/update", {
         method: "POST",
         headers: {
@@ -165,7 +145,6 @@ export default function SettingsPage() {
       });
       const profileData = await profileRes.json().catch(() => ({}));
 
-      // Şifre güncelleme gerekiyorsa
       let passwordMsg = "";
       const wantsPasswordChange =
         profile.new_password || profile.new_password_repeat || profile.current_password;

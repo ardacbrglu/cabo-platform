@@ -3,19 +3,21 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Home, ShoppingCart, Link2, BarChart2, Wallet2, Menu, X, Bell, Settings, Headset, LogOut, User2 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import useTranslation from "@/hooks/useTranslation"; // ⬅️ default import
+import useTranslation from "@/hooks/useTranslation";
 import { usePathname } from "next/navigation";
 import { useNotifications } from "@/hooks/useNotifications";
 import NotificationBadge from "@/components/NotificationBadge";
 import Portal from "@/components/Portal";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function HamburgerMenu() {
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const { user } = useUser();
-  const { t } = useTranslation(); // ⬅️ destructure
+  const { user, setUser } = useUser();
+  const { t } = useTranslation();
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
+  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   useEffect(() => {
     function handleClick(e) {
@@ -36,11 +38,29 @@ export default function HamburgerMenu() {
     };
   }, [open, profileOpen]);
 
-  const handleLogout = () => {
-    // Eski custom cookie’yi temizle (varsa). NextAuth logout için /api/logout ya da signOut kullanılmalı.
-    document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
-    window.location.href = "/login";
-  };
+  async function handleLogout() {
+    try {
+      // NextAuth oturumu güvenli kapat (CSRF zorunlu)
+      if (!csrfReady || !csrfToken) {
+        // min fail-soft: yine de temizlemeyi dene
+        document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+      } else {
+        await fetch("/api/logout", {
+          method: "POST",
+          credentials: "include",
+          headers: { "x-csrf-token": csrfToken },
+        });
+      }
+    } catch {
+      // sessiz geç
+    } finally {
+      // Ekstra: eski custom cookie’yi de temizle
+      document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+      document.cookie = "cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=" + window.location.hostname + ";";
+      setUser && setUser(null);
+      window.location.href = "/login";
+    }
+  }
 
   const navs = [
     { href: "/dashboard", icon: <Home size={22} />, label: t("home") },
@@ -67,8 +87,18 @@ export default function HamburgerMenu() {
       )}
 
       <Portal>
-        <div className={`fixed inset-0 z-[40000] transition-all duration-300 ${open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}>
-          <div className={`absolute inset-0 bg-black/60 transition-all duration-300 ${open ? "backdrop-blur-[4px] opacity-100" : "opacity-0"}`} />
+        <div
+          className={`fixed inset-0 z-[40000] transition-all duration-300 ${
+            open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          }`}
+          aria-hidden={!open}
+        >
+          <div
+            className={`absolute inset-0 bg-black/60 transition-all duration-300 ${
+              open ? "backdrop-blur-[4px] opacity-100" : "opacity-0"
+            }`}
+            onClick={() => setOpen(false)}
+          />
           <div
             id="cabo-hamburger-panel"
             className={`
@@ -78,6 +108,9 @@ export default function HamburgerMenu() {
               ${open ? "translate-y-0" : "-translate-y-full"}
             `}
             style={{ boxShadow: "0 2px 42px 10px rgba(0,0,0,0.65)", minHeight: "0", maxHeight: "96vh", zIndex: 41000 }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Main menu"
           >
             <div className="flex items-center justify-between px-5 pt-4 pb-2 min-h-[56px] border-b border-[#232323]">
               <span className="flex items-center gap-2 font-mono font-black text-[1.22rem] select-none tracking-widest text-[#d1ffd0]">
@@ -89,7 +122,7 @@ export default function HamburgerMenu() {
               </button>
             </div>
 
-            <nav className="flex flex-col gap-1 px-5 pt-1 pb-2">
+            <nav className="flex flex-col gap-1 px-5 pt-1 pb-2" aria-label="Primary">
               {navs.map(({ href, icon, label }) => (
                 <Link
                   key={href}
@@ -176,6 +209,7 @@ export default function HamburgerMenu() {
                     }}
                     className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff5555] transition w-full"
                     style={{ background: "transparent", outline: "none" }}
+                    type="button"
                   >
                     <LogOut size={17} />
                     <span>{t("logout")}</span>
@@ -186,6 +220,16 @@ export default function HamburgerMenu() {
           </div>
         </div>
       </Portal>
+
+      <style jsx>{`
+        .animate-fadeIn {
+          animation: fadeIn .15s ease;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-8px); }
+          to   { opacity: 1; transform: none; }
+        }
+      `}</style>
     </>
   );
 }

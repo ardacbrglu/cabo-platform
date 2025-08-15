@@ -35,14 +35,11 @@ const querySchema = z.object({
 });
 
 function toEndOfDayISO(dateStr) {
-  // "YYYY-MM-DD" → 23:59:59.999Z
-  // ISO ise Date.parse zaten tam tarih üretir.
   if (!dateStr) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return new Date(`${dateStr}T23:59:59.999Z`);
   }
-  const d = new Date(dateStr);
-  return d;
+  return new Date(dateStr);
 }
 
 function toStartOfDayISO(dateStr) {
@@ -50,8 +47,7 @@ function toStartOfDayISO(dateStr) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return new Date(`${dateStr}T00:00:00.000Z`);
   }
-  const d = new Date(dateStr);
-  return d;
+  return new Date(dateStr);
 }
 
 export async function GET(req) {
@@ -66,12 +62,12 @@ export async function GET(req) {
       );
     }
 
-    // 2) Auth (NextAuth session)
+    // 2) Auth (NextAuth session) + RBAC
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const role = session?.user?.role;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (role !== "affiliate") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     // 3) Query parse + validation
     const { searchParams } = new URL(req.url);
@@ -85,7 +81,7 @@ export async function GET(req) {
     }
     const { startDate, endDate, productIds = [] } = parsed.data;
 
-    // 4) Kullanıcının aktif affiliate ürünleri (visibility + product aktif)
+    // 4) Kullanıcının aktif affiliate ürünleri
     const userLinks = await prisma.affiliateLink.findMany({
       where: { userId, isVisible: true },
       select: { productId: true },
@@ -109,13 +105,13 @@ export async function GET(req) {
 
     const activeProducts = await prisma.merchantProduct.findMany({
       where: { productId: { in: allProductIds }, isActive: true },
-      select: { productId: true, name: true, imageUrl: true },
+      // image_url burada seçiliyor ama UI'da kullanılmıyor; Prisma hatasını önler
+      select: { productId: true, name: true, image_url: true },
     });
 
     // Seçili ürün filtresi (0 → Tümü)
     let filteredProductIds = activeProducts.map((p) => p.productId);
     if (productIds.length > 0 && !productIds.includes(0)) {
-      // Sadece gerçekten aktif & kullanıcıya ait olanlardan seçime izin ver
       const allowed = new Set(filteredProductIds);
       filteredProductIds = productIds.filter((id) => allowed.has(id));
       if (filteredProductIds.length === 0) {
@@ -141,7 +137,6 @@ export async function GET(req) {
     const lte = toEndOfDayISO(endDate);
     if (gte) dateFilter.gte = gte;
     if (lte) dateFilter.lte = lte;
-
     const useDateFilter = Boolean(gte || lte);
 
     // 6) Click kayıtları
@@ -181,7 +176,7 @@ export async function GET(req) {
       quantity: typeof r.quantity === "number" && r.quantity > 0 ? r.quantity : 1,
     }));
 
-    // 8) Onaylı satış listesi (quantity ile)
+    // 8) Onaylı satış listesi (quantity ile) — ⬇️ image_url kullan
     const confirmedSalesRaw = await prisma.affiliateUserSale.findMany({
       where: {
         userId,
@@ -198,7 +193,7 @@ export async function GET(req) {
         convertedAt: true,
         productId: true,
         quantity: true,
-        merchantProduct: { select: { name: true, imageUrl: true } },
+        merchantProduct: { select: { name: true, image_url: true } }, // ⬅️ düzeltildi
       },
     });
 
@@ -219,7 +214,7 @@ export async function GET(req) {
       saleId: s.saleId,
       productId: s.productId,
       productName: s.merchantProduct?.name ?? "Product",
-      productImage: s.merchantProduct?.imageUrl ?? null,
+      productImage: s.merchantProduct?.image_url ?? null, // ⬅️ düzeltildi
       date: s.convertedAt.toISOString().slice(0, 10),
       amount: Number(s.amount),
       commission: Number(s.commissionAffiliate),
@@ -238,12 +233,7 @@ export async function GET(req) {
         confirmedSales: allConfirmedSales, // backward compat
         allConfirmedSales,
       },
-      {
-        headers: {
-          "Cache-Control": "no-store",
-          Vary: "Cookie",
-        },
-      }
+      { headers: { "Cache-Control": "no-store", Vary: "Cookie" } }
     );
   } catch (err) {
     console.error("Performance API error:", err);

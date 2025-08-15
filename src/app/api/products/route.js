@@ -1,34 +1,50 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
-// JWT_SECRET kontrolü
-const JWT_SECRET = process.env.JWT_SECRET;
-export async function GET() {
+const JWT_SECRET = process.env.JWT_SECRET || "";
+
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  return res;
+}
+
+export async function GET(req) {
   try {
-    // Kullanıcı JWT'si ile kimlik belirleme (opsiyonel)
-    const cookieStore = await cookies();
-    const token = cookieStore.get('cabo_token')?.value;
-    let userId = null;
+    // --- Rate limit (IP bazlı 30/dk) ---
+    const rlKey = makeRateLimitKey(req, { scope: "products_list" });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 30, windowMs: 60_000 });
+    if (!ok) {
+      return json(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
+    }
 
-    if (token) {
+    // --- Opsiyonel kullanıcı (JWT cookie) ---
+    const cookieStore = cookies(); // DİKKAT: await yok
+    const token = cookieStore.get("cabo_token")?.value;
+    let userId = null;
+    if (token && JWT_SECRET) {
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        userId = decoded.userId;
-      } catch (err) {
-        console.log("JWT decode error:", err);
+        userId = Number(decoded?.userId) || null;
+      } catch {
+        // geçersiz JWT → anonim gibi davran
       }
     }
 
-    // 1. Tüm aktif ve admin onaylı ürünleri çek
-    let allProducts = await prisma.merchantProduct.findMany({
-      where: {
-        isActive: true,
-        activatedByAdmin: true,
-      },
-      orderBy: { createdAt: 'desc' },
+    // --- Ürünler (aktif + admin onaylı) ---
+    const allProducts = await prisma.merchantProduct.findMany({
+      where: { isActive: true, activatedByAdmin: true },
+      orderBy: { createdAt: "desc" },
       select: {
         productId: true,
         name: true,
@@ -42,39 +58,32 @@ export async function GET() {
         maxSalesLimit: true,
         activatedByAdmin: true,
         isActive: true,
+        price: true,
       },
     });
 
-    // Kota aşılmış ürünleri filtrele
+    // Kota (maxSalesLimit) aşanları ele
     const products = allProducts.filter(
-      p =>
-        (p.maxSalesLimit == null) ||
-        (p.totalPurchases < p.maxSalesLimit)
+      (p) => p.maxSalesLimit == null || p.totalPurchases < p.maxSalesLimit
     );
 
-    // Kullanıcının affiliateLink'leri (aktif/pasif fark etmeksizin)
+    // --- Kullanıcının linkleri (bilgi amaçlı) ---
     let userLinks = [];
     let visibleLinkIds = [];
     if (userId) {
       userLinks = await prisma.affiliateLink.findMany({
-        where: { userId: userId },
-        select: { productId: true, token: true, isVisible: true, expiresAt: true }
+        where: { userId },
+        select: { productId: true, token: true, isVisible: true, expiresAt: true },
       });
-
-      const activeProductIds = new Set(products.map(p => p.productId));
+      const activeProductIds = new Set(products.map((p) => p.productId));
       visibleLinkIds = userLinks
-        .filter(link => link.isVisible && activeProductIds.has(link.productId))
-        .map(link => link.productId);
+        .filter((l) => l.isVisible && activeProductIds.has(l.productId))
+        .map((l) => l.productId);
     }
 
-    return NextResponse.json({
-      products,
-      userLinks,
-      visibleLinkIds
-    });
-
+    return json({ products, userLinks, visibleLinkIds });
   } catch (err) {
     console.error("API /api/products error:", err);
-    return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
+    return json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

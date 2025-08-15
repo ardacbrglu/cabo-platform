@@ -1,14 +1,5 @@
+// context/UserContext.jsx
 "use client";
-/**
- * /context/UserContext.jsx
- * Amaç: Oturum bilgisini (NextAuth session cookie’leri) /api/me üzerinden tek kez çekip
- * uygulama genelinde paylaşmak.
- *
- * SECURITY NOTES
- * - Oturum tek kaynağı NextAuth’tır; custom JWT/cookie yok.
- * - /api/me yalnız güvenli alanları döner; 401/403/404 durumunda anon kabul edilir.
- * - İstek cache’lenmez (no-store) ve credentials: "include" gönderilir.
- */
 
 import React, {
   createContext,
@@ -37,17 +28,14 @@ export function UserProvider({ children }) {
   const mountedRef = useRef(true);
 
   const fetchMe = useCallback(async () => {
-    // Önceki isteği iptal et
-    try {
-      acRef.current?.abort();
-    } catch {}
+    try { acRef.current?.abort(); } catch {}
     const ac = new AbortController();
     acRef.current = ac;
 
     try {
       const res = await fetch("/api/me", {
         method: "GET",
-        credentials: "include", // NextAuth session cookie'leri
+        credentials: "include",
         headers: {
           accept: "application/json",
           "cache-control": "no-cache",
@@ -60,7 +48,6 @@ export function UserProvider({ children }) {
       if (!mountedRef.current) return;
 
       if (!res.ok) {
-        // 401/403/404/429 → anon kabul et (enumeration yok)
         setUser(null);
         setLastError(new Error(`GET /api/me ${res.status}`));
         return;
@@ -68,7 +55,6 @@ export function UserProvider({ children }) {
 
       const data = await res.json().catch(() => ({}));
 
-      // Beklenen minimal şema: { userId, email, role, status, name?, languagePreference?, currencyCode? }
       if (data && data.userId) {
         setUser(data);
         setLastError(null);
@@ -85,24 +71,18 @@ export function UserProvider({ children }) {
     }
   }, []);
 
-  // İlk yükleme (ve refreshUser -> user = undefined olduğunda)
   useEffect(() => {
     mountedRef.current = true;
-    if (user === undefined) {
-      fetchMe();
-    }
+    if (user === undefined) fetchMe();
     return () => {
       mountedRef.current = false;
-      try {
-        acRef.current?.abort();
-      } catch {}
+      try { acRef.current?.abort(); } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Login/logout sonrası yeniden okumak için
   const refreshUser = useCallback(() => {
-    setUser(undefined); // loading state tetikler
+    setUser(undefined);
     return fetchMe();
   }, [fetchMe]);
 

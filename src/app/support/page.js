@@ -1,55 +1,77 @@
-'use client';
+// /app/support/page.jsx
+"use client";
 
-import Layout from '@/components/Layout';
-import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from 'lucide-react';
-import { useUser } from '@/context/UserContext';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useState, useRef } from 'react';
+import Layout from "@/components/Layout";
+import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from "lucide-react";
+import { useUser } from "@/context/UserContext";
+import { useTranslation } from "@/hooks/useTranslation";
+import { useState, useRef } from "react";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
+import Captcha from "@/components/Captcha";
 
 export default function SupportPage() {
   const { user } = useUser();
-  const t = useTranslation();
-  const csrfToken = useCsrfToken(); // ← CSRF token hook
-  const [message, setMessage] = useState('');
+  const { t } = useTranslation();                 // ✅ doğru kullanım (destructure)
+  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅ doğru kullanım
+
+  const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState(null);
+  const [captchaKey, setCaptchaKey] = useState(0); // reset için remount
   const msgRef = useRef(null);
 
   const handleSend = async (e) => {
     e.preventDefault();
-    setError('');
-    if (!message.trim()) return;
-    setSending(true);
+    setError("");
 
+    if (!message.trim()) return;
+    if (!csrfReady || !csrfToken) {
+      setError(t("errorGeneric"));
+      return;
+    }
+    if (!captchaToken) {
+      setError(t("captchaRequired") || "Please complete the captcha.");
+      return;
+    }
+
+    setSending(true);
     try {
-      const res = await fetch('/api/support', {
-        method: 'POST',
+      const res = await fetch("/api/support", {
+        method: "POST",
+        credentials: "include",
         headers: {
-          'Content-Type': 'application/json',
-          'x-csrf-token': csrfToken // ← CSRF token header
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+          "x-recaptcha-token": captchaToken,
+          accept: "application/json",
         },
         body: JSON.stringify({ message }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.success) {
         setSent(true);
-        setMessage('');
+        setMessage("");
+        setCaptchaToken(null);
+        setCaptchaKey((k) => k + 1); // captcha'yı sıfırla
         setTimeout(() => setSent(false), 3500);
       } else {
         setError(data.error || t("errorGeneric"));
+        setCaptchaToken(null);
+        setCaptchaKey((k) => k + 1);
       }
-    } catch (e) {
+    } catch {
       setError(t("errorGeneric"));
+      setCaptchaToken(null);
+      setCaptchaKey((k) => k + 1);
     }
 
     setSending(false);
-    // Hata veya başarı mesajını görünür kıl
     if (msgRef.current) {
-      msgRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
@@ -63,24 +85,32 @@ export default function SupportPage() {
               <Headset size={21} /> {t("contactSupport")}
             </div>
             <div className="text-gray-300 font-mono text-xs mb-2">
-              {user?.name
-                ? <>
-                    {t("loggedInAs")} <span className="font-bold text-[#d1ffd0]">{user.name}</span>
-                    <span className="text-gray-500"> ({user.email})</span>
-                  </>
-                : t("notLoggedIn")
-              }
+              {user?.name ? (
+                <>
+                  {t("loggedInAs")}{" "}
+                  <span className="font-bold text-[#d1ffd0]">{user.name}</span>
+                  <span className="text-gray-500"> ({user.email})</span>
+                </>
+              ) : (
+                t("notLoggedIn")
+              )}
             </div>
 
             {/* Başarı / Hata Mesajları */}
             {sent && (
-              <div ref={msgRef} className="flex items-center gap-2 bg-[#182f18] border border-[#81d74280] text-[#aaff99] rounded-md px-4 py-2 mb-4">
+              <div
+                ref={msgRef}
+                className="flex items-center gap-2 bg-[#182f18] border border-[#81d74280] text-[#aaff99] rounded-md px-4 py-2 mb-4"
+              >
                 <CheckCircle size={18} className="text-[#81d742]" />
                 {t("messageSent")}
               </div>
             )}
             {error && (
-              <div ref={msgRef} className="flex items-center gap-2 bg-red-900/80 border border-red-500 text-red-200 rounded-md px-4 py-2 mb-4">
+              <div
+                ref={msgRef}
+                className="flex items-center gap-2 bg-red-900/80 border border-red-500 text-red-200 rounded-md px-4 py-2 mb-4"
+              >
                 {error}
               </div>
             )}
@@ -90,19 +120,34 @@ export default function SupportPage() {
                 {t("yourMessage")}
               </label>
               <textarea
-                className="bg-[#161616] border border-[#222] rounded px-4 py-2 mb-4 text-white w-full outline-none text-sm font-mono resize-none min-h-[80px] transition"
+                className="bg-[#161616] border border-[#222] rounded px-4 py-2 mb-3 text-white w-full outline-none text-sm font-mono resize-none min-h-[80px] transition"
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                disabled={sending || !csrfToken}
+                disabled={sending || !csrfReady || !csrfToken}
                 required
                 maxLength={900}
                 autoComplete="off"
               />
+
+              {/* CAPTCHA */}
+              <Captcha
+                key={captchaKey}
+                onChange={setCaptchaToken}
+                lang={(user?.languagePreference || "en").toLowerCase()}
+                className="mb-3"
+              />
+
               <button
                 type="submit"
                 className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={sending || !message.trim() || !csrfToken}
+                disabled={
+                  sending ||
+                  !message.trim() ||
+                  !csrfReady ||
+                  !csrfToken ||
+                  !captchaToken
+                }
               >
                 {sending ? t("sending") : t("send")}
               </button>
@@ -130,7 +175,7 @@ export default function SupportPage() {
             </div>
           </div>
 
-          {/* FAQ EN SAĞDA */}
+          {/* FAQ */}
           <div className="bg-[#181818] rounded-2xl shadow py-8 px-7 border border-[#222328]/70 flex-1 max-w-md min-w-[310px] mx-auto mt-8 lg:mt-0">
             <div className="flex items-center gap-2 mb-4 text-[#81d742] font-extrabold text-lg">
               <Info size={21} /> {t("faq")}
@@ -162,7 +207,8 @@ export default function SupportPage() {
               </div>
             </div>
             <div className="mt-7 text-gray-400 font-mono text-[0.90rem] text-center">
-              {t("stillNeedHelp")} <span className="text-[#81d742] underline">{t("sendSupportMessageSuggestion")}</span>
+              {t("stillNeedHelp")}{" "}
+              <span className="text-[#81d742] underline">{t("sendSupportMessageSuggestion")}</span>
             </div>
           </div>
         </div>

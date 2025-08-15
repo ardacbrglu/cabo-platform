@@ -1,16 +1,12 @@
 // /src/lib/prisma.js
-import { PrismaClient } from "@prisma/client";
+// SECURITY REVIEW: Ensure database credentials are stored securely in environment variables. Avoid logging sensitive queries or data.
+
+import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis;
+const prisma = globalForPrisma.prisma ?? new PrismaClient();
 
-export const prisma =
-  globalForPrisma.__prisma__ ||
-  new PrismaClient({
-    log: process.env.NODE_ENV === "production" ? ["error"] : ["error", "warn"],
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.__prisma__ = prisma;
-}
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export default prisma;
+// NOTE: In serverless environments, ensure you do not create too many PrismaClient instances. Review deployment best practices for your hosting provider.

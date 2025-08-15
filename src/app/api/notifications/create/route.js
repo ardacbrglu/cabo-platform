@@ -1,10 +1,9 @@
-// ✅ Admin → Bildirim oluştur (tek kullanıcı veya tüm aktif kullanıcılar)
-// SECURITY: NextAuth admin, CSRF (POST), rate-limit (user+scope), input validation
+// app/api/notifications/create/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
@@ -13,13 +12,11 @@ const VALID_TYPES = ["info", "support_reply", "important"];
 
 export const POST = withCsrfProtection(async (req) => {
   try {
-    // Auth (admin)
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     const user = session?.user;
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // Rate‑limit (admin userId + scope)
     const rlKey = makeRateLimitKey(req, { scope: "notif:create", userId: user.id });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
     if (!ok) {
@@ -29,7 +26,6 @@ export const POST = withCsrfProtection(async (req) => {
       );
     }
 
-    // Body & validation
     const body = await req.json().catch(() => ({}));
     const message = String(body?.message || "").trim();
     const type = String(body?.type || "info");
@@ -44,7 +40,6 @@ export const POST = withCsrfProtection(async (req) => {
       return NextResponse.json({ error: "Invalid notification type" }, { status: 400 });
     }
 
-    // Create
     if (all) {
       const users = await prisma.user.findMany({
         where: { status: "active" },
@@ -62,7 +57,10 @@ export const POST = withCsrfProtection(async (req) => {
         isDeleted: false,
       }));
       await prisma.notification.createMany({ data, skipDuplicates: true });
-      return NextResponse.json({ ok: true, count: data.length }, { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json(
+        { ok: true, count: data.length },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     if (!targetUserId) {
@@ -74,7 +72,7 @@ export const POST = withCsrfProtection(async (req) => {
     });
     return NextResponse.json({ ok: true, count: 1 }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
-    console.error("POST /api/notifications/admin-create error:", err);
+    console.error("POST /api/notifications/create error:", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 });

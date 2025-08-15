@@ -1,6 +1,7 @@
+// app/layout.js
 import "./globals.css";
 import { cookies } from "next/headers";
-import Providers from "./providers";           // <- dosya adı küçük harfle
+import Providers from "./providers";
 import { UserProvider } from "@/context/UserContext";
 import { LocaleProvider } from "@/context/LocaleContext";
 
