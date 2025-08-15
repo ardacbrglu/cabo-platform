@@ -1,9 +1,4 @@
-// src/app/api/auth/[...nextauth]/route.js
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
+// /src/app/api/auth/[...nextauth]/route.js
+import { handlers } from "@/lib/auth";
 
-import NextAuth from "next-auth";
-import { authOptions } from "@/lib/authOptions";
-
-const handler = NextAuth(authOptions);
-export { handler as GET, handler as POST };
+export const { GET, POST } = handlers;

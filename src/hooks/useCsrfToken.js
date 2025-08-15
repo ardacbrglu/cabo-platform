@@ -1,8 +1,13 @@
-// /hooks/useCsrfToken.js
+// /src/hooks/useCsrfToken.js
 import { useEffect, useRef, useState, useCallback } from "react";
 
+/**
+ * CSRF token hem cookie’ye yazılır hem JSON ile döner.
+ * Endpoint: /api/csrf/csrf-token
+ */
+
 const CSRF_ENDPOINT = "/api/csrf/csrf-token";
-const REFRESH_MS = 90 * 60 * 1000;
+const REFRESH_MS = 90 * 60 * 1000; // 90 dk
 
 export function useCsrfToken() {
   const [csrfToken, setCsrfToken] = useState("");
@@ -14,34 +19,42 @@ export function useCsrfToken() {
     const res = await fetch(CSRF_ENDPOINT, {
       method: "GET",
       credentials: "include",
-      headers: { accept: "application/json", "cache-control": "no-cache" },
+      headers: {
+        accept: "application/json",
+        "cache-control": "no-cache",
+      },
       signal,
     });
-    if (!res.ok) throw new Error(`CSRF endpoint failed: ${res.status}`);
-    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`CSRF endpoint failed: ${res.status} ${text}`);
+    }
+    const data = await res.json();
     const token = data?.csrf_token || data?.csrfToken;
     if (!token) throw new Error("CSRF token missing in response");
+
     setCsrfToken(token);
     lastFetchedAt.current = Date.now();
     setReady(true);
-    return token;
   }, []);
 
   const refresh = useCallback(async () => {
     const ac = new AbortController();
     try {
       await fetchToken(ac.signal);
-    } catch (err) {
-      if (err?.name === "AbortError") return;
-      console.error("CSRF token refresh error:", err);
+    } finally {
+      // no-op
     }
     return () => ac.abort();
   }, [fetchToken]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     const ac = new AbortController();
     fetchToken(ac.signal).catch((err) => {
-      if (err?.name !== "AbortError") console.error("CSRF token fetch error:", err);
+      console.error("CSRF token fetch error:", err);
+      // ready=false kalsın
     });
 
     timerRef.current = setInterval(() => {

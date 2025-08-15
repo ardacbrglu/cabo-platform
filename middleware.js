@@ -1,47 +1,43 @@
-// /src/middleware.js
+// /middleware.js
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
-export async function middleware(req) {
-  const url = req.nextUrl;
-  const path = url.pathname;
-
-  const session = await auth(); // NextAuth v5
-  const role = session?.user?.role;
-  const loggedIn = !!session;
-
-  // Merchant bölgesi
-  if (path.startsWith("/merchant")) {
-    if (!loggedIn) return NextResponse.redirect(new URL("/login", url));
-    if (role !== "merchant" && role !== "admin") {
-      return NextResponse.redirect(new URL("/", url));
-    }
-    return NextResponse.next();
-  }
-
-  // Affiliate sayfaları
-  const affPaths = new Set([
-    "/dashboard",
-    "/mylinks",
-    "/performance",
-    "/wallet",
-  ]);
-  if (affPaths.has(path)) {
-    if (!loggedIn) return NextResponse.redirect(new URL("/login", url));
-    if (role !== "affiliate" && role !== "admin") {
-      return NextResponse.redirect(new URL("/", url));
-    }
-  }
-
-  return NextResponse.next();
-}
-
+// Sadece korumak istediklerimizi eşleştiriyoruz
 export const config = {
   matcher: [
-    "/dashboard",
-    "/mylinks",
-    "/performance",
-    "/wallet",
+    "/dashboard/:path*",
+    "/products/:path*",
+    "/mylinks/:path*",
+    "/performance/:path*",
+    "/wallet/:path*",
     "/merchant/:path*",
   ],
 };
+
+export default auth(async (req) => {
+  const { nextUrl } = req;
+  const path = nextUrl.pathname;
+  const s = req.auth; // next-auth middleware'den gelir
+
+  // Giriş yoksa login'e
+  if (!s?.user) {
+    const login = new URL("/login", nextUrl.origin);
+    login.searchParams.set("callbackUrl", nextUrl.pathname + nextUrl.search);
+    return NextResponse.redirect(login);
+  }
+
+  const role = s.user.role;
+
+  const isAffiliateArea = /^\/(dashboard|products|mylinks|performance|wallet)(\/|$)/.test(path);
+  const isMerchantArea = /^\/merchant(\/|$)/.test(path);
+
+  // Yanlış rolde ise doğru alana gönder
+  if (isAffiliateArea && role !== "affiliate") {
+    return NextResponse.redirect(new URL("/merchant/dashboard", nextUrl.origin));
+  }
+  if (isMerchantArea && role !== "merchant") {
+    return NextResponse.redirect(new URL("/dashboard", nextUrl.origin));
+  }
+
+  return NextResponse.next();
+});

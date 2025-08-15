@@ -1,3 +1,4 @@
+// /app/api/notifications/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -19,7 +20,6 @@ export async function GET(req) {
     const userId = session?.user?.id;
     if (!userId) return json({ error: "Unauthorized" }, { status: 401 });
 
-    // rate limit
     const rlKey = makeRateLimitKey(req, { scope: "notif:list", userId });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 60, windowMs: 60_000 });
     if (!ok) {
@@ -35,8 +35,6 @@ export async function GET(req) {
 
     let total = 0;
     let notifications = [];
-
-    // Prisma tablo/şema hatalarında 200 + boş dön
     try {
       total = await prisma.notification.count({ where });
       notifications = await prisma.notification.findMany({
@@ -47,8 +45,8 @@ export async function GET(req) {
       const msg = String(e?.message || "");
       const code = e?.code;
       if (
-        code === "P2021" || // table not found
-        code === "P2023" || // relation issues
+        code === "P2021" ||
+        code === "P2023" ||
         /table|relation.*does not exist/i.test(msg)
       ) {
         return json({ total: 0, notifications: [] });

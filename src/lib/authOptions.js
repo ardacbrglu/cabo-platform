@@ -1,3 +1,4 @@
+// /src/lib/authOptions.js
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -86,7 +87,6 @@ export const authOptions = {
         // Aktif olmayan hesap → reddet
         if (user.status !== "active") return null;
 
-        // jwt callback'ine taşınacak güvenli alanlar
         return {
           id: String(user.id),
           name: user.name,
@@ -104,18 +104,15 @@ export const authOptions = {
   },
 
   callbacks: {
-    // OAuth (Google) ve Credentials girişlerinde token'ı zenginleştir
     async jwt({ token, user }) {
-      // 1) user geldiyse en az id/email'i yaz
+      // user varsa ilk turda yaz
       if (user) {
         token.sub = String(user.id);
         token.email = user.email;
-        // bazı sağlayıcılarda role/status user içinde olmayabilir
         if (user.role) token.role = user.role;
         if (user.status) token.status = user.status;
       }
-
-      // 2) role/status eksikse DB'den tamamla (ilk login'i kurtarır)
+      // role/status hâlâ yoksa DB'den tamamla (ilk login kurtarıcı)
       if (!token.role || !token.status) {
         try {
           const u = await prisma.user.findUnique({
@@ -129,7 +126,6 @@ export const authOptions = {
           }
         } catch {}
       }
-
       return token;
     },
 
@@ -142,14 +138,6 @@ export const authOptions = {
       return session;
     },
 
-    /**
-     * Google signIn akışı:
-     * - E-posta DB'de yoksa: "precheck" çerezi ZORUNLU → yeni kullanıcı oluşturulur (adapter).
-     * - E-posta DB'de varsa:
-     *    • merchant ise engelle
-     *    • status !== active ise engelle
-     *    • diğer durumda İZİN VER → NextAuth var olan user’a Account kaydını bağlar (linking).
-     */
     async signIn({ user, account }) {
       if (account?.provider !== "google") return true;
 
@@ -158,22 +146,17 @@ export const authOptions = {
 
       const existing = await prisma.user.findUnique({ where: { email } });
 
-      // Merchant → reddet
       if (existing?.role === "merchant") return false;
 
       if (!existing) {
-        // Yeni Google kullanıcısı → precheck cookie zorunlu
         const ok = verifyGooglePrecheckCookie();
-        return !!ok; // PrismaAdapter user'ı yaratacak
+        return !!ok;
       }
-
-      // Mevcut kullanıcı: status aktifse izin ver
       return existing.status === "active";
     },
   },
 
   events: {
-    // İlk defa OAuth ile oluşan kullanıcıyı patch et (rol/durum)
     async createUser({ user, account }) {
       if (account?.provider === "google" && user?.email) {
         try {

@@ -1,6 +1,5 @@
-// src/lib/auth.js
+// /src/lib/auth.js
 import NextAuth from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { authOptions } from "./authOptions";
 
-// Tek yerden tüm helpers:
-export const { auth, signIn, signOut, handlers } = NextAuth(authOptions);
+export const { handlers, auth, signIn, signOut } = NextAuth(authOptions);
