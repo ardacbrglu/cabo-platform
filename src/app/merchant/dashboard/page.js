@@ -1,12 +1,18 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { useUser } from "@/context/UserContext";
 import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
-// CSRF TOKEN USAGE REVIEW:
-// WARNING: The hook returns 'csrf_token' (snake_case), but the variable here should be named 'csrfToken' (camelCase) for consistency with the rest of the codebase.
+
+/**
+ * SECURITY NOTES
+ * - CSRF: POST/PATCH isteklerinde header "x-csrf-token" zorunlu.
+ * - Rate-limit + RBAC backend’de (api/merchant_dashboard) uygulanıyor.
+ * - XSS: React auto-escape + backend sanitize; img için fallback mevcut.
+ */
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) {
@@ -20,10 +26,12 @@ function getQuotastatus(product) {
 }
 
 export default function MerchantDashboardPage() {
-  const t = useTranslation();
-  const { user, setUser } = useUser();
-  const csrfToken = useCsrfToken(); // ← CSRF token hook
-  // WARNING: In the rest of this file, you use 'csrf_token' instead of 'csrfToken'. This is inconsistent and can cause bugs.
+  // ❗️ZORUNLU DÜZELTME-1: useTranslation fonksiyonunu doğru destructure et
+  const { t } = useTranslation();
+  const { user } = useUser();
+
+  // ❗️ZORUNLU DÜZELTME-2: useCsrfToken içinden string token’ı al
+  const { csrfToken } = useCsrfToken();
 
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
@@ -47,7 +55,10 @@ export default function MerchantDashboardPage() {
   // PRODUCTS FETCH
   const fetchProducts = async () => {
     try {
-      const res = await fetch("/api/merchant_dashboard", { credentials: "include" });
+      const res = await fetch("/api/merchant_dashboard", {
+        credentials: "include",
+        headers: { accept: "application/json" },
+      });
       const data = await res.json();
       if (data.success) {
         setProducts(data.products);
@@ -69,12 +80,13 @@ export default function MerchantDashboardPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, 
+          "x-csrf-token": csrfToken || "",   // ✅ string gönder
+          accept: "application/json",
         },
         credentials: "include",
         body: JSON.stringify(form),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         setFormVisible(false);
         setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
@@ -98,13 +110,14 @@ export default function MerchantDashboardPage() {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, 
+          "x-csrf-token": csrfToken || "",  // ✅ string gönder
+          accept: "application/json",
         },
         body: JSON.stringify({ productId, action }),
       });
       if (res.ok) fetchProducts();
       else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         alert(data.error || t("failedProductUpdate"));
       }
     } catch {
@@ -148,7 +161,8 @@ export default function MerchantDashboardPage() {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken, 
+          "x-csrf-token": csrfToken || "",  // ✅ string gönder
+          accept: "application/json",
         },
         body: JSON.stringify({
           productId: editingProductId,
@@ -160,7 +174,7 @@ export default function MerchantDashboardPage() {
         setEditingProductId(null);
         fetchProducts();
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         alert(data.error || t("failedProductUpdate"));
       }
     } catch {
@@ -173,8 +187,8 @@ export default function MerchantDashboardPage() {
     setEditValues({ commissionRate: "", max_sales_limit: "" });
   };
 
-  // INPUT GÖRÜNÜRLÜK CLASS'I
-  const inputClass = "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
+  const inputClass =
+    "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
 
   return (
     <MerchantLayout>
@@ -189,7 +203,8 @@ export default function MerchantDashboardPage() {
       </section>
 
       {message && (
-        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow">
+        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow"
+             aria-live="polite">
           <CheckCircle size={18} className="text-green-400" /> {message}
         </div>
       )}
@@ -204,9 +219,9 @@ export default function MerchantDashboardPage() {
             <input type="text" className={inputClass} placeholder={t("productTitle")} required onChange={e => setForm({ ...form, name: e.target.value })} />
             <input type="text" className={inputClass} placeholder={t("productUrl")} required onChange={e => setForm({ ...form, merchant_url: e.target.value })} />
             <input type="text" className={inputClass} placeholder={t("productImage")} required onChange={e => setForm({ ...form, image_url: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("productPrice")} required step="0.01" onChange={e => setForm({ ...form, price: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("commissionRate")} required step="0.1" min={minCommission} onChange={e => setForm({ ...form, commissionRate: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("maxSalesLimit")} required onChange={e => setForm({ ...form, max_sales_limit: e.target.value })} />
+            <input type="number" inputMode="decimal" className={inputClass} placeholder={t("productPrice")} required step="0.01" onChange={e => setForm({ ...form, price: e.target.value })} />
+            <input type="number" inputMode="decimal" className={inputClass} placeholder={t("commissionRate")} required step="0.1" min={minCommission} onChange={e => setForm({ ...form, commissionRate: e.target.value })} />
+            <input type="number" inputMode="numeric" className={inputClass} placeholder={t("maxSalesLimit")} required onChange={e => setForm({ ...form, max_sales_limit: e.target.value })} />
           </div>
           <textarea className={inputClass + " w-full"} placeholder={t("productDesc")} rows={3} onChange={e => setForm({ ...form, description: e.target.value })}></textarea>
           <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
@@ -234,7 +249,7 @@ export default function MerchantDashboardPage() {
               )}
               {status === "quota" && (
                 <span className="absolute left-5 top-5 bg-yellow-600/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
-                  <Ban size={13} /> {t("quotaReached")}
+                <Ban size={13} /> {t("quotaReached")}
                 </span>
               )}
               {/* Product IMAGE */}
@@ -244,6 +259,8 @@ export default function MerchantDashboardPage() {
                 alt={p.name}
                 className="rounded-xl mb-4 h-44 w-full object-cover border border-[#202720]"
                 style={{ background: "#23262a" }}
+                loading="lazy"
+                decoding="async"
               />
               <h3 className="text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
               <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
@@ -320,6 +337,7 @@ export default function MerchantDashboardPage() {
                         onChange={e => handleEditChange("commissionRate", e.target.value)}
                         className={inputClass + " w-24 text-green-300"}
                         placeholder={t("commissionShort")}
+                        inputMode="decimal"
                       />
                       <span className="ml-2 text-xs text-gray-400">(min: {minCommission})</span>
                     </div>
@@ -333,6 +351,7 @@ export default function MerchantDashboardPage() {
                         onChange={e => handleEditChange("max_sales_limit", e.target.value)}
                         className={inputClass + " w-28 text-blue-300"}
                         placeholder={t("maxSales")}
+                        inputMode="numeric"
                       />
                       <span className="ml-2 text-xs text-gray-400">({t("sold")}: {p.total_purchases})</span>
                     </div>
