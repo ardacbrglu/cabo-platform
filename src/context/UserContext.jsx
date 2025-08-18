@@ -1,97 +1,78 @@
-// context/UserContext.jsx
 "use client";
+/**
+ * /context/UserContext.js
+ * Amaç: Oturum bilgisini tek kez çekip uygulama genelinde paylaşmak.
+ *
+ * SECURITY NOTES
+ * - Kimlik doğrulama NextAuth cookie’leriyle yapılır; custom JWT yok.
+ * - /api/me yalnızca minimal alan döner (id/email/role/status); 401/403 → anonim sayılır.
+ * - Tüm istekler credentials:"include" ve cache:"no-store" ile yapılır.
+ */
 
 import React, {
   createContext,
   useContext,
   useEffect,
-  useRef,
+  useMemo,
   useState,
   useCallback,
-  useMemo,
 } from "react";
 
-const noop = () => {};
 const UserContext = createContext({
-  user: undefined,          // undefined = loading, null = anon, object = auth payload
-  ready: false,             // user !== undefined
-  isAuthenticated: false,   // !!user && !!user.userId
-  setUser: noop,
+  user: undefined,         // undefined: yüklenmedi, null: anon, object: auth
+  ready: false,
+  isAuthenticated: false,
   lastError: null,
   refreshUser: async () => {},
+  setUser: () => {},
 });
 
 export function UserProvider({ children }) {
-  const [user, setUser] = useState(undefined);
+  const [user, setUser] = useState(undefined); // ilk açılış: undefined
   const [lastError, setLastError] = useState(null);
-  const acRef = useRef(null);
-  const mountedRef = useRef(true);
 
   const fetchMe = useCallback(async () => {
-    try { acRef.current?.abort(); } catch {}
-    const ac = new AbortController();
-    acRef.current = ac;
-
     try {
       const res = await fetch("/api/me", {
         method: "GET",
         credentials: "include",
-        headers: {
-          accept: "application/json",
-          "cache-control": "no-cache",
-          pragma: "no-cache",
-        },
-        signal: ac.signal,
+        headers: { accept: "application/json" },
         cache: "no-store",
       });
-
-      if (!mountedRef.current) return;
-
       if (!res.ok) {
+        // 401/403/429/5xx → anon kabul et, detay sızdırma
         setUser(null);
-        setLastError(new Error(`GET /api/me ${res.status}`));
+        setLastError(null);
         return;
       }
-
       const data = await res.json().catch(() => ({}));
-
-      if (data && data.userId) {
+      if (data?.id) {
         setUser(data);
-        setLastError(null);
       } else {
         setUser(null);
-        setLastError(null);
       }
-    } catch (e) {
-      if (!mountedRef.current) return;
-      if (e?.name !== "AbortError") {
-        setUser(null);
-        setLastError(e);
-      }
+      setLastError(null);
+    } catch {
+      setUser(null);
+      setLastError("network_error");
     }
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
-    if (user === undefined) fetchMe();
-    return () => {
-      mountedRef.current = false;
-      try { acRef.current?.abort(); } catch {}
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const refreshUser = useCallback(() => {
-    setUser(undefined);
-    return fetchMe();
+    // İlk yükleme
+    fetchMe();
   }, [fetchMe]);
 
-  const ready = user !== undefined;
-  const isAuthenticated = !!(user && user.userId);
-
   const value = useMemo(
-    () => ({ user, ready, isAuthenticated, setUser, lastError, refreshUser }),
-    [user, ready, isAuthenticated, lastError, refreshUser]
+    () => ({
+      user,
+      setUser,
+      ready: user !== undefined,
+      isAuthenticated: !!(user && user.id),
+      lastError,
+      refreshUser: fetchMe,
+    }),
+    [user, lastError, fetchMe]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

@@ -1,10 +1,28 @@
+// app/api/dashboard/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs"; // Prisma için Edge değil
 
+/**
+ * SECURITY NOTES
+ * - Auth: NextAuth session (getServerSession(authOptions)); custom JWT yok.
+ * - RBAC: role === "affiliate" ve status === "active" zorunlu.
+ * - Rate limit: IP (geniş pencere) + userId (dar pencere). 429'ta Retry-After döner.
+ * - Cevap: Cache-Control: no-store; Vary: Cookie. PII sızdırılmaz; alanlar minimal.
+ * - GET endpoint olduğu için CSRF gerekmez. Prisma ile güvenli sorgular.
+ */
+
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("Vary", "Cookie");
+  return res;
+}
 
 function getDeviceType(userAgent = "") {
   const ua = (userAgent || "").toLowerCase();
@@ -15,18 +33,11 @@ function getDeviceType(userAgent = "") {
   return "Other";
 }
 
-function json(data, init = {}) {
-  const res = NextResponse.json(data, init);
-  res.headers.set("Cache-Control", "no-store");
-  res.headers.set("Vary", "Cookie");
-  return res;
-}
-
 export async function GET(req) {
   try {
-    // 0) IP rate-limit (geniş; kimlik öncesi)
-    const ipKey = makeRateLimitKey(req, { scope: "dashboard:ip" });
+    // 0) IP rate-limit (geniş pencere, kimlik öncesi)
     {
+      const ipKey = makeRateLimitKey(req, { scope: "dashboard:ip" });
       const { ok, resetMs } = await checkRateLimit({ key: ipKey, limit: 40, windowMs: 60_000 });
       if (!ok) {
         return json(
@@ -36,12 +47,12 @@ export async function GET(req) {
       }
     }
 
-    // 1) Session (NextAuth v5)
-    const session = await auth();
+    // 1) Session
+    const session = await getServerSession(authOptions);
     const email = session?.user?.email?.toLowerCase?.();
     if (!email) return json({ error: "unauthorized" }, { status: 401 });
 
-    // 2) Kullanıcı
+    // 2) Kullanıcı (minimal seçim)
     const dbUser = await prisma.user.findUnique({
       where: { email },
       select: {
@@ -57,9 +68,9 @@ export async function GET(req) {
     });
     if (!dbUser) return json({ error: "unauthorized" }, { status: 401 });
 
-    // 2.5) Kullanıcı rate-limit (daha dar)
-    const userKey = makeRateLimitKey(req, { scope: "dashboard:user", userId: dbUser.id });
+    // 2.5) Kullanıcı rate-limit (dar pencere)
     {
+      const userKey = makeRateLimitKey(req, { scope: "dashboard:user", userId: dbUser.id });
       const { ok, resetMs } = await checkRateLimit({ key: userKey, limit: 30, windowMs: 60_000 });
       if (!ok) {
         return json(
@@ -69,13 +80,13 @@ export async function GET(req) {
       }
     }
 
-    // 3) Rol/Status
+    // 3) RBAC
     if (dbUser.role !== "affiliate") return json({ error: "forbidden" }, { status: 403 });
     if (dbUser.status !== "active") return json({ error: "inactive" }, { status: 403 });
 
     const userId = dbUser.id;
 
-    // 4) Platform ayarları
+    // 4) Platform ayarları (opsiyonel, yoksa varsayılan)
     let minPayout = 100;
     try {
       const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
@@ -88,7 +99,7 @@ export async function GET(req) {
       if (pcfg?.value) platformCommission = Number(pcfg.value);
     } catch {}
 
-    // 5) Banka eksikleri
+    // 5) Banka alan kontrolleri (TR IBAN örneği)
     const iban = dbUser.iban || "";
     const bankName = dbUser.bankName || "";
     const realName = dbUser.realUserFullname || "";
@@ -96,7 +107,7 @@ export async function GET(req) {
     const bankMissing = !bankName || !bankName.trim();
     const realNameMissing = !realName || realName.trim().split(" ").length < 2;
 
-    // 6) Linkler
+    // 6) Kullanıcı linkleri
     const userLinks = await prisma.affiliateLink.findMany({
       where: { userId },
       select: { productId: true, linkId: true },
@@ -105,6 +116,7 @@ export async function GET(req) {
     const linkIds = userLinks.map((l) => l.linkId);
 
     if (!productIds.length) {
+      // Link yoksa boş ama faydalı bir özet döndür
       return json({
         totalClicks: 0,
         totalSales: 0,
@@ -143,7 +155,7 @@ export async function GET(req) {
     const totalEarnings = Number(totalEarnAgg._sum.commissionAffiliate) || 0;
     const balance = totalEarnings;
 
-    // 8) Son 5 confirmed satış
+    // 8) Son 5 confirmed satış (liste)
     const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { productId: { in: productIds }, status: "confirmed" },
       orderBy: { convertedAt: "desc" },
@@ -151,7 +163,7 @@ export async function GET(req) {
       include: { merchantProduct: { select: { name: true } } },
     });
 
-    // 9) Leaderboard (aktif affiliate'lar arasından top-3, tek sorgu)
+    // 9) Leaderboard (aktif affiliates → top-3)
     const activeAffiliates = await prisma.user.findMany({
       where: { role: "affiliate", status: "active" },
       select: { id: true, name: true },
@@ -170,7 +182,7 @@ export async function GET(req) {
       value: Number(row._sum.commissionAffiliate || 0),
     }));
 
-    // 10) Son 24 saat
+    // 10) Son 24 saat aktivitesi
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: {
         userId,
@@ -212,7 +224,7 @@ export async function GET(req) {
       };
     }
 
-    // 11) Yanıt
+    // 11) Yanıt (TRY sembolü; aritmetik number döndürülür)
     return json({
       totalClicks,
       totalSales,
