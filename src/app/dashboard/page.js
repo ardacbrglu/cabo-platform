@@ -1,3 +1,4 @@
+// src/app/dashboard/page.jsx (veya bulunduğu yer)
 "use client";
 
 import { useState, useEffect } from "react";
@@ -5,17 +6,14 @@ import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import useTranslation from "@/hooks/useTranslation"; // ⬅️ default import
+import useTranslation from "@/hooks/useTranslation";
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / max) * 100, 100);
-  const radius = 46,
-    stroke = 6,
-    center = 60,
-    circumference = 2 * Math.PI * radius;
+  const radius = 46, stroke = 6, center = 60, circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - percent / 100);
   return (
     <div className="relative w-[120px] h-[120px] flex items-center justify-center mb-2 select-none">
@@ -34,10 +32,7 @@ function WalletProgress({ value, max }) {
           style={{ transition: "stroke-dashoffset 1s" }}
         />
       </svg>
-      <PiggyBank
-        className="absolute"
-        style={{ color: COLOR_CABO, width: 56, height: 56, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
-      />
+      <PiggyBank className="absolute" style={{ color: COLOR_CABO, width: 56, height: 56, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
     </div>
   );
 }
@@ -64,7 +59,7 @@ function getDeviceType(userAgent = "") {
 export default function Dashboard() {
   const router = useRouter();
   const { user: me, ready, isAuthenticated, setUser } = useUser();
-  const { t } = useTranslation(); // ⬅️ destructure
+  const { t } = useTranslation();
 
   const [stats, setStats] = useState({
     totalClicks: 0,
@@ -90,7 +85,7 @@ export default function Dashboard() {
   const [payoutstatus, setPayoutstatus] = useState("");
   const [isMobile, setIsMobile] = useState(false);
 
-  // Auth/RBAC yönlendirmesi — UserContext üzerinden
+  // Auth/RBAC yönlendirme
   useEffect(() => {
     if (!ready) return;
     if (!isAuthenticated) {
@@ -120,15 +115,24 @@ export default function Dashboard() {
 
     const fetchStats = async () => {
       try {
-        const res = await fetch("/api/dashboard", { cache: "no-store" });
-        if (!res.ok) {
+        const res = await fetch("/api/dashboard", {
+          cache: "no-store",
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+
+        if (!alive) return;
+
+        if (res.status === 401 || res.status === 403) {
           router.replace("/login");
           return;
         }
-        const data = await res.json();
+        if (!res.ok) {
+          // 429/500 vb: sessiz — sonraki poll’da toparlar
+          return;
+        }
 
-
-        if (!alive) return;
+        const data = await res.json().catch(() => ({}));
 
         setStats({
           ...data,
@@ -151,7 +155,7 @@ export default function Dashboard() {
 
         setLoading(false);
       } catch {
-        // ağ hatası → sessiz
+        // ağ hatası → sessiz; sonraki poll dener
       }
     };
 
@@ -185,10 +189,9 @@ export default function Dashboard() {
     !loading &&
     (ibanMissing || bankMissing || realNameMissing) && (
       <div
-        className={`
-          w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-6 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse z-40
-          ${isMobile ? "fixed left-0 right-0 top-14 mx-auto mt-0" : "relative mt-0"}
-        `}
+        className={`w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-6 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse z-40 ${
+          isMobile ? "fixed left-0 right-0 top-14 mx-auto mt-0" : "relative mt-0"
+        }`}
         style={isMobile ? { marginTop: "0px" } : {}}
       >
         <b>{t("bankInfoMissing")}</b> {t("mustAddBank")}
@@ -539,3 +542,11 @@ export default function Dashboard() {
     </Layout>
   );
 }
+
+
+
+
+
+
+
+

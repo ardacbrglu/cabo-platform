@@ -1,4 +1,4 @@
-// /hooks/useTranslation.js
+// src/hooks/useTranslation.js
 import { useMemo, useEffect, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { DEFAULT_LOCALE } from "@/locales";
@@ -44,12 +44,13 @@ function warnMissing(key) {
   }
 }
 
-export function useTranslation(nsPrefix = "") {
+// ---- Asıl mantık: objeyi üretir
+export function useI18n(nsPrefix = "") {
   const { locale: raw } = useLocale();
   const loc = raw || DEFAULT_LOCALE;
   const prefix = nsPrefix ? (nsPrefix.endsWith(".") ? nsPrefix : nsPrefix + ".") : "";
 
-  // sözlük yüklenince tekrar render için küçük tetik
+  // sözlükleri 1 kez yüklet, mount sonrasında tetikle
   const [, setTick] = useState(0);
   useEffect(() => {
     let mounted = true;
@@ -59,7 +60,7 @@ export function useTranslation(nsPrefix = "") {
   }, [loc]);
 
   return useMemo(() => {
-    function t(key, vars) {
+    function _t(key, vars) {
       const fullKey = prefix + key;
       const fromLoc = getByPath(dictCache.get(loc), fullKey);
       if (fromLoc !== undefined) return typeof fromLoc === "string" ? interpolate(fromLoc, vars) : fromLoc;
@@ -68,24 +69,35 @@ export function useTranslation(nsPrefix = "") {
       warnMissing(fullKey);
       return fullKey;
     }
-
-    function n(number, options) {
+    function _n(number, options) {
       try { return new Intl.NumberFormat(loc, options).format(number); }
       catch { return String(number); }
     }
-    function d(date, options) {
+    function _d(date, options) {
       try {
         const v = date instanceof Date ? date : new Date(date);
         return new Intl.DateTimeFormat(loc, options).format(v);
       } catch { return String(date); }
     }
-    function c(amount, currency = "USD", options) {
+    function _c(amount, currency = "USD", options) {
       try { return new Intl.NumberFormat(loc, { style: "currency", currency, ...options }).format(amount); }
       catch { return String(amount); }
     }
-
-    return { t, locale: loc, n, d, c };
+    return { t: _t, n: _n, d: _d, c: _c, locale: loc };
   }, [loc, prefix]);
+}
+
+// ---- Geriye dönük uyum: fonksiyon döndür (aynı zamanda property’leri var)
+export function useTranslation(nsPrefix = "") {
+  const obj = useI18n(nsPrefix);
+  const fn = (key, vars) => obj.t(key, vars);   // doğrudan fonksiyon gibi kullanım
+  // ayrıca destructure kullanıma destek
+  fn.t = obj.t;
+  fn.n = obj.n;
+  fn.d = obj.d;
+  fn.c = obj.c;
+  fn.locale = obj.locale;
+  return fn;
 }
 
 export default useTranslation;

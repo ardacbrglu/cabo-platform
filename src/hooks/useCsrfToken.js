@@ -24,12 +24,13 @@ export function useCsrfToken() {
         "cache-control": "no-cache",
       },
       signal,
+      cache: "no-store",
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`CSRF endpoint failed: ${res.status} ${text}`);
     }
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     const token = data?.csrf_token || data?.csrfToken;
     if (!token) throw new Error("CSRF token missing in response");
 
@@ -42,8 +43,10 @@ export function useCsrfToken() {
     const ac = new AbortController();
     try {
       await fetchToken(ac.signal);
-    } finally {
-      // no-op
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error("CSRF token fetch error:", err);
+      }
     }
     return () => ac.abort();
   }, [fetchToken]);
@@ -53,16 +56,20 @@ export function useCsrfToken() {
 
     const ac = new AbortController();
     fetchToken(ac.signal).catch((err) => {
-      console.error("CSRF token fetch error:", err);
-      // ready=false kalsın
+      // Yalnızca AbortError dışındakileri logla
+      if (err?.name !== "AbortError") {
+        console.error("CSRF token fetch error:", err);
+      }
     });
 
+    // Arkaplanda periyodik yenileme
     timerRef.current = setInterval(() => {
       if (!lastFetchedAt.current || Date.now() - lastFetchedAt.current >= REFRESH_MS) {
         refresh();
       }
     }, 60 * 1000);
 
+    // Sekme yeniden görünür olduğunda gerekiyorsa yenile
     const onVis = () => {
       if (document.visibilityState === "visible") {
         if (!lastFetchedAt.current || Date.now() - lastFetchedAt.current >= REFRESH_MS) {
@@ -74,7 +81,7 @@ export function useCsrfToken() {
 
     return () => {
       ac.abort();
-      clearInterval(timerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [fetchToken, refresh]);
