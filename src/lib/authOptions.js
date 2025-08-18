@@ -1,4 +1,13 @@
 // /src/lib/authOptions.js
+/**
+ * SECURITY NOTES
+ * - Session: JWT strategy; role/status token’a eklenir.
+ * - Credentials authorize: sadece email+şifre doğrular, role ayrımı yapmaz;
+ *   status 'active' ve lock kontrolü vardır. (Merchant ve affiliate ortak doğrulama)
+ * - Google: Sadece affiliate için; merchant için Google girişine izin verilmez.
+ * - Google registration: precheck cookie (google_reg_precheck) zorunlu; yoksa yeni user oluşturulmaz.
+ */
+
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
@@ -9,8 +18,9 @@ import { cookies } from "next/headers";
 
 const isProd = process.env.NODE_ENV === "production";
 
-// Prod’da zorunlu ama build’te throw etmiyoruz (runtime’da olmalı!)
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || (!isProd ? "dev-nextauth-secret" : undefined);
+// Prod’da runtime’da bulunması zorunlu; build anında yoksa yalnızca uyarı veriyoruz.
+const NEXTAUTH_SECRET =
+  process.env.NEXTAUTH_SECRET || (!isProd ? "dev-nextauth-secret" : undefined);
 if (isProd && !process.env.NEXTAUTH_SECRET) {
   console.warn("[auth] NEXTAUTH_SECRET missing at build (ok); must be set at runtime.");
 }
@@ -23,9 +33,6 @@ const HAS_GOOGLE = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT
 if (isProd && !HAS_GOOGLE) {
   console.warn("[auth] Google OAuth envs missing at build (ok); add at runtime if you use Google.");
 }
-
-const MAX_FAILED_ATTEMPTS = 5;
-const ACCOUNT_LOCK_DURATION = 15 * 60 * 1000; // 15 dk
 
 function verifyGooglePrecheckCookie() {
   try {
@@ -44,7 +51,7 @@ export const authOptions = {
   pages: { signIn: "/login" },
 
   providers: [
-    // Credentials her zaman dursun
+    // Credentials: merchant + affiliate ortak doğrulama (RBAC/status kapıları proxy rotalarda)
     CredentialsProvider({
       name: "Credentials",
       credentials: {
@@ -59,40 +66,20 @@ export const authOptions = {
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        // Manuel girişten merchant'ı engelle
-        if (user.role === "merchant") return null;
-
-        // Google-only hesaplara manuel login yok
+        // Google-only hesaplar (password yok) credentials ile giremez
         if (!user.passwordHash) return null;
 
-        // Hesap kilitli mi?
+        // Hesap geçici kilitliyse reddet (lock enforcement)
         if (user.lockUntil && new Date(user.lockUntil) > new Date()) return null;
 
+        // Şifre doğrulama (sayaç güncelleme proxy rotalarda yapılır)
         const ok = await bcrypt.compare(password, user.passwordHash);
-        if (!ok) {
-          const nextFailed = (user.failedAttempts || 0) + 1;
-          await prisma.user.update({
-            where: { id: user.id },
-            data: {
-              failedAttempts: nextFailed,
-              lockUntil:
-                nextFailed >= MAX_FAILED_ATTEMPTS
-                  ? new Date(Date.now() + ACCOUNT_LOCK_DURATION)
-                  : user.lockUntil,
-            },
-          });
-          return null;
-        }
+        if (!ok) return null;
 
-        // Başarılı → sayaç sıfırla
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { failedAttempts: 0, lockUntil: null },
-        });
-
-        // Aktif değilse reddet
+        // Aktif olmayan hesaplar reddedilir; pending uyarısı proxy rotalarda gösterilir
         if (user.status !== "active") return null;
 
+        // Role ayrımı burada yapılmaz; proxy rotalar ( /api/login , /api/merchant_login ) RBAC’ı yönetir
         return {
           id: String(user.id),
           name: user.name,
@@ -103,7 +90,7 @@ export const authOptions = {
       },
     }),
 
-    // Google sadece env varsa eklensin
+    // Google: sadece env varsa eklenir. Merchant için signIn callback’te engellenir.
     ...(HAS_GOOGLE
       ? [
           GoogleProvider({
@@ -124,6 +111,7 @@ export const authOptions = {
         if (user.role) token.role = user.role;
         if (user.status) token.status = user.status;
       }
+      // Eksikse DB’den tamamla
       if (!token.role || !token.status) {
         try {
           const u = await prisma.user.findUnique({
@@ -150,23 +138,29 @@ export const authOptions = {
     },
 
     async signIn({ user, account }) {
-      if (account?.provider !== "google") return true;
-      const email = user?.email?.toLowerCase?.();
-      if (!email) return false;
+      // Merchant için Google login yasak
+      if (account?.provider === "google") {
+        const email = user?.email?.toLowerCase?.();
+        if (!email) return false;
 
-      const existing = await prisma.user.findUnique({ where: { email } });
+        const existing = await prisma.user.findUnique({ where: { email } });
+        if (existing?.role === "merchant") return false;
 
-      if (existing?.role === "merchant") return false;
-
-      if (!existing) {
-        const ok = verifyGooglePrecheckCookie();
-        return !!ok;
+        // Yeni affiliate kaydı: precheck cookie zorunlu
+        if (!existing) {
+          const ok = verifyGooglePrecheckCookie();
+          return !!ok;
+        }
+        // Var olan kullanıcı aktif olmalı
+        return existing.status === "active";
       }
-      return existing.status === "active";
+      // Credentials tarafında ek kural yok; RBAC/status/lock mesajlarını proxy rotalar verir
+      return true;
     },
   },
 
   events: {
+    // Google ile yeni user yaratıldıysa affiliate olarak stabilize et
     async createUser({ user, account }) {
       if (account?.provider === "google" && user?.email) {
         try {

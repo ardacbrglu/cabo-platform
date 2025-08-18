@@ -220,6 +220,7 @@ export const POST = withCsrfProtection(async (req) => {
         phoneNumber,
         role: "merchant",
         status: "pending", // admin aktif etmeden login yok
+        emailVerified: new Date(),
         termsAccepted: true,
         languagePreference: locale, // "tr" veya "en"
         // currencyCode: default TRY DB'den geliyor

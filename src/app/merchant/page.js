@@ -1,12 +1,12 @@
+// app/merchant/page.js
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useLocale } from '@/context/LocaleContext';
-import { signIn } from 'next-auth/react';
-
 import PublicLayout from '@/components/PublicLayout';
+import { useLocale } from '@/context/LocaleContext';
+import { useCsrfToken } from '@/hooks/useCsrfToken';
 
 const translations = {
   en: {
@@ -28,9 +28,6 @@ const translations = {
     forgotSoon: "Password reset coming soon!",
     noAccount: "Not registered yet?",
     registerHere: "Register your business",
-    or: "or",
-    googleBtn: "Sign in with Google",
-    googleSoon: "Google login coming soon!",
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details"
   },
@@ -53,9 +50,6 @@ const translations = {
     forgotSoon: "Şifre sıfırlama yakında!",
     noAccount: "Henüz kaydolmadınız mı?",
     registerHere: "İşletmeni kaydet",
-    or: "veya",
-    googleBtn: "Google ile giriş yap",
-    googleSoon: "Google ile giriş çok yakında!",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi"
   }
@@ -64,20 +58,23 @@ const translations = {
 export default function MerchantLoginPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
+  const { csrfToken } = useCsrfToken();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
-  const [showGoogle, setShowGoogle] = useState(false);
+
+  const t = (key) => translations[locale]?.[key] || key;
+
+  useEffect(() => {
+    if (!ready) return;
+    document.body.style.overflow = showForgot ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [showForgot, ready]);
 
   if (!ready) return null;
-  const t = (key) => translations[locale][key] || key;
-
-  if (typeof window !== "undefined") {
-    document.body.style.overflow = (showForgot || showGoogle) ? "hidden" : "";
-  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -88,20 +85,31 @@ export default function MerchantLoginPage() {
     setError('');
     setLoading(true);
 
-    // NextAuth üzerinden merchant login
-    const res = await signIn('credentials', {
-      redirect: false,
-      email,
-      password,
-      loginType: 'merchant',
-      callbackUrl: '/merchant/dashboard'
-    });
+    try {
+      const res = await fetch('/api/merchant_login', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': csrfToken || '',
+          'accept-language': locale || 'en',
+        },
+        body: JSON.stringify({ email, password }),
+      });
 
-    if (res?.error) {
-      setError(t('errorFill')); // İstersen backend’den gelen mesajı gösterebiliriz
-      setLoading(false);
-    } else {
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.success) {
+        // Backend anlaşılır mesaj döner: pending, invalid vb.
+        setError(data?.message || t('errorFill'));
+        setLoading(false);
+        return;
+      }
+
+      // Başarılı giriş → dashboard
       router.push('/merchant/dashboard');
+    } catch {
+      setError(locale === 'tr' ? 'Giriş başarısız. Lütfen tekrar deneyin.' : 'Login failed. Please try again.');
+      setLoading(false);
     }
   };
 
@@ -224,12 +232,8 @@ export default function MerchantLoginPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1em;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 1rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1em; }
+          .cabo-mobile-bottom-space { margin-bottom: 1rem; }
         }
       `}</style>
     </PublicLayout>
