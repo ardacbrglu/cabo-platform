@@ -1,11 +1,4 @@
-/**
- * File: src/lib/authz.js
- * Purpose: RBAC ve status kapıları için merkezî yardımcılar.
- * Security Notes:
- * - Auth: Bu dosya NextAuth session nesnesi üzerinde çalışır.
- * - Kullanım: route içinde getServerSession(...) çağır, sonra buradaki assert/require fonksiyonlarını kullan.
- */
-
+// src/lib/authz.js
 export class AuthzError extends Error {
   constructor(message, status = 403, code = "FORBIDDEN") {
     super(message);

@@ -7,15 +7,21 @@ import jwt from "jsonwebtoken";
 
 function shapeUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name || "", email: u.email, role: u.role, status: u.status, image: u.image || null };
+  return {
+    id: u.id,
+    name: u.name || "",
+    email: u.email,
+    role: u.role || "affiliate",
+    status: u.status || "active",
+    image: u.image || null,
+  };
 }
 
 export const authOptions = {
   trustHost: true,
-  // TEK SECRET KULLAN: Railway env'de sadece NEXTAUTH_SECRET olsun
   secret: process.env.NEXTAUTH_SECRET,
 
-  // 🔐 JWT stratejisi — stateless, Railway için problemsiz
+  // Stateless session, Railway gibi ortamlarda problemsiz
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
 
   providers: [
@@ -31,7 +37,13 @@ export const authOptions = {
           const user = await prisma.user.findUnique({
             where: { email },
             select: {
-              id: true, email: true, passwordHash: true, role: true, status: true, name: true,
+              id: true,
+              email: true,
+              passwordHash: true,
+              role: true,
+              status: true,
+              name: true,
+              image: true,
               accounts: { select: { provider: true }, take: 1 },
             },
           });
@@ -56,20 +68,20 @@ export const authOptions = {
     }),
 
     ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
-      ? [GoogleProvider({
-          clientId: process.env.GOOGLE_CLIENT_ID,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-          allowDangerousEmailAccountLinking: false,
-        })]
+      ? [
+          GoogleProvider({
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            allowDangerousEmailAccountLinking: false,
+          }),
+        ]
       : []),
   ],
 
-  pages: {
-    signIn: "/login",
-  },
+  pages: { signIn: "/login" },
 
-  // Google precheck: /api/register'ın bıraktığı HttpOnly `google_reg_precheck` zorunlu
   callbacks: {
+    // Google signup için precheck (opsiyonel ama güvenli)
     async signIn({ user, account, req }) {
       if (account?.provider !== "google") return true;
 
@@ -81,13 +93,13 @@ export const authOptions = {
         return existing.status === "active";
       }
 
-      // Yeni kullanıcı açılacaksa precheck cookie kontrolü
+      // Yeni kullanıcı açılacaksa precheck cookie kontrolü (opsiyonel)
       try {
         const cookieHeader = req?.headers?.get?.("cookie") || "";
         const match = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
         const token = match ? decodeURIComponent(match[1]) : null;
         if (!token) return false;
-        jwt.verify(token, process.env.NEXTAUTH_SECRET); // süre + imza
+        jwt.verify(token, process.env.NEXTAUTH_SECRET); // süre + imza kontrolü
         return true;
       } catch {
         return false;
@@ -102,8 +114,6 @@ export const authOptions = {
         token.name = user.name || "";
         token.email = user.email || token.email;
       }
-      // İstersen role/status'u her istekte DB'den tazelemek için şunu aç:
-      // if (token?.email && process.env.AUTH_REFRESH_USER_FROM_DB === "1") { ... }
       return token;
     },
 
@@ -115,6 +125,18 @@ export const authOptions = {
       session.user.name = token.name || session.user.name || "";
       session.user.email = token.email || session.user.email || "";
       return session;
+    },
+
+    // callbackUrl’i koru; loop/bozuk yönlendirme olmasın
+    async redirect({ url, baseUrl }) {
+      try {
+        const u = new URL(url, baseUrl);
+        // sadece aynı origin’e izin ver
+        if (u.origin === baseUrl) return u.toString();
+        return baseUrl;
+      } catch {
+        return baseUrl;
+      }
     },
   },
 

@@ -1,3 +1,4 @@
+// src/lib/apiFetch.js
 /**
  * File: src/lib/apiFetch.js
  * Purpose: Tek HTTP wrapper (Cabo PROD).
@@ -32,10 +33,8 @@ async function getCsrfToken() {
 
 function makeRequestId() {
   try {
-    // modern
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   } catch {}
-  // fallback
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 

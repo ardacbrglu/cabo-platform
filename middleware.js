@@ -1,8 +1,7 @@
+// /middleware.js
 /**
- * File: /middleware.js
  * Purpose: Korumalı sayfalar için oturum/rol kapıları + ortak güvenlik başlıkları.
  */
-
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 

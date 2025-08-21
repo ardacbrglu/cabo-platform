@@ -3,10 +3,11 @@ export const runtime = "nodejs";
 
 /**
  * File: src/app/api/me/route.js
- * Purpose: Oturum bilgisini minimal döndür (status/role dahil), 401 yerine 200 döner.
- * Security Docblock:
- * - GET: Rate limit 60/dk (IP). CSRF gerekmez.
- * - Cevap: Cache-Control: no-store; Vary: Cookie; PII minimal.
+ * Purpose: Oturum bilgisini minimal ve DÜZ döndür (status/role dahil).
+ * Sözleşme:
+ *  - 200 OK + { authenticated:false }  → anon
+ *  - 200 OK + { authenticated:true, id, email, name, role, status } → auth
+ *  - Cache: no-store; Vary: Cookie
  */
 
 import { NextResponse } from "next/server";
@@ -16,15 +17,15 @@ import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 
-function json(data, init = {}) {
-  const res = NextResponse.json(data, init);
+function json(payload, init = {}) {
+  const res = NextResponse.json(payload, init);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
 }
 
 export async function GET(req) {
-  // 60/dk IP RL
+  // 60/dk IP rate-limit
   const ipKey = makeRateLimitKey(req, { scope: "me:ip" });
   const rl = await checkRateLimit({ key: ipKey, limit: 60, windowMs: 60_000 });
   if (!rl.ok) {
@@ -34,20 +35,32 @@ export async function GET(req) {
     );
   }
 
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email?.toLowerCase?.();
-  if (!email) {
-    // 401 YOK → 200 ve authenticated:false
+  try {
+    const session = await getServerSession(authOptions);
+    const email = session?.user?.email?.toLowerCase?.();
+    if (!email) {
+      // 401 yerine 200 + authenticated:false
+      return json({ authenticated: false });
+    }
+
+    const u = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true, name: true, role: true, status: true },
+    });
+
+    if (!u) return json({ authenticated: false });
+
+    // DÜZ yapı:
+    return json({
+      authenticated: true,
+      id: u.id,
+      email: u.email,
+      name: u.name || "",
+      role: u.role || "affiliate",
+      status: u.status || "active",
+    });
+  } catch {
+    // Güvenli fallback: UI patlamasın
     return json({ authenticated: false });
   }
-
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true, email: true, name: true, role: true, status: true },
-  });
-
-  if (!user) return json({ authenticated: false });
-
-  // success:true de ekliyoruz (compat için)
-  return json({ authenticated: true, success: true, user });
 }
