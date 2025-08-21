@@ -2,9 +2,9 @@
 /**
  * File: src/app/login/page.js
  * Purpose: Affiliate login (Credentials + Google).
- * Notlar:
+ * Güvenli Akış:
  * - Hydration güvenliği: mounted + locale.ready beklenir (React #185 fix).
- * - Oturum guard: yalnızca gerçek NextAuth session varsa redirect; cache'e bakıp atlamaz.
+ * - Oturum guard: yalnızca gerçek NextAuth session varsa redirect.
  * - Submit: /api/login (server proxy). apiFetch → credentials:include.
  */
 
@@ -21,7 +21,8 @@ const translations = {
   en: {
     title: "User Login",
     infoTitle: "Start earning by sharing",
-    infoDesc: "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
+    infoDesc:
+      "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
     infoStrong: "Promote products, earn commission, track your stats in real-time.",
     li1: "Each product you claim generates a unique referral link",
     li2: "You get paid when people buy through your link",
@@ -48,7 +49,8 @@ const translations = {
   tr: {
     title: "Kullanıcı Girişi",
     infoTitle: "Paylaş, kazanmaya başla",
-    infoDesc: "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
+    infoDesc:
+      "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
     infoStrong: "Ürünleri tanıt, komisyon kazan, istatistiklerini anlık takip et.",
     li1: "Her ürün için sana özel referans linki oluşur",
     li2: "Birileri senin linkinden alışveriş yaparsa ödeme alırsın",
@@ -84,8 +86,9 @@ export default function LoginPage() {
     return (key) => translations[lang][key] ?? key;
   }, [locale]);
 
-  const [mounted, setMounted] = useState(false);       // HYDRATION SAFE
-  useEffect(() => { setMounted(true); }, []);
+  // Hydration-safe render
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -99,13 +102,16 @@ export default function LoginPage() {
   const firstInputRef = useRef(null);
   const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  // Session guard: sadece GERÇEK session varsa at
+  // Session guard: yalnızca gerçek NextAuth session varsa login'den çıkar
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
+        const r = await fetch("/api/auth/session", {
+          credentials: "include",
+          cache: "no-store",
+        });
         const s = await r.json().catch(() => null);
-        if (s && s.user) {
+        if (s?.user) {
           router.replace(callbackUrl);
           router.refresh();
         }
@@ -118,7 +124,10 @@ export default function LoginPage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
+        const r = await fetch("/api/auth/csrf", {
+          credentials: "include",
+          cache: "no-store",
+        });
         const j = await r.json().catch(() => ({}));
         if (j?.csrfToken) setCsrfToken(j.csrfToken);
       } catch {}
@@ -126,7 +135,7 @@ export default function LoginPage() {
     })();
   }, []);
 
-  // Aktivasyon banner’ı
+  // Aktivasyon bildirimi (query temizliği ile)
   useEffect(() => {
     if (searchParams?.get("activated") === "1") {
       setJustActivated(true);
@@ -136,7 +145,9 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
-  useEffect(() => { firstInputRef.current?.focus(); }, []);
+  useEffect(() => {
+    firstInputRef.current?.focus();
+  }, []);
 
   if (!mounted || !ready) return null;
 
@@ -155,7 +166,10 @@ export default function LoginPage() {
     try {
       const res = await apiFetch("/api/login", {
         method: "POST",
-        headers: { ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}), "accept-language": locale || "en" },
+        headers: {
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+          "accept-language": locale || "en",
+        },
         body: { email: email.trim().toLowerCase(), password },
       });
       const data = await res.json().catch(() => ({}));
@@ -163,11 +177,15 @@ export default function LoginPage() {
       if (res.ok && data?.success) {
         router.replace(callbackUrl);
         router.refresh();
+        // router state takılırsa hard navigate fallback
         setTimeout(() => {
-          if (window.location.pathname === "/login") window.location.assign(callbackUrl);
+          if (window.location.pathname === "/login") {
+            window.location.assign(callbackUrl);
+          }
         }, 60);
         return;
       }
+
       setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
     } catch {
       setError(t("serverError"));
@@ -196,7 +214,10 @@ export default function LoginPage() {
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
             <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -228,7 +249,9 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
+            <label className="sr-only" htmlFor="email">
+              {t("emailPlaceholder")}
+            </label>
             <input
               ref={firstInputRef}
               id="email"
@@ -246,7 +269,9 @@ export default function LoginPage() {
               aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
+            <label className="sr-only" htmlFor="password">
+              {t("passwordPlaceholder")}
+            </label>
             <input
               id="password"
               type="password"
@@ -321,8 +346,12 @@ export default function LoginPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space { margin-top: 1rem !important; }
-          .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
+          .cabo-mobile-top-space {
+            margin-top: 1rem !important;
+          }
+          .cabo-mobile-bottom-space {
+            margin-bottom: 1rem !important;
+          }
         }
       `}</style>
     </PublicLayout>
