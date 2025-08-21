@@ -16,7 +16,7 @@ import { apiFetch } from "@/lib/apiFetch";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
-/* --- Compact progress ring (unchanged visuals) --- */
+/* --- Compact progress ring --- */
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max || 1, 1)) * 100, 100);
   const size = 104, radius = 40, stroke = 6, center = size / 2, circumference = 2 * Math.PI * radius;
@@ -37,12 +37,12 @@ function WalletProgress({ value, max }) {
   );
 }
 
-/* --- Stat Card: slightly larger text, compact padding, fixed height for symmetry --- */
+/* --- Stat Card: daha kompakt yükseklik + daha büyük metin --- */
 function StatCard({ value, label, icon }) {
   return (
-    <div className="h-[92px] bg-[#181818] rounded-xl shadow flex flex-col items-center justify-center gap-1.5 overflow-hidden hover:scale-[1.02] transition">
+    <div className="h-[84px] bg-[#181818] rounded-xl shadow flex flex-col items-center justify-center gap-1.5 overflow-hidden hover:scale-[1.02] transition">
       <span className="text-white">{icon}</span>
-      <span className="text-[16px] font-extrabold font-mono text-white leading-none">{value}</span>
+      <span className="text-[17px] font-extrabold font-mono text-white leading-none">{value}</span>
       <span className="text-[12px] font-mono text-gray-400">{label}</span>
     </div>
   );
@@ -205,11 +205,11 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <main className="flex flex-col items-center w-full max-w-6xl lg:max-w-7xl mx-auto flex-1 justify-center mt-5 gap-7 px-4 overflow-x-hidden">
+      <main className="flex flex-col items-center w-full max-w-6xl lg:max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-4 overflow-x-hidden">
         {/* DESKTOP */}
         {!isMobile ? (
-          <section className="grid w-full grid-cols-12 gap-6">
-            {/* Row 1: Stats (compact height) */}
+          <section className="grid w-full grid-cols-12 gap-7">
+            {/* Row 1: Stats (compact) */}
             <div className="col-span-4">
               <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={18} />} />
             </div>
@@ -220,8 +220,8 @@ export default function Dashboard() {
               <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={18} />} />
             </div>
 
-            {/* Row 2: Live / Leaderboard */}
-            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-4 min-h-[160px] overflow-hidden">
+            {/* Row 2: Live / Leaderboard (min height küçültüldü) */}
+            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-4 min-h-[140px] overflow-hidden">
               <span className="flex items-center gap-2 font-mono font-bold text-[15px]" style={{ color: "#81d742" }}>
                 <BarChart2 className="text-white" size={16} /> {t("liveStats")}
               </span>
@@ -249,7 +249,7 @@ export default function Dashboard() {
               {!lastConversion && !lastClick && <span className="text-gray-500 mt-2 text-[12px]">{t("noRecentActivity")}</span>}
             </div>
 
-            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-4 flex flex-col items-center min-h-[160px] overflow-hidden">
+            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-4 flex flex-col items-center min-h-[140px] overflow-hidden">
               <div className="flex items-center gap-2 mb-2">
                 <Trophy className="text-[#81d742]" size={16} />
                 <span className="font-extrabold text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
@@ -267,8 +267,8 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Row 3: Wallet+Payout / Onboarding */}
-            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5 min-h-[260px] overflow-hidden">
+            {/* Row 3: Wallet+Payout / Onboarding (min height küçültüldü) */}
+            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5 min-h-[240px] overflow-hidden">
               <WalletProgress value={balance} max={minPayout} />
               <div className="text-[17px] font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
               <div className="text-gray-400 text-[12px] font-mono">{t("balance")}</div>
@@ -303,7 +303,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-6 flex flex-col items-center justify-center min-h-[260px] overflow-hidden">
+            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-6 flex flex-col items-center justify-center min-h-[220px] overflow-hidden">
               <div className="font-extrabold mb-2 text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
               <ul className="list-disc pl-4 text-gray-300 text-[12px] flex flex-col gap-1 font-mono">
                 <li>{t("trackStats")}</li>
@@ -335,7 +335,7 @@ export default function Dashboard() {
             </div>
           </section>
         ) : (
-          /* MOBILE — 3 stat card symmetrical grid */
+          /* MOBILE — simetrik 3'lü stat grid + Recent Activity eklendi */
           <>
             <section className="w-full">
               <div className="grid grid-cols-3 gap-3 w-full">
@@ -420,6 +420,24 @@ export default function Dashboard() {
                     <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Recent Activity - MOBİLDE YENİ */}
+            <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full">
+              <div className="font-extrabold mb-2 text-sm font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
+              <div className="flex flex-col gap-2">
+                {recentActions && recentActions.length > 0 ? (
+                  recentActions.map((a, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-[#1b1b1b] last:border-none font-mono">
+                      <span className="font-bold" style={{ color: COLOR_GREEN }}>{a.amount}</span>
+                      <span className="text-gray-300">{a.desc}</span>
+                      <span className="text-gray-400 text-[11px]">{a.date}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-gray-400 text-xs font-mono py-1.5">{t("noActivity")}</div>
+                )}
               </div>
             </div>
 

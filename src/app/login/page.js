@@ -1,14 +1,11 @@
 "use client";
-
 /**
  * File: src/app/login/page.js
- * Purpose: Affiliate login (Credentials + Google). Prod-hardened.
- *
- * Güvenlik / Akış:
- * - İlk yüklemede /api/auth/csrf çağrısı (token + cookie’ler).
- * - Submit: tek kanal /api/login (server proxy). apiFetch -> credentials:include.
- * - Başarılı login: router.replace + router.refresh + hard reload fallback.
- * - Zaten girişli kullanıcı /login'de kalmaz (session guard).
+ * Purpose: Affiliate login (Credentials + Google).
+ * Notlar:
+ * - Hydration güvenliği: mounted + locale.ready beklenir (React #185 fix).
+ * - Oturum guard: yalnızca gerçek NextAuth session varsa redirect; cache'e bakıp atlamaz.
+ * - Submit: /api/login (server proxy). apiFetch → credentials:include.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -24,14 +21,13 @@ const translations = {
   en: {
     title: "User Login",
     infoTitle: "Start earning by sharing",
-    infoDesc:
-      "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
+    infoDesc: "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
     infoStrong: "Promote products, earn commission, track your stats in real-time.",
     li1: "Each product you claim generates a unique referral link",
     li2: "You get paid when people buy through your link",
     li3: "Track your clicks, sales, and earnings from your dashboard",
     li4: "Withdraw your earnings securely",
-    faq: "Learn more about how Cabo helps merchants & affiliate marketers in our ",
+    faq: "Learn more in our ",
     emailPlaceholder: "Email",
     passwordPlaceholder: "Password",
     loginBtn: "Log in",
@@ -52,14 +48,13 @@ const translations = {
   tr: {
     title: "Kullanıcı Girişi",
     infoTitle: "Paylaş, kazanmaya başla",
-    infoDesc:
-      "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
+    infoDesc: "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
     infoStrong: "Ürünleri tanıt, komisyon kazan, istatistiklerini anlık takip et.",
     li1: "Her ürün için sana özel referans linki oluşur",
     li2: "Birileri senin linkinden alışveriş yaparsa ödeme alırsın",
     li3: "Tıklama, satış ve kazançlarını panelden takip edebilirsin",
     li4: "Kazancını güvenle çekebilirsin",
-    faq: "Cabo'nun içerik üreticilere ve affiliate kullanıcılara nasıl yardımcı olduğunu SSS'den öğren.",
+    faq: "Daha fazlası SSS'de: ",
     emailPlaceholder: "E-posta",
     passwordPlaceholder: "Şifre",
     loginBtn: "Giriş Yap",
@@ -89,6 +84,9 @@ export default function LoginPage() {
     return (key) => translations[lang][key] ?? key;
   }, [locale]);
 
+  const [mounted, setMounted] = useState(false);       // HYDRATION SAFE
+  useEffect(() => { setMounted(true); }, []);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -99,18 +97,15 @@ export default function LoginPage() {
   const [csrfReady, setCsrfReady] = useState(false);
 
   const firstInputRef = useRef(null);
-
   const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  // Session guard: zaten girişliyse /login’de bekleme
+  // Session guard: sadece GERÇEK session varsa at
   useEffect(() => {
     (async () => {
       try {
-        const s = await fetch("/api/auth/session", {
-          credentials: "include",
-          cache: "no-store",
-        }).then((r) => r.json()).catch(() => null);
-        if (s?.user) {
+        const r = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
+        const s = await r.json().catch(() => null);
+        if (s && s.user) {
           router.replace(callbackUrl);
           router.refresh();
         }
@@ -119,7 +114,7 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // CSRF preload (NextAuth cookie’leri + token)
+  // CSRF preload (NextAuth)
   useEffect(() => {
     (async () => {
       try {
@@ -141,11 +136,9 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    firstInputRef.current?.focus();
-  }, []);
+  useEffect(() => { firstInputRef.current?.focus(); }, []);
 
-  if (!ready) return null;
+  if (!mounted || !ready) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
@@ -162,29 +155,20 @@ export default function LoginPage() {
     try {
       const res = await apiFetch("/api/login", {
         method: "POST",
-        headers: {
-          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
-          "accept-language": locale || "en",
-        },
+        headers: { ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}), "accept-language": locale || "en" },
         body: { email: email.trim().toLowerCase(), password },
       });
-
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        // Router state bazen /login’da kalabiliyor → üç aşamalı geçiş
         router.replace(callbackUrl);
         router.refresh();
         setTimeout(() => {
-          if (window.location.pathname === "/login") {
-            window.location.assign(callbackUrl);
-          }
-        }, 50);
+          if (window.location.pathname === "/login") window.location.assign(callbackUrl);
+        }, 60);
         return;
       }
-
-      const msg = data?.message;
-      setError(typeof msg === "string" && msg ? msg : t("serverError"));
+      setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
     } catch {
       setError(t("serverError"));
     } finally {
@@ -220,7 +204,7 @@ export default function LoginPage() {
             </ul>
             <div className="text-gray-400 text-sm mb-2">
               {t("faq")}
-              <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+              <Link prefetch={false} href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
                 {locale === "tr" ? "SSS" : "FAQ"}
               </Link>
             </div>
@@ -328,7 +312,7 @@ export default function LoginPage() {
 
           <div className="mt-6 text-gray-400 text-sm">
             {t("noAccount")}{" "}
-            <Link href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+            <Link prefetch={false} href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t("registerHere")}
             </Link>
           </div>
