@@ -1,30 +1,30 @@
 /**
  * File: /middleware.js
  * Purpose: Korumalı sayfalar için oturum ve rol kapıları + ortak güvenlik başlıkları.
- * Security Notes:
- * - Auth: NextAuth middleware (withAuth) üzerinden token okunur.
- * - Status: Yalnızca status === "active" kullanıcılar korumalı alanlara girer.
- * - RBAC: Affiliate alanları ↔ merchant alanları arasında rol tabanlı yönlendirme.
- * - Headers: nosniff, strict-origin-when-cross-origin, COOP/CORP, HSTS (prod).
- * - Request-Id: Yoksa üretip yanıta ekler (korelasyon için).
+ * Security:
+ * - NextAuth token kontrolü (withAuth)
+ * - Kullanıcı status === "active" şartı
+ * - RBAC: affiliate ↔ merchant alanları
+ * - Güvenlik başlıkları + Request-Id
  */
 
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 
+// Korunacak alanlar
+const AFFILIATE_AREAS = ["/dashboard", "/wallet", "/my-links", "/performance"];
+const MERCHANT_AREAS  = ["/merchant"];
+
 export const config = {
   matcher: [
-    "/dashboard/:path*",
-    "/products/:path*",
-    "/mylinks/:path*",
-    "/performance/:path*",
-    "/wallet/:path*",
-    "/merchant/:path*",
+    ...AFFILIATE_AREAS.map((p) => `${p}/:path*`),
+    ...MERCHANT_AREAS.map((p) => `${p}/:path*`),
+    // Ürünler de login isterse aç:
+    // "/products/:path*",
   ],
 };
 
 function applyCommonHeaders(res) {
-  // Güvenlik başlıkları
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
@@ -32,7 +32,6 @@ function applyCommonHeaders(res) {
   if (process.env.NODE_ENV === "production") {
     res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   }
-  // Request-Id (yoksa üret)
   if (!res.headers.get("X-Request-Id")) {
     const rid = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
     res.headers.set("X-Request-Id", rid);
@@ -40,36 +39,38 @@ function applyCommonHeaders(res) {
   return res;
 }
 
+function pathStartsWith(path, prefixes) {
+  return prefixes.some((p) => path === p || path.startsWith(p + "/"));
+}
+
 export default withAuth(
   function middleware(req) {
     const { nextUrl } = req;
-    const token = req.nextauth?.token; // withAuth → getToken
+    const token = req.nextauth?.token; // withAuth → getToken()
 
-    // 1) Oturum yoksa → /login?callbackUrl=...
+    // 1) Oturum zorunlu
     if (!token) {
       const login = new URL("/login", nextUrl.origin);
       login.searchParams.set("callbackUrl", nextUrl.pathname + nextUrl.search);
       return applyCommonHeaders(NextResponse.redirect(login));
     }
 
-    // 2) Kullanıcı aktif mi?
-    const status = token.status;
-    if (status && status !== "active") {
+    // 2) Hesap aktif mi?
+    const status = token.status ?? "active";
+    if (status !== "active") {
       const activate = new URL("/activate", nextUrl.origin);
       activate.searchParams.set("notice", "activate_account");
       return applyCommonHeaders(NextResponse.redirect(activate));
     }
 
-    // 3) Rol kapıları (affiliates vs merchants)
+    // 3) Rol kapıları
+    const role = token.role || "affiliate";
     const path = nextUrl.pathname;
-    const isAffiliateArea = /^\/(dashboard|products|mylinks|performance|wallet)(\/|$)/.test(path);
-    const isMerchantArea = /^\/merchant(\/|$)/.test(path);
-    const role = token.role;
 
-    if (isAffiliateArea && role !== "affiliate") {
+    if (pathStartsWith(path, AFFILIATE_AREAS) && role !== "affiliate") {
       return applyCommonHeaders(NextResponse.redirect(new URL("/merchant/dashboard", nextUrl.origin)));
     }
-    if (isMerchantArea && role !== "merchant") {
+    if (pathStartsWith(path, MERCHANT_AREAS) && role !== "merchant") {
       return applyCommonHeaders(NextResponse.redirect(new URL("/dashboard", nextUrl.origin)));
     }
 
@@ -77,7 +78,7 @@ export default withAuth(
     return applyCommonHeaders(NextResponse.next());
   },
   {
-    // Redirect mantığını biz yönettiğimiz için, yetkilendirmeyi burada hep true bırakıyoruz.
+    // Redirect’leri biz yönetiyoruz; token’ı burada zorlamıyoruz.
     callbacks: { authorized: () => true },
   }
 );
