@@ -1,19 +1,5 @@
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs"; // Prisma için Edge değil
-
-/**
- * File: src/app/api/dashboard/route.js
- * Purpose: Affiliate dashboard özet verileri (güvenli, hızlı, PII-minimal).
- *
- * Security Docblock (Cabo PROD)
- * - Auth: NextAuth session (getServerSession(authOptions)); custom JWT yok.
- * - RBAC: requireRole('affiliate') + requireStatus('active') eşleniği kontrol edilir.
- * - Rate limit: GET 60/dk (IP) + 60/dk (userId). 429'da Retry-After ve retry_after verilir.
- * - Headers: Cache-Control: no-store; Vary: Cookie; global security headers apply.
- * - CSRF: GET için gerekmez. Tüm sorgular Prisma ile yapılır (raw SQL yok).
- * - Audit: Başlıca olaylar audit log'a yazılır (başarı, rate-limit, yetkisizlik).
- * - JSON error contract: { error, request_id, retry_after? }. (UI uyumu için yalnızca success durumda alanlar döner)
- */
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -29,11 +15,9 @@ function withHeaders(res) {
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
 }
-
 function json(data, init = {}) {
   return withHeaders(NextResponse.json(data, init));
 }
-
 function deviceFromUA(userAgent = "") {
   const ua = (userAgent || "").toLowerCase();
   if (ua.includes("android")) return "Android";
@@ -47,18 +31,14 @@ export async function GET(req) {
   const requestId = requireRequestId(req);
 
   try {
-    // 0) IP rate-limit (GET standardı: 60/dk)
+    // 0) IP rate-limit 60/dk
     {
       const ipKey = makeRateLimitKey(req, { scope: "dashboard:ip" });
       const { ok, resetMs } = await checkRateLimit({ key: ipKey, limit: 60, windowMs: 60_000 });
       if (!ok) {
         audit({ evt: "dashboard.ratelimit.ip", requestId });
         return json(
-          {
-            error: "too_many_requests",
-            request_id: requestId,
-            retry_after: Math.ceil(resetMs / 1000),
-          },
+          { error: "too_many_requests", request_id: requestId, retry_after: Math.ceil(resetMs / 1000) },
           { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
         );
       }
@@ -69,21 +49,17 @@ export async function GET(req) {
     const email = session?.user?.email?.toLowerCase?.();
     if (!email) {
       audit({ evt: "dashboard.unauthorized", requestId });
-      return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
+      const res = json({ error: "unauthorized", request_id: requestId }, { status: 401 });
+      res.headers.set("x-debug-reason", "no_session");
+      return res;
     }
 
-    // 2) Kullanıcı (minimal alanlar)
+    // 2) Kullanıcı
     const dbUser = await prisma.user.findUnique({
       where: { email },
       select: {
-        id: true,
-        role: true,
-        status: true,
-        name: true,
-        email: true,
-        iban: true,
-        bankName: true,
-        realUserFullname: true,
+        id: true, role: true, status: true, name: true, email: true,
+        iban: true, bankName: true, realUserFullname: true,
       },
     });
     if (!dbUser) {
@@ -91,18 +67,14 @@ export async function GET(req) {
       return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
     }
 
-    // 2.5) User rate-limit (GET standardı: 60/dk)
+    // 2.5) User rate-limit 60/dk
     {
       const userKey = makeRateLimitKey(req, { scope: "dashboard:user", userId: dbUser.id });
       const { ok, resetMs } = await checkRateLimit({ key: userKey, limit: 60, windowMs: 60_000 });
       if (!ok) {
         audit({ evt: "dashboard.ratelimit.user", userId: dbUser.id, requestId });
         return json(
-          {
-            error: "too_many_requests",
-            request_id: requestId,
-            retry_after: Math.ceil(resetMs / 1000),
-          },
+          { error: "too_many_requests", request_id: requestId, retry_after: Math.ceil(resetMs / 1000) },
           { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
         );
       }
@@ -120,26 +92,25 @@ export async function GET(req) {
 
     const userId = dbUser.id;
 
-    // 4) Platform ayarları (varsayılanla birlikte güvenli okuma)
+    // 4) Platform ayarları
     let minPayout = 100;
     try {
       const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
       if (cfg?.value) {
-        const parsed = Number(cfg.value);
-        if (!Number.isNaN(parsed)) minPayout = parsed;
+        const v = Number(cfg.value);
+        if (!Number.isNaN(v)) minPayout = v;
       }
     } catch {}
-
     let platformCommission = 5;
     try {
       const pcfg = await prisma.platformConfig.findUnique({ where: { keyName: "platform_commission" } });
       if (pcfg?.value) {
-        const parsed = Number(pcfg.value);
-        if (!Number.isNaN(parsed)) platformCommission = parsed;
+        const v = Number(pcfg.value);
+        if (!Number.isNaN(v)) platformCommission = v;
       }
     } catch {}
 
-    // 5) Banka alan kontrolleri (TR IBAN basit kontrol)
+    // 5) Banka alanları
     const iban = dbUser.iban || "";
     const bankName = dbUser.bankName || "";
     const realName = dbUser.realUserFullname || "";
@@ -147,7 +118,7 @@ export async function GET(req) {
     const bankMissing = !bankName || !bankName.trim();
     const realNameMissing = !realName || realName.trim().split(/\s+/).length < 2;
 
-    // 6) Kullanıcı linkleri
+    // 6) Linkler
     const userLinks = await prisma.affiliateLink.findMany({
       where: { userId },
       select: { productId: true, linkId: true },
@@ -155,7 +126,6 @@ export async function GET(req) {
     const productIds = userLinks.map((l) => l.productId);
     const linkIds = userLinks.map((l) => l.linkId);
 
-    // Link yoksa boş ama faydalı bir özet döndür (UI ilk yükleme testi için ideal)
     if (productIds.length === 0) {
       audit({ evt: "dashboard.ok.empty", userId, requestId });
       return json({
@@ -196,7 +166,7 @@ export async function GET(req) {
     const totalEarnings = Number(totalEarnAgg._sum.commissionAffiliate || 0);
     const balance = totalEarnings;
 
-    // 8) Son 5 confirmed satış (sadece bu kullanıcı)
+    // 8) Son satışlar
     const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { productId: { in: productIds }, status: "confirmed", userId },
       orderBy: { convertedAt: "desc" },
@@ -204,7 +174,7 @@ export async function GET(req) {
       include: { merchantProduct: { select: { name: true } } },
     });
 
-    // 9) Leaderboard (aktif affiliates → top-3)
+    // 9) Leaderboard
     const activeAffiliates = await prisma.user.findMany({
       where: { role: "affiliate", status: "active" },
       select: { id: true, name: true },
@@ -223,15 +193,13 @@ export async function GET(req) {
       value: Number(row._sum.commissionAffiliate || 0),
     }));
 
-    // 10) Son 24 saat aktivitesi
+    // 10) Son 24 saat
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: { userId, status: "confirmed", productId: { in: productIds }, convertedAt: { gte: since } },
       orderBy: { convertedAt: "desc" },
       include: { merchantProduct: { select: { name: true } } },
     });
-
     const lastClick = await prisma.click.findFirst({
       where: { linkId: { in: linkIds }, clickedAt: { gte: since } },
       orderBy: { clickedAt: "desc" },
@@ -257,13 +225,7 @@ export async function GET(req) {
         }
       : null;
 
-    // 11) Yanıt (UI ile uyumlu alanlar)
-    audit({
-      evt: "dashboard.ok",
-      userId,
-      totals: { clicks: totalClicks, sales: totalSales, earn: totalEarnings },
-      requestId,
-    });
+    audit({ evt: "dashboard.ok", userId, totals: { clicks: totalClicks, sales: totalSales, earn: totalEarnings }, requestId });
 
     return json({
       totalClicks,
@@ -290,7 +252,6 @@ export async function GET(req) {
       lastClick: lastClickData,
     });
   } catch (err) {
-    // Üretimde stack sızdırmayalım
     audit({ evt: "dashboard.error", err: String(err?.message || err), requestId });
     return json({ error: "dashboard_fetch_error", request_id: requestId }, { status: 500 });
   }
