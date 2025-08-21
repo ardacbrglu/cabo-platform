@@ -1,15 +1,26 @@
-// app/login/page.js
 "use client";
+
+/**
+ * File: src/app/login/page.js
+ * Purpose: Affiliate kullanıcı girişi (manual + Google). Backend mesajları doğrudan gösterilir.
+ *
+ * Security Docblock (Cabo PROD Standardı)
+ * - Auth: Tek oturum NextAuth (Credentials + Google).
+ * - CSRF: İlk yüklemede /api/auth/csrf ile token al; /api/login POST’unda X-CSRF-Token gönder.
+ * - Frontend: Tüm istekler tek apiFetch wrapper’ı ile (credentials:include, X-Requested-With, X-Request-Id).
+ * - Backend: Ratelimit (login 5/dk + backoff), status/role kapıları, brute-force sayaçları, generic error mesajları.
+ * - Headers: Global CSP/HSTS/nosniff/strict-origin-when-cross-origin; Origin/Referer eşleşmesi.
+ * - Validation: Backend Zod + sanitize; istemci tarafında e-posta format kontrolü ve trim.
+ */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
-
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { apiFetch } from "@/lib/apiFetch";
 
 const translations = {
   en: {
@@ -38,6 +49,7 @@ const translations = {
     serverError: "Server error. Please try again later.",
     setPassword: "You signed up with Google. Please log in with your Google account.",
     activatedBanner: "Your account has been activated! You can now log in.",
+    csrfWait: "Preparing a secure session… Please wait a moment.",
   },
   tr: {
     title: "Kullanıcı Girişi",
@@ -65,14 +77,14 @@ const translations = {
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
     setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap.",
     activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
+    csrfWait: "Güvenli oturum hazırlanıyor… Lütfen bekleyin.",
   },
 };
 
-export default function Page() {
+export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
-  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const t = useMemo(() => {
     const lang = locale === "tr" ? "tr" : "en";
@@ -84,11 +96,20 @@ export default function Page() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
+  const [csrfReady, setCsrfReady] = useState(false);
   const firstInputRef = useRef(null);
 
-  // NextAuth CSRF çerezini hazırla (cookie bootstrap)
+  // NextAuth CSRF/callback çerezlerini ve token'ı önden al (proxy/CSR akışı için faydalı)
   useEffect(() => {
-    fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/csrf", { credentials: "include" });
+        const j = await r.json().catch(() => ({}));
+        if (j?.csrfToken) setCsrfToken(j.csrfToken);
+      } catch {}
+      setCsrfReady(true);
+    })();
   }, []);
 
   // Aktivasyon sonrası banner
@@ -105,73 +126,43 @@ export default function Page() {
     firstInputRef.current?.focus();
   }, []);
 
-  if (!ready || !csrfReady) return null;
+  if (!ready) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  async function tryLoginOnce() {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-csrf-token": csrfToken || "",
-        "accept-language": locale || "en",
-      },
-      body: JSON.stringify({
-        email: email.trim().toLowerCase(),
-        password,
-      }),
-      credentials: "include",
-    });
-
-    let data = {};
-    try { data = await res.json(); } catch {}
-    return { res, data };
-  }
-
-  const handleSubmit = async (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
     if (loading) return;
 
-    if (!email || !password) {
-      setError(t("errorFill"));
-      return;
-    }
-    if (!validateEmail(email)) {
-      setError(t("errorEmailFormat"));
-      return;
-    }
+    if (!email || !password) return setError(t("errorFill"));
+    if (!validateEmail(email)) return setError(t("errorEmailFormat"));
+    if (!csrfReady) return setError(t("csrfWait"));
 
     setError("");
     setLoading(true);
     try {
-      // 1. deneme
-      let { res, data } = await tryLoginOnce();
-
-      // DEBUG_AUTH=1 ise backend x-debug-reason başlığı bırakır — otomatik kurtarma
-      const debug = res.headers?.get?.("x-debug-reason") || "";
-      const needCsrfBootstrap =
-        debug.includes("no_nextauth_csrf_cookie") ||
-        debug.includes("csrf_cookie_parse_fail") ||
-        debug.includes("cb_fail:302");
-
-      if (!res.ok && needCsrfBootstrap) {
-        try { await fetch("/api/auth/csrf", { credentials: "include" }); } catch {}
-        ({ res, data } = await tryLoginOnce());
-      }
+      const res = await apiFetch("/api/login", {
+        method: "POST",
+        headers: {
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+          "accept-language": locale || "en",
+        },
+        body: { email: email.trim().toLowerCase(), password },
+      });
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        const go = searchParams?.get("from") || "/dashboard";
-        router.replace(go);
+        router.replace(callbackUrl);
+        return;
+      }
+
+      const msg = data?.message;
+      if (typeof msg === "string" && msg.length > 0) {
+        // Backend mesajlarını doğrudan yansıt (google-only/inactive/locked/invalid vb.)
+        setError(msg);
       } else {
-        const msg = data?.message;
-        if (msg === translations.en.google || msg === translations.tr.google) {
-          setError(t("setPassword")); // Google-only hesap, manuel giriş denemesi
-        } else if (typeof msg === "string" && msg.length > 0) {
-          setError(msg); // merchant/inactive/locked gibi backend mesajlarını direkt göster
-        } else {
-          setError(t("serverError"));
-        }
+        setError(t("serverError"));
       }
     } catch {
       setError(t("serverError"));
@@ -180,13 +171,9 @@ export default function Page() {
     }
   };
 
-  // Google login — SADECE giriş (yeni kayıt Register sayfasından yapılır)
-  const handleGoogleLogin = async () => {
-    if (loading) return;
-    setLoading(true);
+  const onGoogle = async () => {
     setError("");
-
-    const callbackUrl = searchParams?.get("from") || "/dashboard";
+    setLoading(true);
     try {
       await signIn("google", { callbackUrl });
     } catch {
@@ -201,13 +188,9 @@ export default function Page() {
         {/* INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t("infoTitle")}
-            </h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t("infoStrong")}
-            </p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
             <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
@@ -233,7 +216,13 @@ export default function Page() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" noValidate>
+          {!csrfReady && (
+            <div className="text-gray-400 text-sm text-center mb-3" role="status" aria-live="polite">
+              {t("csrfWait")}
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
             <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
             <input
               ref={firstInputRef}
@@ -245,9 +234,10 @@ export default function Page() {
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
               autoComplete="username"
+              autoCapitalize="off"
+              spellCheck="false"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
-              spellCheck="false"
               aria-invalid={!!error && !email}
             />
 
@@ -260,9 +250,10 @@ export default function Page() {
               onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
               autoComplete="current-password"
+              autoCapitalize="off"
+              spellCheck="false"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
-              spellCheck="false"
               aria-invalid={!!error && !password}
             />
 
@@ -284,9 +275,10 @@ export default function Page() {
 
             <button
               type="submit"
-              disabled={loading}
-              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
+              disabled={loading || !csrfReady}
+              aria-disabled={loading || !csrfReady}
               aria-busy={loading ? "true" : "false"}
+              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
             >
               {loading ? t("loggingIn") : t("loginBtn")}
             </button>
@@ -299,9 +291,11 @@ export default function Page() {
 
             <button
               type="button"
-              onClick={handleGoogleLogin}
-              disabled={loading}
-              className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full"
+              onClick={onGoogle}
+              disabled={loading || !csrfReady}
+              aria-disabled={loading || !csrfReady}
+              aria-busy={loading ? "true" : "false"}
+              className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full disabled:opacity-60"
               aria-label={t("googleBtn")}
             >
               <span className="w-6 h-6 mr-1 inline-block align-middle" aria-hidden="true">

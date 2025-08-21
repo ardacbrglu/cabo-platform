@@ -1,25 +1,31 @@
-// /components/ProfileDropdown.jsx
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { useUser } from '@/context/UserContext';
-import Link from 'next/link';
-import { useRouter } from "next/navigation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+/**
+ * File: src/components/ProfileDropdown.jsx
+ * Purpose: Profil menüsü + bildirim kısayolları + güvenli çıkış.
+ * Security Docblock:
+ * - Logout: /api/logout GET + 302 redirect. CSRF gerekmez. En güvenli yöntem
+ *   tam sayfa yönlendirme (window.location.assign) — Set-Cookie ve redirect zinciri
+ *   tarayıcı tarafından işletilir.
+ * - Ek bir client-side cookie temizliğine gerek yoktur; NextAuth çerezleri
+ *   HttpOnly olduğundan JS ile silinmez. Sunucu tarafı zaten siliyor.
+ */
 
-import { User2, LogOut, Bell, Settings, Headset } from 'lucide-react';
+import { useState, useRef, useEffect } from "react";
+import { useUser } from "@/context/UserContext";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { User2, LogOut, Bell, Settings, Headset } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
-import { useNotifications } from '@/hooks/useNotifications';
-import NotificationBadge from './NotificationBadge';
+import { useNotifications } from "@/hooks/useNotifications";
 
 export default function ProfileDropdown({ alwaysVisible = false }) {
   const [open, setOpen] = useState(false);
-  const { user, setUser } = useUser();
+  const { user } = useUser();
   const router = useRouter();
-  const { csrfToken } = useCsrfToken();        // ✅ doğru kullanım
   const dropdownRef = useRef();
-  const { t } = useTranslation();              // ✅ doğru kullanım (destructure)
+  const { t } = useTranslation();
   const { ready } = useLocale();
   const { unreadCount } = useNotifications();
 
@@ -38,24 +44,15 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
     };
   }, [open]);
 
-  async function handleLogout(e) {
+  function handleLogout(e) {
     e.preventDefault();
-    try {
-      await fetch('/api/logout', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'x-csrf-token': csrfToken || ''
-        }
-      });
-    } catch {
-      // no-op; yine de local cookie’yi temizleyip yönlendireceğiz
+    // En güvenli akış: tarayıcıyı API'ye götür → Set-Cookie temizlensin → 302 ile /login
+    if (typeof window !== "undefined") {
+      window.location.assign("/api/logout");
+    } else {
+      // SSR durumunda bir fallback; pratikte client'ta çalışır
+      router.push("/api/logout");
     }
-    // Legacy cookie temizliği
-    document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
-    document.cookie = "cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=" + window.location.hostname + ";";
-    setUser && setUser(null);
-    router.push('/login');
   }
 
   if (!ready) {
@@ -79,10 +76,10 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
         style={{
           minHeight: 38,
           fontWeight: 700,
-          display: 'inline-flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: '0.5rem',
+          display: "inline-flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: "0.5rem",
           boxShadow: "0 2px 7px rgba(0,0,0,0.09)",
         }}
         onClick={() => setOpen(!open)}
@@ -95,7 +92,11 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
         <span className="relative">
           <User2 size={20} />
           {/* Profil ikonunun sağ üstünde badge */}
-          <NotificationBadge show={unreadCount > 0} size={10} />
+          <span
+            aria-hidden
+            className={`absolute -top-1 -right-1 inline-block rounded-full ${unreadCount > 0 ? "bg-[#81d742]" : "bg-transparent"}`}
+            style={{ width: 10, height: 10 }}
+          />
         </span>
         <span className="truncate max-w-[90px]">{user?.name || ""}</span>
         {/* Chevron */}
@@ -118,22 +119,24 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
             boxShadow: "0 12px 36px rgba(0,0,0,0.22)",
             background: "#181818",
             border: "1px solid #232323",
-            zIndex: 211
+            zIndex: 211,
           }}
           className="animate-fadeIn"
-          onClick={e => e.stopPropagation()}
-          onTouchStart={e => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
         >
-          {/* Bildirimler linki */}
           <Link
             href="/notifications"
             className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-white hover:text-[#81d742] transition relative"
-            style={{ position: "relative" }}
             onClick={() => setOpen(false)}
           >
             <span className="relative flex items-center">
               <Bell size={16} />
-              <NotificationBadge show={unreadCount > 0} size={9} />
+              <span
+                aria-hidden
+                className={`absolute -top-1 -right-1 inline-block rounded-full ${unreadCount > 0 ? "bg-[#81d742]" : "bg-transparent"}`}
+                style={{ width: 9, height: 9 }}
+              />
             </span>
             {t("notifications")}
           </Link>

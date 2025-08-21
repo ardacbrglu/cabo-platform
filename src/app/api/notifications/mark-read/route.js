@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { auth } from "@/lib/authz";
 import prisma from "@/lib/prisma";
 import { withCsrfProtection } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";

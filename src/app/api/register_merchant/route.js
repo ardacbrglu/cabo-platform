@@ -1,4 +1,3 @@
-// app/api/register_merchant/route.js
 export const dynamic = "force-dynamic";
 
 import prisma from "@/lib/prisma";
@@ -8,18 +7,30 @@ import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+// ✅ yeni: güvenlik & log yardımcıları
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
+import { audit } from "@/lib/logger";
+// ✅ ortak captcha doğrulama
+import { verifyRecaptchaFromRequest } from "@/lib/captcha";
+
 /**
  * SECURITY NOTES
- * - CSRF: withCsrfProtection wrapper kullanılıyor.
+ * - CSRF: withCsrfProtection wrapper.
+ * - Origin/Referer eşleşmesi, X-Requested-With ve X-Request-Id zorunlu.
  * - Rate limit: IP bazlı 5/dk (register_merchant scope).
- * - Captcha: Google reCAPTCHA siteverify (header/body'den kabul).
+ * - Captcha: Google reCAPTCHA siteverify (lib/captcha).
  * - Validation: Zod (strict), trim/normalize, whitelist.
  * - Role: client’tan rol alınmaz; server "merchant" yazar.
  * - Status: yeni merchant "pending" (admin onayı gerekir).
- * - Headers: Duyarlı endpoint → Cache-Control: no-store.
+ * - Yanıt başlıkları: applyApiSecurityHeaders + Cache-Control: no-store.
  */
 
-const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY;
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
+  res.headers.set("Cache-Control", "no-store");
+  return applyApiSecurityHeaders(res);
+}
 
 // i18n mesajları
 const messages = {
@@ -58,23 +69,10 @@ const messages = {
 // Zod şeması (merchant register)
 const RegisterSchema = z
   .object({
-    name: z
-      .string()
-      .min(3)
-      .max(40)
-      // Unicode harfler (TR dahil) + rakam + boşluk + altçizgi
-      .regex(/^[\p{L}\p{N}_ ]+$/u),
-    companyName: z
-      .string()
-      .min(2)
-      .max(150)
-      // Firma adlarında yaygın: harf/rakam/boşluk/_ . , & ' ( ) - karakterleri
-      .regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
+    name: z.string().min(3).max(40).regex(/^[\p{L}\p{N}_ ]+$/u),
+    companyName: z.string().min(2).max(150).regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
     email: z.string().email(),
-    password: z
-      .string()
-      .min(8)
-      .refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
+    password: z.string().min(8).refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
     phoneNumber: z.string().regex(/^\+?\d{10,15}$/),
     termsAccepted: z.literal(true),
   })
@@ -82,54 +80,39 @@ const RegisterSchema = z
 
 function localeFrom(req) {
   const lang = req.headers.get("accept-language")?.split(",")[0] || "en";
-  return lang && lang.toLowerCase().startsWith("tr") ? "tr" : "en";
+  return lang.toLowerCase().startsWith("tr") ? "tr" : "en";
 }
-
-function normalizeSpaces(s) {
-  return s.replace(/\s+/g, " ").trim();
-}
-
-async function verifyRecaptcha(req, token) {
-  if (!token || !RECAPTCHA_SECRET_KEY) return false;
-  try {
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      req.headers.get("x-real-ip") ||
-      undefined;
-
-    const params = new URLSearchParams();
-    params.set("secret", RECAPTCHA_SECRET_KEY);
-    params.set("response", token);
-    if (ip) params.set("remoteip", ip);
-
-    const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-    const json = await res.json().catch(() => ({}));
-    return !!json?.success;
-  } catch {
-    return false;
-  }
-}
+const normalizeSpaces = (s) => s.replace(/\s+/g, " ").trim();
 
 export const POST = withCsrfProtection(async (req) => {
   const locale = localeFrom(req);
   const msg = messages[locale];
 
+  // ✅ köken & ajax & request-id zorunlu
+  try {
+    requireOrigin(req);
+    requireAjax(req);
+  } catch (e) {
+    audit({ type: "merchant_register", stage: "preflight", ok: false, code: e.code || "PRECHECK", status: e.status || 400 });
+    return json({ success: false, message: msg.fail }, { status: e.status || 400 });
+  }
+  let requestId = "unknown";
+  try {
+    requestId = requireRequestId(req);
+  } catch (e) {
+    audit({ type: "merchant_register", stage: "preflight", ok: false, code: e.code || "NO_REQ_ID", status: e.status || 400 });
+    return json({ success: false, message: msg.fail }, { status: e.status || 400 });
+  }
+
   // Rate limit (IP bazlı 5/dk)
   const rlKey = makeRateLimitKey(req, { scope: "register_merchant" });
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
   if (!ok) {
-    return new NextResponse(JSON.stringify({ success: false, message: msg.ratelimit }), {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(Math.ceil((resetMs || 0) / 1000)),
-        "Cache-Control": "no-store",
-      },
-    });
+    audit({ type: "merchant_register", stage: "ratelimit", ok: false, requestId });
+    return json(
+      { success: false, message: msg.ratelimit },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
+    );
   }
 
   // Body parse
@@ -137,24 +120,15 @@ export const POST = withCsrfProtection(async (req) => {
   try {
     raw = await req.json();
   } catch {
-    return new NextResponse(JSON.stringify({ success: false, message: msg.required }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
+    audit({ type: "merchant_register", stage: "parse", ok: false, requestId });
+    return json({ success: false, message: msg.required }, { status: 400 });
   }
 
-  // Captcha token: header veya body.captcha
-  const captchaToken =
-    req.headers.get("x-recaptcha-token") ||
-    req.headers.get("x-recaptcha") ||
-    raw?.captcha ||
-    null;
-  const captchaOk = await verifyRecaptcha(req, captchaToken);
+  // ✅ captcha (ortak lib)
+  const captchaOk = await verifyRecaptchaFromRequest(req, raw?.captcha || null);
   if (!captchaOk) {
-    return new NextResponse(JSON.stringify({ success: false, message: msg.captcha }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
+    audit({ type: "merchant_register", stage: "captcha", ok: false, requestId });
+    return json({ success: false, message: msg.captcha }, { status: 400 });
   }
 
   // Clean + Validate
@@ -171,38 +145,24 @@ export const POST = withCsrfProtection(async (req) => {
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path?.[0];
     const fieldMsg =
-      field === "email"
-        ? msg.email
-        : field === "name"
-        ? msg.username
-        : field === "companyName"
-        ? msg.company
-        : field === "password"
-        ? msg.password
-        : field === "phoneNumber"
-        ? msg.phone
-        : field === "termsAccepted"
-        ? msg.terms
-        : msg.required;
+      field === "email" ? msg.email :
+      field === "name" ? msg.username :
+      field === "companyName" ? msg.company :
+      field === "password" ? msg.password :
+      field === "phoneNumber" ? msg.phone :
+      field === "termsAccepted" ? msg.terms : msg.required;
 
-    return new NextResponse(JSON.stringify({ success: false, message: fieldMsg }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
+    audit({ type: "merchant_register", stage: "validate", ok: false, field, requestId });
+    return json({ success: false, message: fieldMsg }, { status: 400 });
   }
 
   const { name, companyName, email, password, phoneNumber } = parsed.data;
 
   // Email tekilliği
-  const existing = await prisma.user.findUnique({
-    where: { email }, // email UNIQUE
-    select: { id: true },
-  });
+  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (existing) {
-    return new NextResponse(JSON.stringify({ success: false, message: msg.uniq }), {
-      status: 409,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
+    audit({ type: "merchant_register", stage: "conflict", ok: false, requestId });
+    return json({ success: false, message: msg.uniq }, { status: 409 });
   }
 
   // Hash
@@ -212,9 +172,9 @@ export const POST = withCsrfProtection(async (req) => {
   try {
     await prisma.user.create({
       data: {
-        name, // gösterim adı
-        realUserFullname: name, // ad-soyad kayıt
-        companyName, // ⬅️ yeni alan (schema'da String?)
+        name,
+        realUserFullname: name,
+        companyName,
         email,
         passwordHash,
         phoneNumber,
@@ -222,20 +182,14 @@ export const POST = withCsrfProtection(async (req) => {
         status: "pending", // admin aktif etmeden login yok
         emailVerified: new Date(),
         termsAccepted: true,
-        languagePreference: locale, // "tr" veya "en"
-        // currencyCode: default TRY DB'den geliyor
+        languagePreference: locale,
       },
     });
-  } catch (e) {
-    // UNIQUE veya başka DB hatası durumunda genel yanıt
-    return new NextResponse(JSON.stringify({ success: false, message: msg.fail }), {
-      status: 500,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
-  }
 
-  return new NextResponse(JSON.stringify({ success: true, message: msg.success }), {
-    status: 200,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-  });
+    audit({ type: "merchant_register", stage: "created", ok: true, requestId });
+    return json({ success: true, message: msg.success }, { status: 200 });
+  } catch (e) {
+    audit({ type: "merchant_register", stage: "db_error", ok: false, requestId, code: e?.code || "DB_ERR" });
+    return json({ success: false, message: msg.fail }, { status: 500 });
+  }
 });

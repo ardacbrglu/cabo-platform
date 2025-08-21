@@ -1,13 +1,12 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
-// import { signIn } from "next-auth/react"; // Google tamamen devre dışı
 
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
@@ -44,8 +43,7 @@ const translations = {
     mustAccept: "You must accept the Terms and Privacy Policy.",
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details",
-    or: "or",
-    google: "Register / Login with Google"
+    csrfWait: "Preparing a secure session… Please try again.",
   },
   tr: {
     title: "İşletmeni Kaydet",
@@ -82,14 +80,13 @@ const translations = {
     mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi",
-    or: "veya",
-    google: "Google ile Kaydol / Giriş Yap"
+    csrfWait: "Güvenli oturum hazırlanıyor… Lütfen tekrar deneyin.",
   }
 };
 
 export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
-  const { csrfToken } = useCsrfToken();
+  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const [form, setForm] = useState({
     companyName: "",
@@ -105,12 +102,15 @@ export default function MerchantRegisterPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
 
+  // NextAuth CSRF çerezlerini önden bırak (edge-case azaltır)
+  useEffect(() => {
+    fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
+  }, []);
+
   if (!ready) return null;
   const t = (key) => translations[locale][key] || key;
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   // backend Zod ile hizalı basic regexler
   const reName = /^[\p{L}\p{N}_ ]+$/u;
@@ -122,48 +122,23 @@ export default function MerchantRegisterPage() {
     setError("");
     setSuccess(false);
 
-    if (!terms) {
-      setError(t("mustAccept"));
-      setLoading(false);
-      return;
-    }
-    if (!form.companyName || !form.name || !form.email || !form.password || !form.phone) {
-      setError(t("required"));
-      setLoading(false);
-      return;
-    }
-    if (form.companyName.length < 2 || form.companyName.length > 150 || !reCompany.test(form.companyName.trim())) {
-      setError(t("invalidCompany"));
-      setLoading(false);
-      return;
-    }
-    if (form.name.length < 3 || form.name.length > 40 || !reName.test(form.name.trim())) {
-      setError(t("invalidName"));
-      setLoading(false);
-      return;
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-      setError(t("invalidEmail"));
-      setLoading(false);
-      return;
-    }
-    if (form.password.length < 8 || !/\d/.test(form.password) || !/[a-zA-Z]/.test(form.password)) {
-      setError(t("invalidPassword"));
-      setLoading(false);
-      return;
-    }
-    if (!/^\d{10,15}$/.test(form.phone)) {
-      setError(t("invalidPhone"));
-      setLoading(false);
-      return;
-    }
-    if (!captcha) {
-      setError(locale === "tr" ? "Lütfen robot olmadığınızı doğrulayın." : "Please complete the captcha.");
-      setLoading(false);
-      return;
-    }
+    if (!csrfReady || !csrfToken) { setError(t("csrfWait")); setLoading(false); return; }
+    if (!terms) { setError(t("mustAccept")); setLoading(false); return; }
+    if (!form.companyName || !form.name || !form.email || !form.password || !form.phone) { setError(t("required")); setLoading(false); return; }
+    if (form.companyName.length < 2 || form.companyName.length > 150 || !reCompany.test(form.companyName.trim())) { setError(t("invalidCompany")); setLoading(false); return; }
+    if (form.name.length < 3 || form.name.length > 40 || !reName.test(form.name.trim())) { setError(t("invalidName")); setLoading(false); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError(t("invalidEmail")); setLoading(false); return; }
+    if (form.password.length < 8 || !/\d/.test(form.password) || !/[a-zA-Z]/.test(form.password)) { setError(t("invalidPassword")); setLoading(false); return; }
+    if (!/^\d{10,15}$/.test(form.phone)) { setError(t("invalidPhone")); setLoading(false); return; }
+    if (!captcha) { setError(locale === "tr" ? "Lütfen robot olmadığınızı doğrulayın." : "Please complete the captcha."); setLoading(false); return; }
 
     const fullPhone = `${form.countryCode}${form.phone}`.trim();
+
+    // 🔒 benzersiz request-id
+    const requestId =
+      (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     const res = await fetch("/api/register_merchant", {
       method: "POST",
@@ -171,16 +146,19 @@ export default function MerchantRegisterPage() {
         "Content-Type": "application/json",
         "x-csrf-token": csrfToken || "",
         "accept-language": locale || "en",
+        "x-requested-with": "XMLHttpRequest",
+        "x-request-id": requestId,
       },
       body: JSON.stringify({
         companyName: form.companyName,
         name: form.name,
-        email: form.email,
+        email: form.email.trim().toLowerCase(),
         password: form.password,
         phoneNumber: fullPhone,
         termsAccepted: terms,
         captcha,
       }),
+      credentials: "include",
     });
 
     const data = await res.json().catch(() => ({}));
@@ -188,9 +166,7 @@ export default function MerchantRegisterPage() {
       setError(data?.message || t("failed"));
     } else {
       setSuccess(true);
-      setTimeout(() => {
-        window.location.href = "/merchant";
-      }, 2500);
+      setTimeout(() => { window.location.href = "/merchant"; }, 2500);
     }
     setLoading(false);
   };
@@ -201,19 +177,10 @@ export default function MerchantRegisterPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t("infoTitle")}
-            </h2>
-            <p className="text-gray-300 text-lg mb-4">
-              {t("infoDesc")}
-            </p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t("infoStrong")}
-            </p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
+            <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -227,10 +194,7 @@ export default function MerchantRegisterPage() {
             </div>
             <div className="text-[#81d742] mt-4 text-base font-semibold">
               {t("howWorksQ")}{" "}
-              <Link
-                href="/merchant/info"
-                className="underline hover:text-[#b3ffb3] transition"
-              >
+              <Link href="/merchant/info" className="underline hover:text-[#b3ffb3] transition">
                 {t("howWorksLink")}
               </Link>
             </div>
@@ -239,9 +203,8 @@ export default function MerchantRegisterPage() {
 
         {/* REGISTER FORM */}
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
-            {t("title")}
-          </h3>
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
+
           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" autoComplete="off">
             <input
               type="text"
@@ -339,13 +302,11 @@ export default function MerchantRegisterPage() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !csrfReady}
               className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
             >
               {loading ? <Loader2 className="animate-spin mx-auto" size={18} /> : t("submit")}
             </button>
-
-            {/* Google seçenekleri kaldırıldı */}
           </form>
         </div>
       </div>
@@ -354,7 +315,6 @@ export default function MerchantRegisterPage() {
         @media (max-width: 768px) {
           .cabo-mobile-top-space { margin-top: 1rem; }
           .cabo-mobile-bottom-space { margin-bottom: 3rem; }
-          .cabo-mobile-form-bottom { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>

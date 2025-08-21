@@ -1,8 +1,10 @@
-'use client';
-import { useState, useEffect } from "react";
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
-import useCsrfToken from "@/hooks/useCsrfToken"; // ⬅️ default import
+import { apiFetch } from "@/lib/apiFetch";
+import { useCsrfToken } from "@/hooks/useCsrfToken"; // ✅ named import
 
 const t = {
   en: {
@@ -40,7 +42,7 @@ const t = {
     invalid: "Token geçersiz veya süresi dolmuş.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
     success: "Şifre başarıyla değiştirildi. Yönlendiriliyorsunuz...",
-  }
+  },
 };
 
 export default function PasswordResetContent() {
@@ -52,7 +54,7 @@ export default function PasswordResetContent() {
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const csrfToken = useCsrfToken();
+  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
@@ -70,14 +72,10 @@ export default function PasswordResetContent() {
     e.preventDefault();
     setError(""); setSuccess(""); setLoading(true);
     try {
-      const res = await fetch("/api/password_reset/request", {
+      const res = await apiFetch("/api/password_reset/request", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",
-          "accept-language": locale,
-        },
-        body: JSON.stringify({ email }),
+        headers: { "accept-language": locale, ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) },
+        body: { email },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) setSuccess(trans.emailSent);
@@ -99,19 +97,15 @@ export default function PasswordResetContent() {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/password_reset/confirm", {
+      const res = await apiFetch("/api/password_reset/confirm", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",
-          "accept-language": locale,
-        },
-        body: JSON.stringify({ token, password: pw }),
+        headers: { "accept-language": locale, ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) },
+        body: { token, password: pw },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         setSuccess(trans.success);
-        setTimeout(() => router.replace("/login"), 2000);
+        setTimeout(() => router.replace("/login"), 1800);
       } else {
         setError(data.message || trans.server);
       }
@@ -129,7 +123,7 @@ export default function PasswordResetContent() {
           {step === "request" ? (
             <>
               <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.forgot}</h2>
-              <form onSubmit={handleRequest} className="flex flex-col gap-4">
+              <form onSubmit={handleRequest} className="flex flex-col gap-4" noValidate>
                 <input
                   type="email"
                   placeholder={trans.enterEmail}
@@ -142,7 +136,7 @@ export default function PasswordResetContent() {
                 {success && <div className="text-green-400 text-center">{success}</div>}
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !csrfReady}
                   className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
                 >
                   {loading ? trans.sending : trans.send}
@@ -152,7 +146,7 @@ export default function PasswordResetContent() {
           ) : (
             <>
               <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.setNew}</h2>
-              <form onSubmit={handleConfirm} className="flex flex-col gap-4">
+              <form onSubmit={handleConfirm} className="flex flex-col gap-4" noValidate>
                 <input
                   type="password"
                   placeholder={trans.newPw}
@@ -173,7 +167,7 @@ export default function PasswordResetContent() {
                 {success && <div className="text-green-400 text-center">{success}</div>}
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !csrfReady}
                   className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
                 >
                   {loading ? trans.saving : trans.save}

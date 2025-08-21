@@ -1,11 +1,23 @@
 "use client";
 
+/**
+ * File: src/app/dashboard/page.js
+ * Purpose: Affiliate kullanıcı dashboard'u (özet, canlı aktivite, cüzdan, leaderboard).
+ *
+ * Security Docblock (Cabo PROD)
+ * - Frontend tüm istekler: tek apiFetch wrapper (credentials:include, X-Requested-With, X-Request-Id).
+ * - GET /api/dashboard: CSRF gereksiz; 401/403 → login'e yönlendirilir.
+ * - Rate-limit 429: retry_after'a göre polling backoff uygulanır.
+ * - PII minimal: yalnız gerekli alanlar UI'da gösterilir.
+ */
+
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
+import { apiFetch } from "@/lib/apiFetch";
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
@@ -96,29 +108,45 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Dashboard verileri (polling, hatasız toparlama)
+  // Dashboard verileri (polling + 429 backoff)
   useEffect(() => {
     if (!isReady || !isAuth) return;
 
-    let interval;
+    let interval = null;
     let alive = true;
+
+    const schedule = (ms) => {
+      if (!alive) return;
+      if (interval) clearInterval(interval);
+      interval = setInterval(fetchStats, Math.max(ms, 8000)); // min 8s
+    };
 
     const fetchStats = async () => {
       try {
-        const res = await fetch("/api/dashboard", {
-          cache: "no-store",
-          credentials: "include",
-          headers: { accept: "application/json" },
-        });
-
+        const res = await apiFetch("/api/dashboard", { method: "GET" });
         if (!alive) return;
 
         if (res.status === 401 || res.status === 403) {
+          if (interval) clearInterval(interval);
           router.replace("/login");
           return;
         }
+
+        if (res.status === 429) {
+          // Backoff: header veya body'den retry_after
+          const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
+          let retryBody = 0;
+          try {
+            const data = await res.clone().json();
+            retryBody = Number(data?.retry_after) || 0;
+          } catch {}
+          const waitMs = Math.max((retryHeader || retryBody || 8) * 1000, 8000);
+          schedule(waitMs);
+          return;
+        }
+
         if (!res.ok) {
-          // 429/5xx → sessiz; sonraki poll toparlar
+          // 5xx/diğer — sessiz; mevcut interval ile devam
           return;
         }
 
@@ -147,13 +175,18 @@ export default function Dashboard() {
         }));
 
         setLoading(false);
+
+        // Başarılı istekten sonra normal poll periyoduna dön (8s)
+        schedule(8000);
       } catch {
-        // ağ hatası → sessiz; sonraki poll dener
+        // ağ hatası → sessiz; mevcut interval ile devam
       }
     };
 
+    // İlk çekim ve standart poll
     fetchStats();
-    interval = setInterval(fetchStats, 8000);
+    schedule(8000);
+
     return () => {
       alive = false;
       if (interval) clearInterval(interval);
@@ -269,13 +302,22 @@ export default function Dashboard() {
                   </div>
                   <button
                     className={`flex items-center justify-center gap-2 w-full py-2 rounded font-bold font-mono text-[#181818] ${
-                      payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition-all"
+                      loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing
+                        ? "bg-[#323232] text-gray-500 cursor-not-allowed"
+                        : "bg-[#81d742] hover:bg-[#a9ff72] transition-all"
                     } text-base mb-1`}
                     style={{ fontSize: "1.02rem" }}
-                    disabled={payoutDisabled}
+                    disabled={loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing}
                     onClick={() => router.push("/wallet")}
                   >
-                    {loading ? t("processing") : payoutDisabled ? (<><Lock size={18} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
+                    {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing) ? (
+                      <>
+                        <Lock size={18} className="inline-block mr-2" />
+                        {t("enterValidBank")}
+                      </>
+                    ) : (
+                      t("requestPayout")
+                    )}
                   </button>
                   <div className="mt-1 text-xs font-mono text-gray-400 text-center">
                     <span className="text-gray-300">
@@ -399,13 +441,22 @@ export default function Dashboard() {
               </div>
               <button
                 className={`w-full mt-3 py-3 rounded-lg font-bold font-mono text-[#181818] ${
-                  payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
+                  (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing)
+                    ? "bg-[#323232] text-gray-500 cursor-not-allowed"
+                    : "bg-[#81d742] hover:bg-[#a9ff72] transition"
                 } text-base`}
                 style={{ fontSize: "1.07rem" }}
-                disabled={payoutDisabled}
+                disabled={loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing}
                 onClick={() => router.push("/wallet")}
               >
-                {loading ? t("processing") : payoutDisabled ? (<><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
+                {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing) ? (
+                  <>
+                    <Lock size={17} className="inline-block mr-2" />
+                    {t("enterValidBank")}
+                  </>
+                ) : (
+                  t("requestPayout")
+                )}
               </button>
               <div className="mt-2 text-xs font-mono text-gray-400 text-center">
                 <span className="text-gray-300">

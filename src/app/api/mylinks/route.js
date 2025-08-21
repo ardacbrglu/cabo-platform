@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 // SECURITY: NextAuth (auth()), CSRF (POST), rate limit (GET/POST), generic error mesajları
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { auth } from "@/lib/authz";
 import prisma from "@/lib/prisma";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";

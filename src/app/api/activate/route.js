@@ -1,87 +1,108 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+/**
+ * File: src/app/api/activate/route.js
+ * Purpose: E-posta aktivasyon linki doğrulama.
+ * Security Docblock:
+ * - GET idempotent; CSRF gerektirmez. Rate-limit: 10/dk (IP+UserAgent).
+ * - Token imzası ve süresi `NEXTAUTH_SECRET` ile doğrulanır.
+ * - Yanıtlar no-store + güvenlik header’ları ile döner.
+ */
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { checkRateLimit, logApiEvent } from "@/lib/ratelimit";
 import jwt from "jsonwebtoken";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { audit } from "@/lib/logger";
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) throw new Error("JWT_SECRET is not defined.");
+const ACTIVATION_JWT_SECRET = process.env.NEXTAUTH_SECRET;
+if (!ACTIVATION_JWT_SECRET) throw new Error("NEXTAUTH_SECRET is not defined.");
 
-function json(data, init = {}) {
-  const res = NextResponse.json(data, init);
+function withHeaders(res) {
   res.headers.set("Cache-Control", "no-store");
-  return res;
+  return applyApiSecurityHeaders(res);
 }
 
-export async function GET(req) {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0] ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
-  const ua = req.headers.get("user-agent") || "unknown";
-  const url = new URL(req.url);
-  const token = url.searchParams.get("token");
+const messages = {
+  en: {
+    ratelimit: "Too many attempts, please wait and try again.",
+    notoken: "Activation token is missing.",
+    jwt: "Link is malformed or expired.",
+    invalid: "Activation link is invalid or expired.",
+  },
+  tr: {
+    ratelimit: "Çok fazla deneme yaptınız, lütfen bekleyin.",
+    notoken: "Aktivasyon anahtarı eksik.",
+    jwt: "Bağlantı hatalı ya da süresi dolmuş.",
+    invalid: "Aktivasyon linki geçersiz veya zaman aşımına uğradı.",
+  },
+};
 
-  // 1) Rate limit: IP başına dakikada 10 deneme
+export async function GET(req) {
+  const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
+  const t = (k) => messages[locale][k] ?? k;
+
+  // Rate limit 10/dk
   const rl = await checkRateLimit({
-    key: `activate:${ip}`,
+    key: makeRateLimitKey(req, { scope: "activate" }),
     limit: 10,
     windowMs: 60_000,
   });
   if (!rl.ok) {
-    await logApiEvent({ endpoint: "activate", ip, ua, event: "ratelimit" });
-    return json({ success: false, error: "ratelimit" }, { status: 429 });
+    audit({ evt: "activate.ratelimit" });
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "ratelimit", message: t("ratelimit") },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      )
+    );
   }
 
-  // 2) Token eksikse
+  const url = new URL(req.url);
+  const token = url.searchParams.get("token");
   if (!token) {
-    await logApiEvent({ endpoint: "activate", ip, ua, event: "no_token" });
-    return json({ success: false, error: "notoken" }, { status: 400 });
+    audit({ evt: "activate.no_token" });
+    return withHeaders(NextResponse.json({ success: false, error: "notoken", message: t("notoken") }, { status: 400 }));
   }
 
-  // 3) JWT doğrulaması (süre, bütünlük)
+  // JWT doğrulama
   let emailFromJwt = null;
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    emailFromJwt = (payload && payload.email && String(payload.email).toLowerCase()) || null;
+    const payload = jwt.verify(token, ACTIVATION_JWT_SECRET);
+    emailFromJwt = String(payload?.email || "").toLowerCase() || null;
   } catch {
-    await logApiEvent({ endpoint: "activate", ip, ua, event: "jwt_invalid" });
-    return json({ success: false, error: "jwt" }, { status: 400 });
+    audit({ evt: "activate.jwt_invalid" });
+    return withHeaders(NextResponse.json({ success: false, error: "jwt", message: t("jwt") }, { status: 400 }));
   }
 
-  // 4) Token + pending durumu ile kullanıcıyı bul
+  // Token + pending kullanıcıyı bul
   const user = await prisma.user.findFirst({
     where: { activationToken: token, status: "pending", email: emailFromJwt || undefined },
     select: { id: true, email: true },
   });
 
   if (!user) {
-    // 4b) Aynı email aktifse "alreadyActive" de
+    // Aynı email aktifse alreadyActive kabul et
     const already = await prisma.user.findFirst({
       where: { email: emailFromJwt || undefined, status: "active", activationToken: null },
-      select: { id: true, email: true },
+      select: { id: true },
     });
     if (already) {
-      await logApiEvent({ endpoint: "activate", ip, ua, event: "already_active", email: already.email });
-      return json({ success: true, alreadyActive: true }, { status: 200 });
+      audit({ evt: "activate.already_active", email: emailFromJwt });
+      return withHeaders(NextResponse.json({ success: true, alreadyActive: true }, { status: 200 }));
     }
-
-    await logApiEvent({ endpoint: "activate", ip, ua, event: "token_invalid", email: emailFromJwt || "unknown" });
-    return json({ success: false, error: "invalid" }, { status: 404 });
+    audit({ evt: "activate.token_invalid", email: emailFromJwt || "unknown" });
+    return withHeaders(NextResponse.json({ success: false, error: "invalid", message: t("invalid") }, { status: 404 }));
   }
 
-  // 5) Kullanıcıyı aktif et
+  // Aktif et
   await prisma.user.update({
     where: { id: user.id },
-    data: {
-      status: "active",
-      emailVerified: new Date(),
-      activationToken: null,
-    },
+    data: { status: "active", emailVerified: new Date(), activationToken: null },
   });
 
-  await logApiEvent({ endpoint: "activate", ip, ua, event: "activated", email: user.email });
-
-  return json({ success: true }, { status: 200 });
+  audit({ evt: "activate.ok", email: user.email });
+  return withHeaders(NextResponse.json({ success: true }, { status: 200 }));
 }

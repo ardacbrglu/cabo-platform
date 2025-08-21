@@ -1,93 +1,130 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { withCsrfProtection } from "@/lib/csrf";
+/**
+ * File: src/app/api/password_reset/request/route.js
+ * Purpose: Şifre sıfırlama e-postası başlatma.
+ * Security Docblock:
+ * - POST: Origin/Referer eşleşmesi + X-Requested-With + X-Request-Id (ops. X-CSRF-Token kabul edilir).
+ * - RateLimit: 5/dk (IP).
+ * - Enumeration-safe: Kullanıcı yoksa da success döner.
+ * - JSON error contract: { error, request_id, retry_after? }  (compat için message da döner)
+ */
+
+import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { v4 as uuidv4 } from "uuid";
 import { sendPasswordResetEmail } from "@/lib/mailer";
 import { addMinutes } from "date-fns";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
+import { audit } from "@/lib/logger";
+import { z } from "zod";
+
+function withHeaders(res) {
+  res.headers.set("Cache-Control", "no-store");
+  return applyApiSecurityHeaders(res);
+}
 
 const messages = {
   en: {
     required: "Email is required.",
     sent: "If user exists, password reset email sent.",
-    fail: "Error sending password reset email.",
     ratelimit: "Too many requests. Please wait and try again.",
+    fail: "Error sending password reset email.",
   },
   tr: {
     required: "E-posta gerekli.",
     sent: "Kullanıcı varsa şifre sıfırlama e-postası gönderildi.",
-    fail: "Şifre sıfırlama e-postası gönderilirken hata oluştu.",
     ratelimit: "Çok fazla istek. Lütfen tekrar deneyin.",
+    fail: "Şifre sıfırlama e-postası gönderilirken hata oluştu.",
   },
 };
 
-export const POST = withCsrfProtection(async (req) => {
-  const langHeader = req.headers.get("accept-language") || "";
-  const locale = langHeader.toLowerCase().startsWith("tr") ? "tr" : "en";
-  const msg = messages[locale];
+const BodySchema = z.object({
+  email: z.string().email().max(254),
+});
+
+export async function POST(req) {
+  const requestId = requireRequestId(req);
+  requireOrigin(req);
+  requireAjax(req);
+
+  const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
+  const t = (k) => messages[locale][k] ?? k;
+
+  // Rate limit 5/dk
+  const rl = await checkRateLimit({
+    key: makeRateLimitKey(req, { scope: "pwreset_req" }),
+    limit: 5,
+    windowMs: 60_000,
+  });
+  if (!rl.ok) {
+    audit({ evt: "pwreset.request.ratelimit", requestId });
+    return withHeaders(
+      NextResponse.json(
+        {
+          success: false,
+          error: t("ratelimit"),
+          message: t("ratelimit"),
+          request_id: requestId,
+          retry_after: Math.ceil(rl.resetMs / 1000),
+        },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      )
+    );
+  }
+
+  // Body parse
+  let data;
+  try {
+    const body = await req.json();
+    data = BodySchema.parse(body);
+  } catch {
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: t("required"), message: t("required"), request_id: requestId },
+        { status: 400 }
+      )
+    );
+  }
+
+  const email = data.email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email } });
+
+  // Enumeration-safe: kullanıcı yoksa da success
+  if (!user) {
+    audit({ evt: "pwreset.request.ok.no_user", email: email.slice(0, 3) + "***", requestId });
+    return withHeaders(
+      NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
+    );
+  }
+
+  // Eski kullanılmamış tokenları temizle
+  await prisma.passwordResetToken.deleteMany({ where: { userId: user.id, used: false } });
+
+  // 15 dk geçerli yeni token
+  const token = uuidv4();
+  const expiresAt = addMinutes(new Date(), 15);
+
+  await prisma.passwordResetToken.create({
+    data: { userId: user.id, token, expiresAt, used: false },
+  });
 
   try {
-    // Rate limit (IP bazlı 5/dk)
-    const rlKey = makeRateLimitKey(req, { scope: "pwreset_req" });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
-    if (!ok) {
-      return new Response(JSON.stringify({ success: false, message: msg.ratelimit }), {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-          "Retry-After": String(Math.ceil(resetMs / 1000)),
-        },
-      });
-    }
-
-    // Body
-    let body;
-    try { body = await req.json(); } catch {
-      return new Response(JSON.stringify({ success: false, message: msg.required }), {
-        status: 400, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-      });
-    }
-
-    const email = String(body?.email || "").trim().toLowerCase();
-    if (!email) {
-      return new Response(JSON.stringify({ success: false, message: msg.required }), {
-        status: 400, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-      });
-    }
-
-    // Enumeration-safe response
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return new Response(JSON.stringify({ success: true, message: msg.sent }), {
-        status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-      });
-    }
-
-    // Eski kullanılmamış tokenları temizle
-    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id, used: false } });
-
-    // 15 dk geçerli yeni token
-    const token = uuidv4();
-    const expiresAt = addMinutes(new Date(), 15);
-
-    await prisma.passwordResetToken.create({
-      data: { userId: user.id, token, expiresAt, used: false },
-    });
-
-    // Mail gönder (kullanıcının dil tercihi varsa onu kullan)
-    const language = user.languagePreference || locale;
-    await sendPasswordResetEmail(user.email, token, language);
-
-    return new Response(JSON.stringify({ success: true, message: msg.sent }), {
-      status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
-  } catch (err) {
-    console.error("PASSWORD RESET REQ ERROR:", err);
-    return new Response(JSON.stringify({ success: false, message: messages.tr.fail }), {
-      status: 500, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    });
+    const lang = user.languagePreference || locale;
+    await sendPasswordResetEmail(user.email, token, lang);
+  } catch (e) {
+    audit({ evt: "pwreset.request.mail_fail", userId: user.id, requestId, err: String(e && e.message || e) });
+    // Yine enumeration-safe: dışa success
+    return withHeaders(
+      NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
+    );
   }
-});
+
+  audit({ evt: "pwreset.request.ok", userId: user.id, requestId });
+  return withHeaders(
+    NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
+  );
+}

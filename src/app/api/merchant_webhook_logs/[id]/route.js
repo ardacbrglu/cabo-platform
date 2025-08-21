@@ -15,7 +15,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
-import { requireRole } from "@/lib/access";
+import { requireRole } from "@/lib/authz";
 
 function toNum(v, d = 0) {
   const n = Number(v);

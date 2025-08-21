@@ -1,8 +1,17 @@
-// /middleware.js
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+/**
+ * File: /middleware.js
+ * Purpose: Korumalı sayfalar için oturum ve rol kapıları + ortak güvenlik başlıkları.
+ * Security Notes:
+ * - Auth: NextAuth middleware (withAuth) üzerinden token okunur.
+ * - Status: Yalnızca status === "active" kullanıcılar korumalı alanlara girer.
+ * - RBAC: Affiliate alanları ↔ merchant alanları arasında rol tabanlı yönlendirme.
+ * - Headers: nosniff, strict-origin-when-cross-origin, COOP/CORP, HSTS (prod).
+ * - Request-Id: Yoksa üretip yanıta ekler (korelasyon için).
+ */
 
-// Sadece korumak istediklerimizi eşleştiriyoruz
+import { NextResponse } from "next/server";
+import { withAuth } from "next-auth/middleware";
+
 export const config = {
   matcher: [
     "/dashboard/:path*",
@@ -14,30 +23,61 @@ export const config = {
   ],
 };
 
-export default auth(async (req) => {
-  const { nextUrl } = req;
-  const path = nextUrl.pathname;
-  const s = req.auth; // next-auth middleware'den gelir
-
-  // Giriş yoksa login'e
-  if (!s?.user) {
-    const login = new URL("/login", nextUrl.origin);
-    login.searchParams.set("callbackUrl", nextUrl.pathname + nextUrl.search);
-    return NextResponse.redirect(login);
+function applyCommonHeaders(res) {
+  // Güvenlik başlıkları
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  if (process.env.NODE_ENV === "production") {
+    res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   }
-
-  const role = s.user.role;
-
-  const isAffiliateArea = /^\/(dashboard|products|mylinks|performance|wallet)(\/|$)/.test(path);
-  const isMerchantArea = /^\/merchant(\/|$)/.test(path);
-
-  // Yanlış rolde ise doğru alana gönder
-  if (isAffiliateArea && role !== "affiliate") {
-    return NextResponse.redirect(new URL("/merchant/dashboard", nextUrl.origin));
+  // Request-Id (yoksa üret)
+  if (!res.headers.get("X-Request-Id")) {
+    const rid = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+    res.headers.set("X-Request-Id", rid);
   }
-  if (isMerchantArea && role !== "merchant") {
-    return NextResponse.redirect(new URL("/dashboard", nextUrl.origin));
-  }
+  return res;
+}
 
-  return NextResponse.next();
-});
+export default withAuth(
+  function middleware(req) {
+    const { nextUrl } = req;
+    const token = req.nextauth?.token; // withAuth → getToken
+
+    // 1) Oturum yoksa → /login?callbackUrl=...
+    if (!token) {
+      const login = new URL("/login", nextUrl.origin);
+      login.searchParams.set("callbackUrl", nextUrl.pathname + nextUrl.search);
+      return applyCommonHeaders(NextResponse.redirect(login));
+    }
+
+    // 2) Kullanıcı aktif mi?
+    const status = token.status;
+    if (status && status !== "active") {
+      const activate = new URL("/activate", nextUrl.origin);
+      activate.searchParams.set("notice", "activate_account");
+      return applyCommonHeaders(NextResponse.redirect(activate));
+    }
+
+    // 3) Rol kapıları (affiliates vs merchants)
+    const path = nextUrl.pathname;
+    const isAffiliateArea = /^\/(dashboard|products|mylinks|performance|wallet)(\/|$)/.test(path);
+    const isMerchantArea = /^\/merchant(\/|$)/.test(path);
+    const role = token.role;
+
+    if (isAffiliateArea && role !== "affiliate") {
+      return applyCommonHeaders(NextResponse.redirect(new URL("/merchant/dashboard", nextUrl.origin)));
+    }
+    if (isMerchantArea && role !== "merchant") {
+      return applyCommonHeaders(NextResponse.redirect(new URL("/dashboard", nextUrl.origin)));
+    }
+
+    // 4) Geçiş
+    return applyCommonHeaders(NextResponse.next());
+  },
+  {
+    // Redirect mantığını biz yönettiğimiz için, yetkilendirmeyi burada hep true bırakıyoruz.
+    callbacks: { authorized: () => true },
+  }
+);

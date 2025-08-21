@@ -6,7 +6,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey, logApiEvent } from "@/lib/ratelimit";
-import { requireRole } from "@/lib/access";
+import { requireRole } from "@/lib/authz";
 import { z } from "zod";
 
 const BodySchema = z.object({

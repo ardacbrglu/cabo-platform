@@ -1,25 +1,17 @@
 "use client";
 /**
- * /context/UserContext.js
- * Amaç: Oturum bilgisini tek kez çekip uygulama genelinde paylaşmak.
- *
- * SECURITY NOTES
- * - Kimlik doğrulama NextAuth cookie’leriyle yapılır; custom JWT yok.
- * - /api/me yalnızca minimal alan döner (id/email/role/status); 401/403 → anonim sayılır.
- * - Tüm istekler credentials:"include" ve cache:"no-store" ile yapılır.
+ * File: src/context/UserContext.jsx
+ * Purpose: Oturum bilgisini tek kez çekip uygulama genelinde paylaşmak.
+ * Security Docblock:
+ * - /api/me minimal alan döner (id/email/role/status/name); 401/403 → anon sayılır.
+ * - Tüm istekler tek apiFetch wrapper’ı ile (credentials:include, X-Requested-With, X-Request-Id).
  */
 
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-} from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { apiFetch } from "@/lib/apiFetch";
 
-const UserContext = createContext({
-  user: undefined,         // undefined: yüklenmedi, null: anon, object: auth
+const Ctx = createContext({
+  user: undefined,  // undefined: yüklenmedi, null: anon, object: auth
   ready: false,
   isAuthenticated: false,
   lastError: null,
@@ -28,29 +20,20 @@ const UserContext = createContext({
 });
 
 export function UserProvider({ children }) {
-  const [user, setUser] = useState(undefined); // ilk açılış: undefined
+  const [user, setUser] = useState(undefined);
   const [lastError, setLastError] = useState(null);
 
   const fetchMe = useCallback(async () => {
     try {
-      const res = await fetch("/api/me", {
-        method: "GET",
-        credentials: "include",
-        headers: { accept: "application/json" },
-        cache: "no-store",
-      });
+      const res = await apiFetch("/api/me", { method: "GET" });
       if (!res.ok) {
-        // 401/403/429/5xx → anon kabul et, detay sızdırma
         setUser(null);
         setLastError(null);
         return;
       }
       const data = await res.json().catch(() => ({}));
-      if (data?.id) {
-        setUser(data);
-      } else {
-        setUser(null);
-      }
+      if (data?.id) setUser(data);
+      else setUser(null);
       setLastError(null);
     } catch {
       setUser(null);
@@ -58,28 +41,19 @@ export function UserProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => {
-    // İlk yükleme
-    fetchMe();
-  }, [fetchMe]);
+  useEffect(() => { fetchMe(); }, [fetchMe]);
 
-  const value = useMemo(
-    () => ({
-      user,
-      setUser,
-      ready: user !== undefined,
-      isAuthenticated: !!(user && user.id),
-      lastError,
-      refreshUser: fetchMe,
-    }),
-    [user, lastError, fetchMe]
-  );
+  const value = useMemo(() => ({
+    user,
+    setUser,
+    ready: user !== undefined,
+    isAuthenticated: !!(user && user.id),
+    lastError,
+    refreshUser: fetchMe,
+  }), [user, lastError, fetchMe]);
 
-  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useUser() {
-  return useContext(UserContext);
-}
-
-export default UserContext;
+export function useUser() { return useContext(Ctx); }
+export default Ctx;

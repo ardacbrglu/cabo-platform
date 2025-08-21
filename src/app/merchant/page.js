@@ -1,4 +1,3 @@
-// app/merchant/page.js
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -7,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import PublicLayout from '@/components/PublicLayout';
 import { useLocale } from '@/context/LocaleContext';
 import { useCsrfToken } from '@/hooks/useCsrfToken';
+import { apiFetch } from '@/lib/apiFetch';
 
 const translations = {
   en: {
@@ -86,26 +86,23 @@ export default function MerchantLoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/merchant_login', {
+      const res = await apiFetch('/api/merchant_login', {
         method: 'POST',
         headers: {
-          'content-type': 'application/json',
-          'x-csrf-token': csrfToken || '',
           'accept-language': locale || 'en',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}), // opsiyonel
         },
-        body: JSON.stringify({ email, password }),
+        body: { email, password },
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data?.success) {
-        // Backend anlaşılır mesaj döner: pending, invalid vb.
         setError(data?.message || t('errorFill'));
         setLoading(false);
         return;
       }
 
-      // Başarılı giriş → dashboard
       router.push('/merchant/dashboard');
     } catch {
       setError(locale === 'tr' ? 'Giriş başarısız. Lütfen tekrar deneyin.' : 'Login failed. Please try again.');
@@ -160,7 +157,7 @@ export default function MerchantLoginPage() {
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
             {t('title')}
           </h3>
-          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6">
+          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" noValidate>
             <input
               type="email"
               placeholder={t('emailPlaceholder')}

@@ -1,5 +1,5 @@
-// app/api/auth/[...nextauth]/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
  * SECURITY NOTES
@@ -7,10 +7,8 @@ export const dynamic = "force-dynamic";
  * - Bu route yalnızca NextAuth handler’ını yayımlar. Sağlayıcı, RBAC, callback ve
  *   diğer kuralların tamamı authOptions içinde yönetilir.
  */
-
 import NextAuth from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 
 const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
-

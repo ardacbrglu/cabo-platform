@@ -1,24 +1,42 @@
-// hooks/useNotifications.js  (JS)
+/**
+ * File: src/hooks/useNotifications.js
+ * Purpose: Bildirimleri periyodik çekmek ve işaretleme/silme mutasyonlarını yapmak.
+ * Security Docblock:
+ * - GET/POST istekleri tek apiFetch ile gider (credentials, X-Requested-With, X-Request-Id).
+ * - CSRF zorunlu değil; ancak uyumluluk için /api/auth/csrf bir kez alınır ve header'a opsiyonel eklenir.
+ */
+
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { apiFetch } from "@/lib/apiFetch";
 
 const POLL_MS = 12_000;
 
 export function useNotifications(enabled = true) {
-  const { csrfToken } = useCsrfToken();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [lastError, setLastError] = useState(null);
   const abortRef = useRef(null);
   const timerRef = useRef(null);
+  const csrfRef = useRef("");
+
+  // Opsiyonel CSRF token: bir kez al
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/csrf", { credentials: "include" });
+        const j = await r.json().catch(() => ({}));
+        if (j?.csrfToken) csrfRef.current = j.csrfToken;
+      } catch {}
+    })();
+  }, []);
 
   const computeUnread = useCallback((arr) => {
     return Array.isArray(arr) ? arr.filter((n) => !n.read).length : 0;
   }, []);
 
   const fetchNotifications = useCallback(async () => {
-    if (!enabled) return; // 🔑 login değilken hiç deneme
+    if (!enabled) return;
     if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -26,10 +44,9 @@ export function useNotifications(enabled = true) {
     setLoading(true);
     setLastError(null);
     try {
-      const res = await fetch("/api/notifications", {
+      const res = await apiFetch("/api/notifications", {
         method: "GET",
-        credentials: "include",
-        headers: { accept: "application/json", "cache-control": "no-cache" },
+        headers: { "cache-control": "no-cache" },
         signal: ac.signal,
       });
 
@@ -52,7 +69,7 @@ export function useNotifications(enabled = true) {
   }, [enabled, computeUnread]);
 
   useEffect(() => {
-    if (!enabled) return; // 🔑
+    if (!enabled) return;
     fetchNotifications().catch(() => {});
     timerRef.current = setInterval(() => fetchNotifications().catch(() => {}), POLL_MS);
 
@@ -71,15 +88,10 @@ export function useNotifications(enabled = true) {
   const markSelectedAsRead = useCallback(async (ids) => {
     if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
     try {
-      const res = await fetch("/api/notifications/mark-read", {
+      const res = await apiFetch("/api/notifications/mark-read", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-          "x-csrf-token": csrfToken || "",
-        },
-        body: JSON.stringify({ ids }),
+        headers: { ...(csrfRef.current ? { "X-CSRF-Token": csrfRef.current } : {}) },
+        body: { ids },
       });
       if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
 
@@ -92,10 +104,10 @@ export function useNotifications(enabled = true) {
         );
         return computeUnread(next);
       });
-    } catch (e) {
-      // sessiz geç; bir sonraki poll düzeltecek
+    } catch {
+      // sessiz; bir sonraki poll düzeltir
     }
-  }, [enabled, csrfToken, notifications, computeUnread]);
+  }, [enabled, notifications, computeUnread]);
 
   const markAllAsRead = useCallback(() => {
     const unreadIds = (Array.isArray(notifications) ? notifications : [])
@@ -107,15 +119,10 @@ export function useNotifications(enabled = true) {
   const deleteNotifications = useCallback(async (ids) => {
     if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
     try {
-      const res = await fetch("/api/notifications/delete", {
+      const res = await apiFetch("/api/notifications/delete", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-          "x-csrf-token": csrfToken || "",
-        },
-        body: JSON.stringify({ ids }),
+        headers: { ...(csrfRef.current ? { "X-CSRF-Token": csrfRef.current } : {}) },
+        body: { ids },
       });
       if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 
@@ -128,10 +135,10 @@ export function useNotifications(enabled = true) {
         );
         return computeUnread(next);
       });
-    } catch (e) {
+    } catch {
       // sessiz
     }
-  }, [enabled, csrfToken, notifications, computeUnread]);
+  }, [enabled, notifications, computeUnread]);
 
   return { notifications, unreadCount, loading, lastError, fetchNotifications, markAllAsRead, markSelectedAsRead, deleteNotifications };
 }
