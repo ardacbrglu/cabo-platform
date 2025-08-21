@@ -6,12 +6,12 @@
  *
  * Security Docblock (Cabo PROD)
  * - Frontend tüm istekler: tek apiFetch wrapper (credentials:include, X-Requested-With, X-Request-Id).
- * - GET /api/dashboard: CSRF gereksiz; 401/403 → login'e yönlendirilir.
- * - Rate-limit 429: retry_after'a göre polling backoff uygulanır.
+ * - GET /api/dashboard: CSRF gereksiz; 401 → /login, 403 'inactive' → /activate, diğer 403 → /unauthorized.
+ * - Rate-limit 429: Retry-After/body.retry_after değerine göre polling backoff uygulanır (min 8sn).
  * - PII minimal: yalnız gerekli alanlar UI'da gösterilir.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from "lucide-react";
@@ -59,7 +59,7 @@ export default function Dashboard() {
   const setUser = ctx.setUser || (() => {});
   const { t } = useTranslation();
 
-  // Fallback’lı hazır/auth türetmeleri (Context eskiyse bile çalışır)
+  // Context geride kalırsa güvenli fallback
   const isReady = typeof ctx.ready === "boolean" ? ctx.ready : me !== undefined;
   const isAuth  = typeof ctx.isAuthenticated === "boolean" ? ctx.isAuthenticated : !!(me && me.id);
 
@@ -87,7 +87,7 @@ export default function Dashboard() {
   const [payoutstatus, setPayoutstatus] = useState("");
   const [isMobile, setIsMobile] = useState(false);
 
-  // Auth/RBAC yönlendirme — deterministik
+  // Auth/RBAC yönlendirme
   useEffect(() => {
     if (!isReady) return;
     if (!isAuth) {
@@ -100,7 +100,7 @@ export default function Dashboard() {
     }
   }, [isReady, isAuth, me?.role, router]);
 
-  // Boyut dinleyicisi (UI)
+  // Ekran boyutu
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 700);
     checkMobile();
@@ -108,17 +108,17 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Dashboard verileri (polling + 429 backoff)
+  // Dashboard polling (+ 429 backoff)
   useEffect(() => {
     if (!isReady || !isAuth) return;
 
-    let interval = null;
+    let timer = null;
     let alive = true;
 
     const schedule = (ms) => {
       if (!alive) return;
-      if (interval) clearInterval(interval);
-      interval = setInterval(fetchStats, Math.max(ms, 8000)); // min 8s
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchStats, Math.max(ms, 8000)); // min 8s
     };
 
     const fetchStats = async () => {
@@ -126,27 +126,28 @@ export default function Dashboard() {
         const res = await apiFetch("/api/dashboard", { method: "GET" });
         if (!alive) return;
 
-        if (res.status === 401 || res.status === 403) {
-          if (interval) clearInterval(interval);
+        if (res.status === 401) {
           router.replace("/login");
           return;
         }
-
+        if (res.status === 403) {
+          let reason = "";
+          try { const j = await res.clone().json(); reason = j?.error || ""; } catch {}
+          if (reason === "inactive") router.replace("/activate");
+          else router.replace("/unauthorized");
+          return;
+        }
         if (res.status === 429) {
-          // Backoff: header veya body'den retry_after
           const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
           let retryBody = 0;
-          try {
-            const data = await res.clone().json();
-            retryBody = Number(data?.retry_after) || 0;
-          } catch {}
+          try { const j = await res.clone().json(); retryBody = Number(j?.retry_after) || 0; } catch {}
           const waitMs = Math.max((retryHeader || retryBody || 8) * 1000, 8000);
           schedule(waitMs);
           return;
         }
-
         if (!res.ok) {
-          // 5xx/diğer — sessiz; mevcut interval ile devam
+          // 5xx/diğer — sessiz; bir sonraki poll denesin
+          schedule(8000);
           return;
         }
 
@@ -175,21 +176,19 @@ export default function Dashboard() {
         }));
 
         setLoading(false);
-
-        // Başarılı istekten sonra normal poll periyoduna dön (8s)
         schedule(8000);
       } catch {
-        // ağ hatası → sessiz; mevcut interval ile devam
+        // ağ hatası → sessiz; yeniden dene
+        schedule(8000);
       }
     };
 
-    // İlk çekim ve standart poll
     fetchStats();
     schedule(8000);
 
     return () => {
       alive = false;
-      if (interval) clearInterval(interval);
+      if (timer) clearTimeout(timer);
     };
   }, [isReady, isAuth, setUser, router]);
 
@@ -343,7 +342,7 @@ export default function Dashboard() {
                         <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
                           {lb.name === stats.username ? t("you") : lb.name}
                         </span>
-                        <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
+                        <span className={i === 0 ? "text-yellow-20 0" : "text-gray-400"}>{lb.value}</span>
                       </div>
                     ))}
                   </div>
@@ -449,7 +448,7 @@ export default function Dashboard() {
                 disabled={loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing}
                 onClick={() => router.push("/wallet")}
               >
-                {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing) ? (
+                {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankName === "" || realNameMissing) ? (
                   <>
                     <Lock size={17} className="inline-block mr-2" />
                     {t("enterValidBank")}

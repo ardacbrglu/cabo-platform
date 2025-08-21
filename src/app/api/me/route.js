@@ -1,15 +1,12 @@
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs"; // Prisma için Edge değil
+export const runtime = "nodejs";
 
 /**
  * File: src/app/api/me/route.js
- * Purpose: Oturum sahibinin minimal profilini döndürür (id, email, role, status, name).
- * Security Notes:
- * - Auth: getServerSession(authOptions) zorunlu.
- * - Status: requireStatus('active') (pending kullanıcı erişemez).
- * - RateLimit: GET 60/dk (IP bazlı).
- * - Headers: no-store, Vary: Cookie + API güvenlik başlıkları (nosniff, HSTS, vb.).
- * - Error Contract: { error, request_id, retry_after? }.
+ * Purpose: Oturum bilgisini minimal döndür (status/role dahil), 401 yerine 200 döner.
+ * Security Docblock:
+ * - GET: Rate limit 60/dk (IP). CSRF gerekmez.
+ * - Cevap: Cache-Control: no-store; Vary: Cookie; PII minimal.
  */
 
 import { NextResponse } from "next/server";
@@ -18,80 +15,39 @@ import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
-import { audit } from "@/lib/logger";
-import { requireStatus } from "@/lib/authz";
 
-function withHeaders(res) {
+function json(data, init = {}) {
+  const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
 }
 
 export async function GET(req) {
-  // İstemci gönderdi ise kullan; yoksa üret (log korelasyonu)
-  const requestId = req.headers.get("x-request-id") || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-
-  try {
-    // 1) Rate limit (60 req/dk, IP bazlı)
-    const { ok, resetMs } = await checkRateLimit({
-      key: makeRateLimitKey(req, { scope: "me:ip" }),
-      limit: 60,
-      windowMs: 60_000,
-    });
-    if (!ok) {
-      const res = NextResponse.json(
-        { error: "too_many_requests", request_id: requestId },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
-      );
-      return withHeaders(res);
-    }
-
-    // 2) Session
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      audit({ evt: "me.denied", why: "no-session", requestId });
-      return withHeaders(NextResponse.json({ error: "unauthorized", request_id: requestId }, { status: 401 }));
-    }
-
-    // 3) Status kontrolü (aktif olmayan giremez)
-    try {
-      requireStatus(session, "active");
-    } catch {
-      audit({ evt: "me.denied", why: "not-active", userId: session.user.id, requestId });
-      return withHeaders(NextResponse.json({ error: "user_not_active", request_id: requestId }, { status: 403 }));
-    }
-
-    // 4) Kullanıcıyı doğrula
-    const email = session.user.email?.toLowerCase?.();
-    if (!email) {
-      audit({ evt: "me.denied", why: "no-email", userId: session.user.id, requestId });
-      return withHeaders(NextResponse.json({ error: "unauthorized", request_id: requestId }, { status: 401 }));
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true, email: true, role: true, status: true, name: true },
-    });
-
-    if (!user) {
-      audit({ evt: "me.denied", why: "not-found", email, requestId });
-      return withHeaders(NextResponse.json({ error: "unauthorized", request_id: requestId }, { status: 401 }));
-    }
-
-    // 5) Başarılı yanıt (minimal alanlar)
-    audit({ evt: "me.ok", userId: user.id, requestId });
-    return withHeaders(
-      NextResponse.json({
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        name: user.name || "",
-        request_id: requestId,
-      })
+  // 60/dk IP RL
+  const ipKey = makeRateLimitKey(req, { scope: "me:ip" });
+  const rl = await checkRateLimit({ key: ipKey, limit: 60, windowMs: 60_000 });
+  if (!rl.ok) {
+    return json(
+      { authenticated: false, retry_after: Math.ceil(rl.resetMs / 1000) },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
     );
-  } catch (e) {
-    audit({ evt: "me.error", err: true, requestId });
-    return withHeaders(NextResponse.json({ error: "me_fetch_error", request_id: requestId }, { status: 500 }));
   }
+
+  const session = await getServerSession(authOptions);
+  const email = session?.user?.email?.toLowerCase?.();
+  if (!email) {
+    // 401 YOK → 200 ve authenticated:false
+    return json({ authenticated: false });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, name: true, role: true, status: true },
+  });
+
+  if (!user) return json({ authenticated: false });
+
+  // success:true de ekliyoruz (compat için)
+  return json({ authenticated: true, success: true, user });
 }
