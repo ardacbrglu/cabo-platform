@@ -1,26 +1,21 @@
 /**
  * File: /middleware.js
- * Purpose: Korumalı sayfalar için oturum ve rol kapıları + ortak güvenlik başlıkları.
- * Security:
- * - NextAuth token kontrolü (withAuth)
- * - Kullanıcı status === "active" şartı
- * - RBAC: affiliate ↔ merchant alanları
- * - Güvenlik başlıkları + Request-Id
+ * Purpose: Korumalı sayfalar için oturum/rol kapıları + ortak güvenlik başlıkları.
  */
 
 import { NextResponse } from "next/server";
 import { withAuth } from "next-auth/middleware";
 
-// Korunacak alanlar
-const AFFILIATE_AREAS = ["/dashboard", "/wallet", "/my-links", "/performance"];
-const MERCHANT_AREAS  = ["/merchant"];
-
 export const config = {
   matcher: [
-    ...AFFILIATE_AREAS.map((p) => `${p}/:path*`),
-    ...MERCHANT_AREAS.map((p) => `${p}/:path*`),
-    // Ürünler de login isterse aç:
-    // "/products/:path*",
+    // Affiliate alanları
+    "/dashboard/:path*",
+    "/products/:path*",
+    "/mylinks/:path*",
+    "/performance/:path*",
+    "/wallet/:path*",
+    // Merchant alanları
+    "/merchant/:path*",
   ],
 };
 
@@ -39,14 +34,10 @@ function applyCommonHeaders(res) {
   return res;
 }
 
-function pathStartsWith(path, prefixes) {
-  return prefixes.some((p) => path === p || path.startsWith(p + "/"));
-}
-
 export default withAuth(
   function middleware(req) {
     const { nextUrl } = req;
-    const token = req.nextauth?.token; // withAuth → getToken()
+    const token = req.nextauth?.token; // withAuth → getToken
 
     // 1) Oturum zorunlu
     if (!token) {
@@ -55,30 +46,27 @@ export default withAuth(
       return applyCommonHeaders(NextResponse.redirect(login));
     }
 
-    // 2) Hesap aktif mi?
-    const status = token.status ?? "active";
-    if (status !== "active") {
+    // 2) Yalnızca aktif kullanıcı
+    if (token.status && token.status !== "active") {
       const activate = new URL("/activate", nextUrl.origin);
       activate.searchParams.set("notice", "activate_account");
       return applyCommonHeaders(NextResponse.redirect(activate));
     }
 
-    // 3) Rol kapıları
-    const role = token.role || "affiliate";
+    // 3) RBAC
     const path = nextUrl.pathname;
+    const isAffiliateArea = /^\/(dashboard|products|mylinks|performance|wallet)(\/|$)/.test(path);
+    const isMerchantArea = /^\/merchant(\/|$)/.test(path);
+    const role = token.role;
 
-    if (pathStartsWith(path, AFFILIATE_AREAS) && role !== "affiliate") {
+    if (isAffiliateArea && role !== "affiliate") {
       return applyCommonHeaders(NextResponse.redirect(new URL("/merchant/dashboard", nextUrl.origin)));
     }
-    if (pathStartsWith(path, MERCHANT_AREAS) && role !== "merchant") {
+    if (isMerchantArea && role !== "merchant") {
       return applyCommonHeaders(NextResponse.redirect(new URL("/dashboard", nextUrl.origin)));
     }
 
-    // 4) Geçiş
     return applyCommonHeaders(NextResponse.next());
   },
-  {
-    // Redirect’leri biz yönetiyoruz; token’ı burada zorlamıyoruz.
-    callbacks: { authorized: () => true },
-  }
+  { callbacks: { authorized: () => true } }
 );
