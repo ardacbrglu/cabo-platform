@@ -1,3 +1,4 @@
+// components/PublicLayout.jsx
 "use client";
 
 import Link from "next/link";
@@ -33,7 +34,7 @@ export default function PublicLayout({ children }) {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Client-only ölçüm; ilk render sabit (false) → hydration-safe
+  // Client-only ölçüm (hydration-safe)
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -69,36 +70,29 @@ export default function PublicLayout({ children }) {
           Cabo
         </h1>
 
-        {/* Desktop nav */}
-        {!isMobile && (
+        {!isMobile ? (
           <nav aria-label="Public navigation">
             <ul className="flex gap-7 text-sm font-medium items-center">
               {navLinks.map((item) => (
                 <li key={item.href}>
-                  <Link href={item.href} className={linkClass(item.href)}>
+                  <Link href={item.href} className={linkClass(item.href)} prefetch={false}>
                     {item.label}
                   </Link>
                 </li>
               ))}
-              {/* Locale switcher */}
-              <li className="relative">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="ml-2 px-2 py-1 rounded text-[#81d742] font-bold transition hover:text-[#b0f7a2]"
-                    aria-label="Change language"
-                    onClick={() => setLocale(locale === "tr" ? "en" : "tr")}
-                  >
-                    {LANG_LABEL}
-                  </button>
-                </div>
+              <li className="ml-2">
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded text-[#81d742] font-bold transition hover:text-[#b0f7a2]"
+                  aria-label="Change language"
+                  onClick={() => setLocale(locale === "tr" ? "en" : "tr")}
+                >
+                  {LANG_LABEL}
+                </button>
               </li>
             </ul>
           </nav>
-        )}
-
-        {/* Mobile trigger */}
-        {isMobile && (
+        ) : (
           <>
             <button
               className="block md:hidden text-[#81d742] text-3xl px-3 py-1 rounded focus:outline-none focus:ring-2 focus:ring-[#81d742]"
@@ -111,9 +105,7 @@ export default function PublicLayout({ children }) {
             {mobileMenu && (
               <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "rgba(0,0,0,0.93)" }}>
                 <div className="flex items-center justify-between bg-[#111] px-4 sm:px-8 md:px-10 py-4 border-b border-[#232323]">
-                  <h1 className="text-3xl font-extrabold" style={{ color: "#d1ffd0" }}>
-                    Cabo
-                  </h1>
+                  <h1 className="text-3xl font-extrabold" style={{ color: "#d1ffd0" }}>Cabo</h1>
                   <button
                     className="text-3xl text-gray-300 px-2 py-1"
                     onClick={() => setMobileMenu(false)}
@@ -130,6 +122,7 @@ export default function PublicLayout({ children }) {
                         href={item.href}
                         onClick={() => setMobileMenu(false)}
                         className={`block py-2 ${pathname === item.href ? "text-[#81d742]" : "text-gray-100"} hover:text-[#81d742]`}
+                        prefetch={false}
                       >
                         {item.label}
                       </Link>
@@ -166,10 +159,7 @@ export default function PublicLayout({ children }) {
       {/* Merchant CTA */}
       <div className="w-full text-center py-2 bg-[#111] border-t border-[#232323] text-sm sm:text-base">
         <span className="text-gray-400">{t("merchantQ")}</span>
-        <Link
-          href="/merchant"
-          className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
-        >
+        <Link href="/merchant" className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition" prefetch={false}>
           {t("merchantAccess")}
         </Link>
       </div>

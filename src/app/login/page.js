@@ -100,7 +100,10 @@ export default function LoginPage() {
   const [csrfReady, setCsrfReady] = useState(false);
 
   const firstInputRef = useRef(null);
-  const callbackUrl = searchParams?.get("from") || "/dashboard";
+  const callbackUrl =
+    searchParams?.get("callbackUrl") ||
+    searchParams?.get("from") ||
+    "/dashboard";
 
   // Session guard: yalnızca gerçek NextAuth session varsa login'den çıkar
   useEffect(() => {
@@ -214,10 +217,7 @@ export default function LoginPage() {
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
             <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -249,9 +249,7 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">
-              {t("emailPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
             <input
               ref={firstInputRef}
               id="email"
@@ -269,9 +267,7 @@ export default function LoginPage() {
               aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">
-              {t("passwordPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
             <input
               id="password"
               type="password"
@@ -346,12 +342,8 @@ export default function LoginPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem !important;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 1rem !important;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem !important; }
+          .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
         }
       `}</style>
     </PublicLayout>

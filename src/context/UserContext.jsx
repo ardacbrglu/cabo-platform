@@ -4,7 +4,7 @@
  * Purpose: Oturum bilgisini tek kez çekip uygulama genelinde paylaşmak.
  * Güvenlik/UX:
  * - /api/me 401/403 → anon kabul; sadece tamamlandıktan sonra ready=true.
- * - Navbar jitter fix: ilk boyada localStorage'dan hafif hydrate; ama redirect kararları için /api/me sonucu beklenir.
+ * - Navbar jitter fix: ilk boyada localStorage'dan hafif hydrate; ancak redirect kararları /api/me sonucuna göre.
  * - Sekmeler arası senkron ve temiz cache yönetimi.
  */
 
