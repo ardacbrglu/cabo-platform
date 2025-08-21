@@ -2,15 +2,13 @@
 
 /**
  * File: src/app/login/page.js
- * Purpose: Affiliate kullanıcı girişi (manual + Google). Backend mesajları doğrudan gösterilir.
+ * Purpose: Affiliate login (Credentials + Google). Prod-hardened.
  *
- * Security Docblock (Cabo PROD Standardı)
- * - Auth: Tek oturum NextAuth (Credentials + Google).
- * - CSRF: İlk yüklemede /api/auth/csrf ile token al; /api/login POST’unda X-CSRF-Token gönder.
- * - Frontend: Tüm istekler tek apiFetch wrapper’ı ile (credentials:include, X-Requested-With, X-Request-Id).
- * - Backend: Ratelimit (login 5/dk + backoff), status/role kapıları, brute-force sayaçları, generic error mesajları.
- * - Headers: Global CSP/HSTS/nosniff/strict-origin-when-cross-origin; Origin/Referer eşleşmesi.
- * - Validation: Backend Zod + sanitize; istemci tarafında e-posta format kontrolü ve trim.
+ * Güvenlik / Akış:
+ * - İlk yüklemede /api/auth/csrf çağrısı (token + cookie’ler).
+ * - Submit: tek kanal /api/login (server proxy). apiFetch -> credentials:include.
+ * - Başarılı login: router.replace + router.refresh + hard reload fallback.
+ * - Zaten girişli kullanıcı /login'de kalmaz (session guard).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -96,15 +94,36 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
+
   const [csrfToken, setCsrfToken] = useState("");
   const [csrfReady, setCsrfReady] = useState(false);
+
   const firstInputRef = useRef(null);
 
-  // NextAuth CSRF/callback çerezlerini ve token'ı önden al (proxy/CSR akışı için faydalı)
+  const callbackUrl = searchParams?.get("from") || "/dashboard";
+
+  // Session guard: zaten girişliyse /login’de bekleme
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/auth/csrf", { credentials: "include" });
+        const s = await fetch("/api/auth/session", {
+          credentials: "include",
+          cache: "no-store",
+        }).then((r) => r.json()).catch(() => null);
+        if (s?.user) {
+          router.replace(callbackUrl);
+          router.refresh();
+        }
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // CSRF preload (NextAuth cookie’leri + token)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
         const j = await r.json().catch(() => ({}));
         if (j?.csrfToken) setCsrfToken(j.csrfToken);
       } catch {}
@@ -112,7 +131,7 @@ export default function LoginPage() {
     })();
   }, []);
 
-  // Aktivasyon sonrası banner
+  // Aktivasyon banner’ı
   useEffect(() => {
     if (searchParams?.get("activated") === "1") {
       setJustActivated(true);
@@ -129,9 +148,8 @@ export default function LoginPage() {
   if (!ready) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
-  const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  const onSubmit = async (e) => {
+  async function onSubmit(e) {
     e.preventDefault();
     if (loading) return;
 
@@ -150,28 +168,31 @@ export default function LoginPage() {
         },
         body: { email: email.trim().toLowerCase(), password },
       });
+
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
+        // Router state bazen /login’da kalabiliyor → üç aşamalı geçiş
         router.replace(callbackUrl);
+        router.refresh();
+        setTimeout(() => {
+          if (window.location.pathname === "/login") {
+            window.location.assign(callbackUrl);
+          }
+        }, 50);
         return;
       }
 
       const msg = data?.message;
-      if (typeof msg === "string" && msg.length > 0) {
-        // Backend mesajlarını doğrudan yansıt (google-only/inactive/locked/invalid vb.)
-        setError(msg);
-      } else {
-        setError(t("serverError"));
-      }
+      setError(typeof msg === "string" && msg ? msg : t("serverError"));
     } catch {
       setError(t("serverError"));
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const onGoogle = async () => {
+  async function onGoogle() {
     setError("");
     setLoading(true);
     try {
@@ -180,12 +201,12 @@ export default function LoginPage() {
       setError(t("googleSignInError"));
       setLoading(false);
     }
-  };
+  }
 
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* INFO */}
+        {/* SOL BİLGİ BLOĞU */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>

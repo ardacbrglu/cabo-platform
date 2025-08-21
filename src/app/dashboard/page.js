@@ -6,8 +6,8 @@
  *
  * Security Docblock (Cabo PROD)
  * - Frontend tüm istekler: tek apiFetch wrapper (credentials:include, X-Requested-With, X-Request-Id).
- * - GET /api/dashboard: CSRF gereksiz; 401 → /login, 403 'inactive' → /activate, diğer 403 → /unauthorized.
- * - Rate-limit 429: Retry-After/body.retry_after değerine göre polling backoff uygulanır (min 8sn).
+ * - GET /api/dashboard: CSRF gereksiz; 401/403 → login'e yönlendirilir.
+ * - Rate-limit 429: Retry-After’a göre polling backoff uygulanır (min 8s).
  * - PII minimal: yalnız gerekli alanlar UI'da gösterilir.
  */
 
@@ -59,9 +59,8 @@ export default function Dashboard() {
   const setUser = ctx.setUser || (() => {});
   const { t } = useTranslation();
 
-  // Context geride kalırsa güvenli fallback
+  // Context hazır sinyali (eski context’lerde de çalışır)
   const isReady = typeof ctx.ready === "boolean" ? ctx.ready : me !== undefined;
-  const isAuth  = typeof ctx.isAuthenticated === "boolean" ? ctx.isAuthenticated : !!(me && me.id);
 
   const [stats, setStats] = useState({
     totalClicks: 0,
@@ -87,20 +86,15 @@ export default function Dashboard() {
   const [payoutstatus, setPayoutstatus] = useState("");
   const [isMobile, setIsMobile] = useState(false);
 
-  // Auth/RBAC yönlendirme
+  // Sadece role uyuşmazlığında at; auth kontrolünü API yanıtı belirleyecek.
   useEffect(() => {
     if (!isReady) return;
-    if (!isAuth) {
-      router.replace("/login");
-      return;
-    }
     if (me?.role && me.role !== "affiliate") {
       router.replace("/unauthorized");
-      return;
     }
-  }, [isReady, isAuth, me?.role, router]);
+  }, [isReady, me?.role, router]);
 
-  // Ekran boyutu
+  // Boyut dinleyicisi (UI)
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 700);
     checkMobile();
@@ -108,17 +102,17 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Dashboard polling (+ 429 backoff)
+  // Dashboard verileri (polling + 429 backoff)
   useEffect(() => {
-    if (!isReady || !isAuth) return;
+    if (!isReady) return;
 
-    let timer = null;
+    let interval = null;
     let alive = true;
 
     const schedule = (ms) => {
       if (!alive) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(fetchStats, Math.max(ms, 8000)); // min 8s
+      if (interval) clearInterval(interval);
+      interval = setInterval(fetchStats, Math.max(ms, 8000)); // min 8s
     };
 
     const fetchStats = async () => {
@@ -126,28 +120,26 @@ export default function Dashboard() {
         const res = await apiFetch("/api/dashboard", { method: "GET" });
         if (!alive) return;
 
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
+          if (interval) clearInterval(interval);
           router.replace("/login");
           return;
         }
-        if (res.status === 403) {
-          let reason = "";
-          try { const j = await res.clone().json(); reason = j?.error || ""; } catch {}
-          if (reason === "inactive") router.replace("/activate");
-          else router.replace("/unauthorized");
-          return;
-        }
+
         if (res.status === 429) {
           const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
           let retryBody = 0;
-          try { const j = await res.clone().json(); retryBody = Number(j?.retry_after) || 0; } catch {}
+          try {
+            const data = await res.clone().json();
+            retryBody = Number(data?.retry_after) || 0;
+          } catch {}
           const waitMs = Math.max((retryHeader || retryBody || 8) * 1000, 8000);
           schedule(waitMs);
           return;
         }
+
         if (!res.ok) {
-          // 5xx/diğer — sessiz; bir sonraki poll denesin
-          schedule(8000);
+          // 5xx/diğer — sessiz; mevcut interval ile devam
           return;
         }
 
@@ -176,36 +168,25 @@ export default function Dashboard() {
         }));
 
         setLoading(false);
-        schedule(8000);
+        schedule(8000); // başarılı istekte normal periyot
       } catch {
-        // ağ hatası → sessiz; yeniden dene
-        schedule(8000);
+        // ağ hatası → sessiz; mevcut interval ile devam
       }
     };
 
+    // İlk çekim ve standart poll
     fetchStats();
     schedule(8000);
 
     return () => {
       alive = false;
-      if (timer) clearTimeout(timer);
+      if (interval) clearInterval(interval);
     };
-  }, [isReady, isAuth, setUser, router]);
+  }, [isReady, setUser, router]);
 
   const {
-    totalClicks,
-    totalSales,
-    totalEarnings,
-    balance,
-    minPayout,
-    platformCommission,
-    recentActions,
-    leaderboard,
-    ibanMissing,
-    bankMissing,
-    realNameMissing,
-    lastConversion,
-    lastClick,
+    totalClicks, totalSales, totalEarnings, balance, minPayout, platformCommission,
+    recentActions, leaderboard, ibanMissing, bankMissing, realNameMissing, lastConversion, lastClick,
   } = stats;
 
   const payoutDisabled = loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing;
@@ -214,9 +195,7 @@ export default function Dashboard() {
     !loading &&
     (ibanMissing || bankMissing || realNameMissing) && (
       <div
-        className={`w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-6 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse z-40 ${
-          isMobile ? "fixed left-0 right-0 top-14 mx-auto mt-0" : "relative mt-0"
-        }`}
+        className={`w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-6 py-3 text-sm text-center mb-3 border border-red-700 shadow animate-pulse z-40 ${isMobile ? "fixed left-0 right-0 top-14 mx-auto mt-0" : "relative mt-0"}`}
         style={isMobile ? { marginTop: "0px" } : {}}
       >
         <b>{t("bankInfoMissing")}</b> {t("mustAddBank")}
@@ -277,28 +256,22 @@ export default function Dashboard() {
 
                 <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-5 px-6">
                   <WalletProgress value={balance} max={minPayout} />
-                  <div className="text-lg font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>
-                    {t("wallet")}
-                  </div>
+                  <div className="text-lg font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
                   <div className="text-gray-400 text-xs font-mono">{t("balance")}</div>
-                  <div className="text-xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>
-                    ₺{Number(balance).toFixed(2)}
-                  </div>
+                  <div className="text-xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>₺{Number(balance).toFixed(2)}</div>
                   <div className="text-xs mb-1 font-mono">
                     <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
                     <span style={{ color: COLOR_GREEN, fontWeight: 700 }}> {minPayout}</span>
                   </div>
                   <div className="mt-2 text-xs font-bold animate-pulse font-mono" style={{ color: balance < minPayout ? "#e3d67d" : COLOR_GREEN }}>
-                    {balance < minPayout ? <>{t("earnMoreToPayout")}</> : <>{t("eligiblePayout")}</>}
+                    {balance < minPayout ? t("earnMoreToPayout") : t("eligiblePayout")}
                   </div>
                 </div>
               </div>
 
               <div className="flex flex-col gap-5 flex-1">
                 <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-6 px-6">
-                  <div className="text-lg font-extrabold mb-3 font-mono" style={{ color: COLOR_CABO }}>
-                    {t("payoutRequest")}
-                  </div>
+                  <div className="text-lg font-extrabold mb-3 font-mono" style={{ color: COLOR_CABO }}>{t("payoutRequest")}</div>
                   <button
                     className={`flex items-center justify-center gap-2 w-full py-2 rounded font-bold font-mono text-[#181818] ${
                       loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing
@@ -310,13 +283,8 @@ export default function Dashboard() {
                     onClick={() => router.push("/wallet")}
                   >
                     {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing) ? (
-                      <>
-                        <Lock size={18} className="inline-block mr-2" />
-                        {t("enterValidBank")}
-                      </>
-                    ) : (
-                      t("requestPayout")
-                    )}
+                      <><Lock size={18} className="inline-block mr-2" />{t("enterValidBank")}</>
+                    ) : t("requestPayout")}
                   </button>
                   <div className="mt-1 text-xs font-mono text-gray-400 text-center">
                     <span className="text-gray-300">
@@ -331,9 +299,7 @@ export default function Dashboard() {
                 <div className="bg-[#181818] rounded-xl shadow py-5 px-4 flex flex-col items-center">
                   <div className="flex items-center gap-2 mb-2">
                     <Trophy className="text-[#81d742]" size={17} />
-                    <span className="font-extrabold text-base font-mono" style={{ color: COLOR_CABO }}>
-                      {t("leaderboard")}
-                    </span>
+                    <span className="font-extrabold text-base font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
                   </div>
                   <div className="flex flex-col gap-1 w-full">
                     {(leaderboard || []).map((lb, i) => (
@@ -342,7 +308,7 @@ export default function Dashboard() {
                         <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
                           {lb.name === stats.username ? t("you") : lb.name}
                         </span>
-                        <span className={i === 0 ? "text-yellow-20 0" : "text-gray-400"}>{lb.value}</span>
+                        <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
                       </div>
                     ))}
                   </div>
@@ -353,9 +319,7 @@ export default function Dashboard() {
             {/* Recent & Onboarding */}
             <section className="flex w-full gap-5 mb-3">
               <div className="flex-1 bg-[#181818] rounded-xl shadow py-5 px-7">
-                <div className="font-extrabold mb-3 text-lg font-mono" style={{ color: "#81d742" }}>
-                  {t("recentActivity")}
-                </div>
+                <div className="font-extrabold mb-3 text-lg font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
                 <div className="flex flex-col gap-2">
                   {recentActions && recentActions.length > 0 ? (
                     recentActions.map((a, idx) => (
@@ -372,9 +336,7 @@ export default function Dashboard() {
               </div>
 
               <div className="w-80 bg-[#181818] rounded-xl shadow py-5 px-6 flex flex-col items-center justify-center">
-                <div className="font-extrabold mb-2 text-lg font-mono" style={{ color: COLOR_CABO }}>
-                  {t("welcomeDashboard")}
-                </div>
+                <div className="font-extrabold mb-2 text-lg font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
                 <ul className="list-disc pl-4 text-gray-300 text-xs flex flex-col gap-1 font-mono">
                   <li>{t("trackStats")}</li>
                   <li>{t("inviteFriends")}</li>
@@ -448,14 +410,9 @@ export default function Dashboard() {
                 disabled={loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing}
                 onClick={() => router.push("/wallet")}
               >
-                {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankName === "" || realNameMissing) ? (
-                  <>
-                    <Lock size={17} className="inline-block mr-2" />
-                    {t("enterValidBank")}
-                  </>
-                ) : (
-                  t("requestPayout")
-                )}
+                {loading ? t("processing") : (loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing) ? (
+                  <><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>
+                ) : t("requestPayout")}
               </button>
               <div className="mt-2 text-xs font-mono text-gray-400 text-center">
                 <span className="text-gray-300">
