@@ -2,12 +2,14 @@
   "name": "cabo-platform",
   "version": "0.1.0",
   "private": true,
-  "postinstall": "prisma generate",
   "scripts": {
     "dev": "next dev --turbo",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "next start -p $PORT",
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.10.0",
@@ -25,7 +27,7 @@
     "lucide-react": "^0.525.0",
     "mysql2": "^3.14.2",
     "next": "^14.2.31",
-    "next-auth": "^4.24.11",
+    "next-auth": "^4.24.7",
     "nodemailer": "^6.10.1",
     "react": "18.2.0",
     "react-chartjs-2": "^5.3.0",
