@@ -300,42 +300,21 @@
   "locked": "Locked",
   "cancelUntil": "Cancel until",
   "updateBankForThisRequest": "Update bank for this request",
-
-
-
-  "api": {
-    "payoutDetails": {
-      "unauthorized": "Unauthorized",
-      "forbidden": "Not authorized",
-      "ratelimit": "Too many requests",
-      "invalidBody": "Invalid request body",
-      "invalidRequestId": "Invalid requestId",
-      "serverError": "Server error"
-    },
-    "performance": {
-      "unauthorized": "Unauthorized",
-      "ratelimit": "Too many requests",
-      "invalidStartDate": "Invalid startDate",
-      "invalidEndDate": "Invalid endDate",
-      "invalidProductIds": "Invalid productIds",
-      "serverError": "Performance fetch error"
-    }
-  },
-
-  "activation": {
-    "fail": "❌ Activation failed",
-    "invalid": "Invalid activation token.",
-    "error": "❌ An error occurred. Please try again.",
-    "loginLink": "Go to login page"
-  },
   "activating": "Activating your account...",
   "activatingAccount": "Your account is being verified...",
   "activationSuccess": "Activation successful! You can now log in.",
   "activationFailed": "Activation failed or the link is invalid.",
-  "redirectingToLogin": "Redirecting to login page..."
-
+  "redirectingToLogin": "Redirecting to login page...",
+  "api.payoutDetails.unauthorized": "Unauthorized",
+  "api.payoutDetails.forbidden": "Not authorized",
+  "api.payoutDetails.ratelimit": "Too many requests",
+  "api.payoutDetails.invalidBody": "Invalid request body",
+  "api.payoutDetails.invalidRequestId": "Invalid requestId",
+  "api.payoutDetails.serverError": "Server error",
+  "api.performance.unauthorized": "Unauthorized",
+  "api.performance.ratelimit": "Too many requests",
+  "api.performance.invalidStartDate": "Invalid startDate",
+  "api.performance.invalidEndDate": "Invalid endDate",
+  "api.performance.invalidProductIds": "Invalid productIds",
+  "api.performance.serverError": "Performance fetch error"
 }
-
-
-
-

@@ -207,7 +207,7 @@
   "performance.confirmed_sales": "Onaylı Satışlar",
   "performance.no_sales": "Onaylı satış yok.",
   "performance.all_products": "Tüm Ürünler",
-  "performance.selected_product": "Seçili Ürün",   
+  "performance.selected_product": "Seçili Ürün",
   "performance.multiple_products": "Çoklu Ürün",
   "performance.clicks": "Tıklama",
   "performance.sales": "Satış",
@@ -312,35 +312,20 @@
   "locked": "Kilitli",
   "cancelUntil": "İptal için son tarih",
   "updateBankForThisRequest": "Bu talep için banka bilgisini güncelle",
-
-  "homepage": {
-    "heroTitleA": "Drop your link. ",
-    "heroTitleB": "Let the money flow.",
-    "heroDesc": "Cabo, sadece ürün linki paylaşarak para kazanmanı sağlar. Birileri satın aldığında para hesabına yatar.",
-    "loginBtn": "Hemen Kazanmaya Başla"
-  },
-
-  "api": {
-    "payoutDetails": {
-      "unauthorized": "Yetkisiz erişim",
-      "forbidden": "Bu işlem için yetkin yok",
-      "ratelimit": "Çok fazla istek",
-      "invalidBody": "Geçersiz istek gövdesi",
-      "invalidRequestId": "Geçersiz requestId",
-      "serverError": "Sunucu hatası"
-    },
-    "performance": {
-      "unauthorized": "Yetkisiz erişim",
-      "ratelimit": "Çok fazla istek",
-      "invalidStartDate": "Geçersiz startDate",
-      "invalidEndDate": "Geçersiz endDate",
-      "invalidProductIds": "Geçersiz productIds",
-      "serverError": "Performans verisi alınırken hata oluştu"
-    }
-  }
+  "homepage.heroTitleA": "Drop your link. ",
+  "homepage.heroTitleB": "Let the money flow.",
+  "homepage.heroDesc": "Cabo, sadece ürün linki paylaşarak para kazanmanı sağlar. Birileri satın aldığında para hesabına yatar.",
+  "homepage.loginBtn": "Hemen Kazanmaya Başla",
+  "api.payoutDetails.unauthorized": "Yetkisiz erişim",
+  "api.payoutDetails.forbidden": "Bu işlem için yetkin yok",
+  "api.payoutDetails.ratelimit": "Çok fazla istek",
+  "api.payoutDetails.invalidBody": "Geçersiz istek gövdesi",
+  "api.payoutDetails.invalidRequestId": "Geçersiz requestId",
+  "api.payoutDetails.serverError": "Sunucu hatası",
+  "api.performance.unauthorized": "Yetkisiz erişim",
+  "api.performance.ratelimit": "Çok fazla istek",
+  "api.performance.invalidStartDate": "Geçersiz startDate",
+  "api.performance.invalidEndDate": "Geçersiz endDate",
+  "api.performance.invalidProductIds": "Geçersiz productIds",
+  "api.performance.serverError": "Performans verisi alınırken hata oluştu"
 }
-
-
-
-
-

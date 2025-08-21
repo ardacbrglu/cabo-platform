@@ -1,14 +1,20 @@
-// src/hooks/useTranslation.js
 import { useMemo, useEffect, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { DEFAULT_LOCALE } from "@/locales";
 
+// --- Turbopack uyumlu loader haritası (flat JSON dosyaları)
+const loaders = {
+  en: () => import("@/locales/en.json").then((m) => m.default || m),
+  tr: () => import("@/locales/tr.json").then((m) => m.default || m),
+};
+
+// Sözlük önbelleği
 const dictCache = new Map();
 
 async function loadDict(locale) {
   if (dictCache.has(locale)) return dictCache.get(locale);
-  const mod = await import(`@/locales/${locale}/common.json`);
-  const dict = mod.default || mod;
+  const loader = loaders[locale] || loaders.en;
+  const dict = await loader();
   dictCache.set(locale, dict);
   return dict;
 }
@@ -50,7 +56,7 @@ export function useI18n(nsPrefix = "") {
   const loc = raw || DEFAULT_LOCALE;
   const prefix = nsPrefix ? (nsPrefix.endsWith(".") ? nsPrefix : nsPrefix + ".") : "";
 
-  // sözlükleri 1 kez yüklet, mount sonrasında tetikle
+  // mount'ta sözlükleri yükle
   const [, setTick] = useState(0);
   useEffect(() => {
     let mounted = true;
@@ -90,8 +96,7 @@ export function useI18n(nsPrefix = "") {
 // ---- Geriye dönük uyum: fonksiyon döndür (aynı zamanda property’leri var)
 export function useTranslation(nsPrefix = "") {
   const obj = useI18n(nsPrefix);
-  const fn = (key, vars) => obj.t(key, vars);   // doğrudan fonksiyon gibi kullanım
-  // ayrıca destructure kullanıma destek
+  const fn = (key, vars) => obj.t(key, vars);
   fn.t = obj.t;
   fn.n = obj.n;
   fn.d = obj.d;

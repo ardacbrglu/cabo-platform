@@ -24,7 +24,7 @@ const COLOR_GREEN = "#81d742";
 
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max || 1, 1)) * 100, 100);
-  const size = 104; // daha kompakt
+  const size = 104;
   const radius = 40, stroke = 6, center = size / 2, circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - percent / 100);
   return (
@@ -45,9 +45,9 @@ function WalletProgress({ value, max }) {
 
 function StatCard({ value, label, icon }) {
   return (
-    <div className="flex-1 bg-[#181818] rounded-xl py-5 shadow flex flex-col items-center gap-1 min-w-[120px] hover:scale-[1.03] transition">
+    <div className="h-[98px] bg-[#181818] rounded-xl shadow flex flex-col items-center justify-center gap-1 overflow-hidden hover:scale-[1.02] transition">
       <span className="text-white">{icon}</span>
-      <span className="text-base font-extrabold font-mono text-white">{value}</span>
+      <span className="text-[15px] font-extrabold font-mono text-white leading-none">{value}</span>
       <span className="text-[11px] font-mono text-gray-400">{label}</span>
     </div>
   );
@@ -60,7 +60,6 @@ export default function Dashboard() {
   const setUser = ctx.setUser || (() => {});
   const { t } = useTranslation();
 
-  // Context hazır sinyali
   const isReady = typeof ctx.ready === "boolean" ? ctx.ready : me !== undefined;
 
   const [stats, setStats] = useState({
@@ -87,7 +86,7 @@ export default function Dashboard() {
   const [payoutstatus, setPayoutstatus] = useState("");
   const [isMobile, setIsMobile] = useState(false);
 
-  // 🔒 Navbar username "jitter" fix – ilk boyamadan önce cached adı bağla
+  // Navbar username "jitter" fix
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
     const cachedName = localStorage.getItem("cabo_username");
@@ -104,7 +103,6 @@ export default function Dashboard() {
     }
   }, [setUser]);
 
-  // Sadece role uyuşmazlığında at; auth kontrolünü API yanıtı belirleyecek.
   useEffect(() => {
     if (!isReady) return;
     if (me?.role && me.role !== "affiliate") {
@@ -112,7 +110,6 @@ export default function Dashboard() {
     }
   }, [isReady, me?.role, router]);
 
-  // Boyut dinleyicisi (UI)
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 700);
     checkMobile();
@@ -120,7 +117,6 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Dashboard verileri (polling + 429 backoff)
   useEffect(() => {
     if (!isReady) return;
 
@@ -130,7 +126,7 @@ export default function Dashboard() {
     const schedule = (ms) => {
       if (!alive) return;
       if (interval) clearInterval(interval);
-      interval = setInterval(fetchStats, Math.max(ms, 8000)); // min 8s
+      interval = setInterval(fetchStats, Math.max(ms, 8000));
     };
 
     const fetchStats = async () => {
@@ -156,9 +152,7 @@ export default function Dashboard() {
           return;
         }
 
-        if (!res.ok) {
-          return; // 5xx/other → sessiz
-        }
+        if (!res.ok) return;
 
         const data = await res.json().catch(() => ({}));
 
@@ -175,7 +169,6 @@ export default function Dashboard() {
           lastClick: data.lastClick || null,
         }));
 
-        // Context + localStorage güncelle (navbar stabil)
         setUser((u) => ({
           ...(u || {}),
           name: data.username || u?.name || "",
@@ -191,13 +184,10 @@ export default function Dashboard() {
         }
 
         setLoading(false);
-        schedule(8000); // başarılı istekte normal periyot
-      } catch {
-        // ağ hatası → sessiz
-      }
+        schedule(8000);
+      } catch {}
     };
 
-    // İlk çekim ve standart poll
     fetchStats();
     schedule(8000);
 
@@ -216,147 +206,137 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <main className="flex flex-col items-center w-full max-w-7xl mx-auto flex-1 justify-center mt-5 gap-6 px-4 overflow-x-hidden">
-        {/* Desktop */}
+      <main className="flex flex-col items-center w-full max-w-6xl lg:max-w-7xl mx-auto flex-1 justify-center mt-5 gap-6 px-4 overflow-x-hidden">
+        {/* DESKTOP: grid ile bütünlük */}
         {!isMobile ? (
-          <>
-            <section className="flex gap-4 w-full overflow-x-hidden">
-              <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={20} />} />
-              <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={20} />} />
-              <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={20} />} />
-            </section>
+          <section className="grid w-full grid-cols-12 gap-4">
+            {/* Row 1: Stats */}
+            <div className="col-span-4">
+              <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={18} />} />
+            </div>
+            <div className="col-span-4">
+              <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={18} />} />
+            </div>
+            <div className="col-span-4">
+              <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={18} />} />
+            </div>
 
-            <section className="flex w-full gap-4">
-              {/* Sol kolon: Live + Wallet&Payout (tek kart) */}
-              <div className="flex flex-col gap-4 flex-[2]">
-                {/* Live */}
-                <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-4">
-                  <span className="flex items-center gap-2 font-mono font-bold text-[15px]" style={{ color: "#81d742" }}>
-                    <BarChart2 className="text-white" size={16} /> {t("liveStats")}
+            {/* Row 2: Live & Leaderboard (aynı yükseklik) */}
+            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-4 min-h-[180px] overflow-hidden">
+              <span className="flex items-center gap-2 font-mono font-bold text-[15px]" style={{ color: "#81d742" }}>
+                <BarChart2 className="text-white" size={16} /> {t("liveStats")}
+              </span>
+              <p className="text-gray-400 mt-1 text-[11px] font-mono">{t("liveStatsDesc")}</p>
+              {lastConversion && (
+                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#191b19] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[11px]">
+                  <span className="font-bold text-[#81d742]">
+                    {new Date(lastConversion.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
                   </span>
-                  <p className="text-gray-400 mt-1 text-[11px] font-mono">{t("liveStatsDesc")}</p>
-                  {lastConversion && (
-                    <div className="flex gap-3 mt-3 px-3 py-2 bg-[#191b19] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[11px]">
-                      <span className="font-bold text-[#81d742]">
-                        {new Date(lastConversion.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                      </span>
-                      <span className="text-[#d1ffd0]">{lastConversion.productName}</span>
-                      <span className="font-bold text-[#81d742]">₺{Number(lastConversion.commission).toFixed(2)}</span>
-                      <span className="text-gray-400">x{lastConversion.quantity}</span>
-                    </div>
-                  )}
-                  {lastClick && (
-                    <div className="flex gap-3 mt-3 px-3 py-2 bg-[#232523] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[11px]">
-                      <span className="font-bold text-[#81d742]">
-                        {new Date(lastClick.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                      </span>
-                      <span className="text-[#d1ffd0]">{lastClick.productName}</span>
-                      <span className="text-blue-400">Click</span>
-                      <span className="text-gray-400">{lastClick.extra || "-"}</span>
-                    </div>
-                  )}
-                  {!lastConversion && !lastClick && <span className="text-gray-500 mt-2 text-[12px]">{t("noRecentActivity")}</span>}
+                  <span className="text-[#d1ffd0]">{lastConversion.productName}</span>
+                  <span className="font-bold text-[#81d742]">₺{Number(lastConversion.commission).toFixed(2)}</span>
+                  <span className="text-gray-400">x{lastConversion.quantity}</span>
                 </div>
-
-                {/* Wallet + Payout (tek kart) */}
-                <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5">
-                  <WalletProgress value={balance} max={minPayout} />
-                  <div className="text-[17px] font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
-                  <div className="text-gray-400 text-[11px] font-mono">{t("balance")}</div>
-                  <div className="text-lg font-extrabold font-mono" style={{ color: COLOR_CABO }}>₺{Number(balance).toFixed(2)}</div>
-                  <div className="text-[11px] mb-1 font-mono">
-                    <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
-                    <span style={{ color: COLOR_GREEN, fontWeight: 700 }}> {minPayout}</span>
-                  </div>
-                  <div className="mt-1 text-[11px] font-bold font-mono" style={{ color: balance < minPayout ? "#e3d67d" : COLOR_GREEN }}>
-                    {balance < minPayout ? t("earnMoreToPayout") : t("eligiblePayout")}
-                  </div>
-
-                  {/* Payout butonu/alanları (aynı kart içinde) */}
-                  <div className="w-full max-w-sm mt-4">
-                    <div className="text-[13px] font-extrabold mb-2 font-mono text-center" style={{ color: COLOR_CABO }}>{t("payoutRequest")}</div>
-                    <button
-                      className={`flex items-center justify-center gap-2 w-full py-2.5 rounded font-bold font-mono text-[#181818] ${
-                        payoutDisabled
-                          ? "bg-[#323232] text-gray-500 cursor-not-allowed"
-                          : "bg-[#81d742] hover:bg-[#a9ff72] transition-all"
-                      } text-[14px]`}
-                      disabled={payoutDisabled}
-                      onClick={() => router.push("/wallet")}
-                    >
-                      {loading ? t("processing") : payoutDisabled ? (
-                        <><Lock size={17} className="inline-block mr-1" />{t("enterValidBank")}</>
-                      ) : t("requestPayout")}
-                    </button>
-                    <div className="mt-2 text-[11px] font-mono text-gray-400 text-center">
-                      <span className="text-gray-300">
-                        {t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span>
-                      </span>
-                    </div>
-                    {payoutstatus === "success" && <div className="mt-2 text-green-400 text-[11px] text-center font-mono">{t("requestCreated")}</div>}
-                    {payoutstatus && payoutstatus !== "success" && <div className="mt-2 text-red-400 text-[11px] text-center font-mono">{payoutstatus}</div>}
-                    <div className="mt-1 text-[11px] text-gray-400 text-center font-mono">{t("minThresholdNote")}</div>
-                  </div>
+              )}
+              {lastClick && (
+                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#232523] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[11px]">
+                  <span className="font-bold text-[#81d742]">
+                    {new Date(lastClick.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
+                  </span>
+                  <span className="text-[#d1ffd0]">{lastClick.productName}</span>
+                  <span className="text-blue-400">Click</span>
+                  <span className="text-gray-400">{lastClick.extra || "-"}</span>
                 </div>
+              )}
+              {!lastConversion && !lastClick && <span className="text-gray-500 mt-2 text-[12px]">{t("noRecentActivity")}</span>}
+            </div>
+
+            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-5 px-4 flex flex-col items-center min-h-[180px] overflow-hidden">
+              <div className="flex items-center gap-2 mb-2">
+                <Trophy className="text-[#81d742]" size={16} />
+                <span className="font-extrabold text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
+              </div>
+              <div className="flex flex-col gap-1 w-full">
+                {(leaderboard || []).map((lb, i) => (
+                  <div key={`${lb.name}-${i}`} className="flex justify-between w-full text-[12px] px-2 font-mono">
+                    <span className="font-bold" style={{ color: COLOR_GREEN }}>{i + 1}.</span>
+                    <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
+                      {lb.name === stats.username ? t("you") : lb.name}
+                    </span>
+                    <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Row 3: Wallet+Payout & Onboarding (aynı yükseklik) */}
+            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5 min-h-[300px] overflow-hidden">
+              <WalletProgress value={balance} max={minPayout} />
+              <div className="text-[17px] font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
+              <div className="text-gray-400 text-[11px] font-mono">{t("balance")}</div>
+              <div className="text-lg font-extrabold font-mono" style={{ color: COLOR_CABO }}>₺{Number(balance).toFixed(2)}</div>
+              <div className="text-[11px] mb-1 font-mono">
+                <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
+                <span style={{ color: COLOR_GREEN, fontWeight: 700 }}> {minPayout}</span>
+              </div>
+              <div className="mt-1 text-[11px] font-bold font-mono" style={{ color: balance < minPayout ? "#e3d67d" : COLOR_GREEN }}>
+                {balance < minPayout ? t("earnMoreToPayout") : t("eligiblePayout")}
               </div>
 
-              {/* Sağ kolon: Leaderboard */}
-              <div className="flex flex-col gap-4 flex-1">
-                <div className="bg-[#181818] rounded-xl shadow py-5 px-4 flex flex-col items-center">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Trophy className="text-[#81d742]" size={16} />
-                    <span className="font-extrabold text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
-                  </div>
-                  <div className="flex flex-col gap-1 w-full">
-                    {(leaderboard || []).map((lb, i) => (
-                      <div key={`${lb.name}-${i}`} className="flex justify-between w-full text-[12px] px-2 font-mono">
-                        <span className="font-bold" style={{ color: COLOR_GREEN }}>{i + 1}.</span>
-                        <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
-                          {lb.name === stats.username ? t("you") : lb.name}
-                        </span>
-                        <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Recent & Onboarding */}
-            <section className="flex w-full gap-4 mb-2">
-              <div className="flex-1 bg-[#181818] rounded-xl shadow py-5 px-6">
-                <div className="font-extrabold mb-3 text-[15px] font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
-                <div className="flex flex-col gap-2">
-                  {recentActions && recentActions.length > 0 ? (
-                    recentActions.map((a, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-[12px] py-1 border-b border-[#1b1b1b] last:border-none font-mono">
-                        <span className="font-bold" style={{ color: COLOR_GREEN }}>{a.amount}</span>
-                        <span className="text-gray-300">{a.desc}</span>
-                        <span className="text-gray-400 text-[11px]">{a.date}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-gray-400 text-[12px] font-mono py-2">{t("noActivity")}</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="w-80 bg-[#181818] rounded-xl shadow py-5 px-6 flex flex-col items-center justify-center">
-                <div className="font-extrabold mb-2 text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
-                <ul className="list-disc pl-4 text-gray-300 text-[12px] flex flex-col gap-1 font-mono">
-                  <li>{t("trackStats")}</li>
-                  <li>{t("inviteFriends")}</li>
-                  <li>{t("withdrawEarnings")}</li>
-                  <li>{t("checkProducts")}</li>
-                </ul>
-                <button className="mt-5 w-full py-2 rounded font-bold font-mono transition" style={{ background: COLOR_GREEN, color: "#181818", fontSize: "0.95rem" }}>
-                  {t("referFriends")}
+              <div className="w-full max-w-sm mt-4">
+                <div className="text-[13px] font-extrabold mb-2 font-mono text-center" style={{ color: COLOR_CABO }}>{t("payoutRequest")}</div>
+                <button
+                  className={`flex items-center justify-center gap-2 w-full py-2.5 rounded font-bold font-mono text-[#181818] ${
+                    payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition-all"
+                  } text-[14px]`}
+                  disabled={payoutDisabled}
+                  onClick={() => router.push("/wallet")}
+                >
+                  {loading ? t("processing") : payoutDisabled ? (<><Lock size={17} className="inline-block mr-1" />{t("enterValidBank")}</>) : t("requestPayout")}
                 </button>
+                <div className="mt-2 text-[11px] font-mono text-gray-400 text-center">
+                  <span className="text-gray-300">
+                    {t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span>
+                  </span>
+                </div>
+                {payoutstatus === "success" && <div className="mt-2 text-green-400 text-[11px] text-center font-mono">{t("requestCreated")}</div>}
+                {payoutstatus && payoutstatus !== "success" && <div className="mt-2 text-red-400 text-[11px] text-center font-mono">{payoutstatus}</div>}
+                <div className="mt-1 text-[11px] text-gray-400 text-center font-mono">{t("minThresholdNote")}</div>
               </div>
-            </section>
-          </>
+            </div>
+
+            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-5 px-6 flex flex-col items-center justify-center min-h-[300px] overflow-hidden">
+              <div className="font-extrabold mb-2 text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
+              <ul className="list-disc pl-4 text-gray-300 text-[12px] flex flex-col gap-1 font-mono">
+                <li>{t("trackStats")}</li>
+                <li>{t("inviteFriends")}</li>
+                <li>{t("withdrawEarnings")}</li>
+                <li>{t("checkProducts")}</li>
+              </ul>
+              <button className="mt-5 w-full py-2 rounded font-bold font-mono transition" style={{ background: COLOR_GREEN, color: "#181818", fontSize: "0.95rem" }}>
+                {t("referFriends")}
+              </button>
+            </div>
+
+            {/* Row 4: Recent Activity full width */}
+            <div className="col-span-12 bg-[#181818] rounded-xl shadow py-5 px-6 overflow-hidden">
+              <div className="font-extrabold mb-3 text-[15px] font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
+              <div className="flex flex-col gap-2">
+                {recentActions && recentActions.length > 0 ? (
+                  recentActions.map((a, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-[12px] py-1 border-b border-[#1b1b1b] last:border-none font-mono">
+                      <span className="font-bold" style={{ color: COLOR_GREEN }}>{a.amount}</span>
+                      <span className="text-gray-300">{a.desc}</span>
+                      <span className="text-gray-400 text-[11px]">{a.date}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-gray-400 text-[12px] font-mono py-2">{t("noActivity")}</div>
+                )}
+              </div>
+            </div>
+          </section>
         ) : (
-          // Mobile
+          // MOBILE (mevcut içerik)
           <>
             <section className="flex flex-col gap-3 w-full items-center">
               <div className="flex flex-row gap-3 w-full">
@@ -394,7 +374,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Mobile: Wallet + Payout tek kart */}
             <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-5 px-4 mt-3 w-full">
               <WalletProgress value={balance} max={minPayout} />
               <div className="text-lg font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
@@ -410,16 +389,12 @@ export default function Dashboard() {
 
               <button
                 className={`w-full mt-3 py-3 rounded-lg font-bold font-mono text-[#181818] ${
-                  payoutDisabled
-                    ? "bg-[#323232] text-gray-500 cursor-not-allowed"
-                    : "bg-[#81d742] hover:bg-[#a9ff72] transition"
+                  payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
                 } text-base`}
                 disabled={payoutDisabled}
                 onClick={() => router.push("/wallet")}
               >
-                {loading ? t("processing") : payoutDisabled ? (
-                  <><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>
-                ) : t("requestPayout")}
+                {loading ? t("processing") : payoutDisabled ? (<><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
               </button>
               <div className="mt-2 text-xs font-mono text-gray-400 text-center">
                 <span className="text-gray-300">
@@ -467,10 +442,7 @@ export default function Dashboard() {
         html, body, #__next, main { overflow-x: hidden !important; }
         @media (max-width: 700px) {
           .w-80 { width: 100% !important; min-width: 0 !important; }
-          .flex.gap-4 { flex-direction: column !important; gap: 16px !important; }
-          .flex.flex-row.gap-3.w-full { flex-direction: row !important; }
           main, section, .w-full { width: 100% !important; min-width: 0 !important; }
-          .flex.gap-4.w-full, .flex.flex-row.gap-3.w-full { flex-wrap: wrap; }
         }
       `}</style>
     </Layout>
