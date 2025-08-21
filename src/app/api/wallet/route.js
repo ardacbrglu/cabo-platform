@@ -9,7 +9,7 @@ import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { z } from "zod";
 
-// ✅ Merkezi doğrulamalar
+// ✅ merkezi doğrulamalar
 import {
   isIbanTR,
   bankInfoSchema,
@@ -17,7 +17,7 @@ import {
   safeParse,
 } from "@/lib/validation";
 
-const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 saat
+const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24s
 
 function secureJson(data, init = {}) {
   const res = NextResponse.json(data, init);
@@ -28,18 +28,13 @@ function secureJson(data, init = {}) {
   return res;
 }
 
-// Basit temizleyiciler (UI snapshot alanları için)
-function cleanBankName(s) {
-  return String(s || "").trim().slice(0, 120);
-}
-function cleanRealName(s) {
-  return String(s || "").trim().replace(/\s+/g, " ").slice(0, 120);
-}
+// Basit temizleme
+function cleanBankName(s) { return String(s || "").trim().slice(0, 120); }
+function cleanRealName(s) { return String(s || "").trim().replace(/\s+/g, " ").slice(0, 120); }
 
-// min payout hem "min_payout" hem "min_payout_try" anahtarlarını desteklesin
+// min payout: min_payout || min_payout_try
 async function getMinPayout() {
-  const keys = ["min_payout", "min_payout_try"];
-  for (const key of keys) {
+  for (const key of ["min_payout", "min_payout_try"]) {
     const cfg = await prisma.platformConfig.findUnique({ where: { keyName: key } });
     const v = cfg ? Number(cfg.value) : NaN;
     if (Number.isFinite(v) && v > 0) return v;
@@ -47,60 +42,46 @@ async function getMinPayout() {
   return 100;
 }
 
-// pending → 24 saat dolmuşları approved yap (lazy cron)
+// pending → 24h dolanları approved yap (lazy cron)
 async function finalizeExpiredPayouts(userId) {
   const threshold = new Date(Date.now() - CANCELLATION_WINDOW_MS);
   await prisma.payoutRequest.updateMany({
-    where: {
-      userId,
-      status: "pending",
-      requestedAt: { lte: threshold },
-    },
+    where: { userId, status: "pending", requestedAt: { lte: threshold } },
     data: { status: "approved", updatedAt: new Date() },
   });
 }
 
+// 🔧 Dayanıklı oturum okuyucu (id yoksa e-posta ile id bulur)
 async function getAuthedUser(req) {
   const session = await getServerSession(authOptions);
-  const rawId = session?.user?.id;
-  const role = session?.user?.role;
-  const userId = Number(rawId);
-  if (!rawId || !Number.isFinite(userId)) return null;
-  return {
-    userId,
-    role,
-    rlKey: makeRateLimitKey(req, { scope: "wallet", userId }),
-  };
+  const role = session?.user?.role || null;
+  const email = session?.user?.email?.toLowerCase?.() || null;
+
+  // id sayısal ise direkt kullan
+  const raw = session?.user?.id ?? session?.user?.userId ?? null;
+  let userId = Number.isFinite(Number(raw)) ? Number(raw) : null;
+
+  // değilse e-posta ile bul
+  if (!userId && email) {
+    const u = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (u?.id) userId = u.id;
+  }
+
+  if (!userId) return null;
+  return { userId, role, rlKey: makeRateLimitKey(req, { scope: "wallet", userId }) };
 }
 
-/* ======================== Zod şemaları (merkezi şemalarla uyumlu) ======================== */
-// Talep oluşturma sadece bir bayrak
+/* ======================== Zod şemaları ======================== */
 const PayoutCreateSchema = z.object({ requestPayout: z.literal(true) });
-
-// İptal — merkezi payoutRequestIdSchema + cancel bayrağı
-const PayoutCancelSchema = payoutRequestIdSchema.extend({
-  cancelRequest: z.literal(true),
-});
-
-// Talepte bankayı güncelle — merkezi bankInfoSchema + requestId + bayrak
+const PayoutCancelSchema = payoutRequestIdSchema.extend({ cancelRequest: z.literal(true) });
 const PayoutUpdateBankSchema = payoutRequestIdSchema.extend({
   updateRequestBank: z.literal(true),
-  // bankInfoSchema'nın shape'ini gömüyoruz:
   iban: bankInfoSchema.shape.iban,
   bankName: bankInfoSchema.shape.bankName,
   realName: bankInfoSchema.shape.realName,
 });
-
-// Profil bankası güncelle — direkt bankInfoSchema
 const BankInfoPostSchema = bankInfoSchema;
-
-// Union
-const PostBodySchema = z.union([
-  PayoutCreateSchema,
-  PayoutCancelSchema,
-  PayoutUpdateBankSchema,
-  BankInfoPostSchema,
-]);
+const PostBodySchema = z.union([PayoutCreateSchema, PayoutCancelSchema, PayoutUpdateBankSchema, BankInfoPostSchema]);
 
 /* ======================== GET ======================== */
 export async function GET(req) {
@@ -108,10 +89,8 @@ export async function GET(req) {
     const info = await getAuthedUser(req);
     if (!info) return secureJson({ error: "Unauthorized" }, { status: 401 });
     const { userId, rlKey, role } = info;
-
     if (!role) return secureJson({ error: "Unauthorized" }, { status: 401 });
 
-    // rate limit
     const rl = await checkRateLimit({ key: `${rlKey}:GET`, limit: 30, windowMs: 60_000 });
     if (!rl.ok) {
       return secureJson(
@@ -120,45 +99,26 @@ export async function GET(req) {
       );
     }
 
-    // 24 saati dolan pending'leri approved yap
     await finalizeExpiredPayouts(userId);
-
     const minPayout = await getMinPayout();
 
-    // kullanıcının sahip olduğu ürünler
-    const links = await prisma.affiliateLink.findMany({
-      where: { userId },
-      select: { productId: true },
-    });
-    const productIds = links.map((l) => l.productId);
+    const links = await prisma.affiliateLink.findMany({ where: { userId }, select: { productId: true } });
+    const productIds = links.map(l => l.productId);
 
-    // confirmed & payout’a bağlanmamış
     const confirmedSales = await prisma.affiliateUserSale.findMany({
-      where: {
-        userId,
-        status: "confirmed",
-        payoutItemId: null,
-        ...(productIds.length ? { productId: { in: productIds } } : {}),
-      },
+      where: { userId, status: "confirmed", payoutItemId: null, ...(productIds.length ? { productId: { in: productIds } } : {}) },
       select: { commissionAffiliate: true },
     });
-    const confirmed = confirmedSales.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
+    const confirmed = confirmedSales.reduce((s, r) => s + Number(r.commissionAffiliate), 0);
 
-    // pending & payout’a bağlanmamış
     const pendingSales = await prisma.affiliateUserSale.findMany({
-      where: {
-        userId,
-        status: "pending",
-        payoutItemId: null,
-        ...(productIds.length ? { productId: { in: productIds } } : {}),
-      },
+      where: { userId, status: "pending", payoutItemId: null, ...(productIds.length ? { productId: { in: productIds } } : {}) },
       select: { commissionAffiliate: true },
     });
-    const pending = pendingSales.reduce((sum, s) => sum + Number(s.commissionAffiliate), 0);
+    const pending = pendingSales.reduce((s, r) => s + Number(r.commissionAffiliate), 0);
 
     const balance = confirmed + pending;
 
-    // kullanıcı IBAN/banka/ad
     const user = (await prisma.user.findUnique({
       where: { id: userId },
       select: { iban: true, bankName: true, realUserFullname: true },
@@ -168,12 +128,10 @@ export async function GET(req) {
     const bankName = user.bankName || "";
     const realName = user.realUserFullname || "";
 
-    // ✅ merkezi doğrulama ile eksik alanlar
     const ibanMissing = !isIbanTR(iban);
     const bankMissing = !cleanBankName(bankName);
     const realNameMissing = cleanRealName(realName).split(" ").length < 2;
 
-    // payout history (kullanıcıya görünür)
     const historyRaw = await prisma.payoutRequest.findMany({
       where: { userId },
       orderBy: { requestedAt: "desc" },
@@ -182,7 +140,6 @@ export async function GET(req) {
     });
 
     const now = Date.now();
-
     const history = historyRaw.map((item) => {
       const requestedAtMs = item.requestedAt ? new Date(item.requestedAt).getTime() : 0;
       const lockAt = requestedAtMs ? new Date(requestedAtMs + CANCELLATION_WINDOW_MS) : null;
@@ -222,11 +179,8 @@ export async function GET(req) {
       ibanMissing,
       bankMissing,
       realNameMissing,
-      // Bilgi amaçlı
-      hasPendingRequest: history.some((h) => h.status === "pending"),
-      pendingAmount: history
-        .filter((h) => h.status === "pending")
-        .reduce((sum, h) => sum + Number(h.amount || 0), 0),
+      hasPendingRequest: history.some(h => h.status === "pending"),
+      pendingAmount: history.filter(h => h.status === "pending").reduce((s, h) => s + Number(h.amount || 0), 0),
       history,
     });
   } catch (err) {
@@ -260,76 +214,46 @@ export async function POST(req) {
     const body = parsed.data;
     const minPayout = await getMinPayout();
 
-    // -------- 1) Kullanıcı banka/isim kaydı (profil) --------
+    // 1) Profil banka kaydet
     if ("iban" in body && "bankName" in body && "realName" in body && !("updateRequestBank" in body)) {
-      // ✅ merkezi schema ile sanitize/validate
       const { iban, bankName, realName } = safeParse(bankInfoSchema, body);
-
-      await prisma.user.update({
-        where: { id: userId },
-        data: { iban, bankName, realUserFullname: realName },
-      });
+      await prisma.user.update({ where: { id: userId }, data: { iban, bankName, realUserFullname: realName } });
       return secureJson({ ok: true, message: "Bank info saved" });
     }
 
-    // -------- 2) Payout talebi oluştur --------
+    // 2) Payout talebi oluştur
     if ("requestPayout" in body && body.requestPayout === true) {
-      // isteğe bağlı: Idempotency-Key
       const idemKey = req.headers.get("idempotency-key") || req.headers.get("x-idempotency-key") || null;
       if (idemKey) {
-        const dup = await prisma.payoutRequest.findFirst({
-          where: { userId, idempotencyKey: idemKey },
-          select: { requestId: true },
-        });
-        if (dup) {
-          return secureJson({ ok: true, message: "Payout request already created", requestId: dup.requestId });
-        }
+        const dup = await prisma.payoutRequest.findFirst({ where: { userId, idempotencyKey: idemKey }, select: { requestId: true } });
+        if (dup) return secureJson({ ok: true, message: "Payout request already created", requestId: dup.requestId });
       }
 
-      // snapshot user bank info
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { iban: true, bankName: true, realUserFullname: true, status: true },
       });
-      if (!user || user.status !== "active") {
-        return secureJson({ error: "Account is not active." }, { status: 403 });
-      }
-      const iban = user.iban || "";
-      const bankName = user.bankName || "";
-      const realName = user.realUserFullname || "";
+      if (!user || user.status !== "active") return secureJson({ error: "Account is not active." }, { status: 403 });
+
+      const iban = user.iban || "", bankName = user.bankName || "", realName = user.realUserFullname || "";
       if (!isIbanTR(iban)) return secureJson({ error: "Please save a valid IBAN first." }, { status: 400 });
       if (!cleanBankName(bankName)) return secureJson({ error: "Please save your bank name first." }, { status: 400 });
-      if (cleanRealName(realName).split(" ").length < 2) {
-        return secureJson({ error: "Please save your full real name first." }, { status: 400 });
-      }
+      if (cleanRealName(realName).split(" ").length < 2) return secureJson({ error: "Please save your full real name first." }, { status: 400 });
 
-      // sadece görünür linkler üzerinden (My Links) satışlar
-      const links = await prisma.affiliateLink.findMany({
-        where: { userId, isVisible: true },
-        select: { productId: true },
-      });
-      const productIds = links.map((l) => l.productId);
-      if (productIds.length === 0) return secureJson({ error: "No eligible sales." }, { status: 400 });
+      const links = await prisma.affiliateLink.findMany({ where: { userId, isVisible: true }, select: { productId: true } });
+      const productIds = links.map(l => l.productId);
+      if (!productIds.length) return secureJson({ error: "No eligible sales." }, { status: 400 });
 
-      // ödenmemiş, onaylı satışlar
       const sales = await prisma.affiliateUserSale.findMany({
-        where: {
-          userId,
-          status: "confirmed",
-          payoutItemId: null,
-          productId: { in: productIds },
-        },
+        where: { userId, status: "confirmed", payoutItemId: null, productId: { in: productIds } },
         select: { saleId: true, merchantId: true, productId: true, commissionAffiliate: true },
       });
       if (!sales.length) return secureJson({ error: "No eligible sales." }, { status: 400 });
 
-      const totalAmount = sales.reduce((sum, s) => sum + Number(s.commissionAffiliate || 0), 0);
+      const totalAmount = sales.reduce((s, r) => s + Number(r.commissionAffiliate || 0), 0);
       if (!Number.isFinite(totalAmount) || totalAmount <= 0) return secureJson({ error: "No eligible sales." }, { status: 400 });
-      if (totalAmount < minPayout) {
-        return secureJson({ error: `Minimum payout is ${minPayout}₺. You do not have enough balance.` }, { status: 400 });
-      }
+      if (totalAmount < minPayout) return secureJson({ error: `Minimum payout is ${minPayout}₺. You do not have enough balance.` }, { status: 400 });
 
-      // GRUPLANDIRMA: merchantId+productId
       const grouped = new Map();
       for (const s of sales) {
         const key = `${s.merchantId}-${s.productId}`;
@@ -340,7 +264,6 @@ export async function POST(req) {
       }
       const payloadItems = Array.from(grouped.values());
 
-      // TX
       try {
         const requestId = await prisma.$transaction(async (tx) => {
           const payoutReq = await tx.payoutRequest.create({
@@ -365,36 +288,20 @@ export async function POST(req) {
             include: { payoutRequestItems: true },
           });
 
-          // RACE GUARD: her grouped item için bağla
           for (const item of payoutReq.payoutRequestItems) {
-            const saleIds = item.sourceSaleIds
-              .split(",")
-              .map((n) => Number(n))
-              .filter((n) => Number.isFinite(n));
+            const saleIds = String(item.sourceSaleIds || "")
+              .split(",").map(n => Number(n)).filter(n => Number.isFinite(n));
             if (!saleIds.length) continue;
 
             const upd = await tx.affiliateUserSale.updateMany({
-              where: {
-                saleId: { in: saleIds },
-                userId,
-                status: "confirmed",
-                payoutItemId: null,
-              },
+              where: { saleId: { in: saleIds }, userId, status: "confirmed", payoutItemId: null },
               data: { payoutItemId: item.itemId },
             });
-            if (upd.count !== saleIds.length) {
-              throw new Error("RACE_CONDITION");
-            }
+            if (upd.count !== saleIds.length) throw new Error("RACE_CONDITION");
           }
 
           await tx.payoutRequestLog.create({
-            data: {
-              requestId: payoutReq.requestId,
-              userId,
-              action: "create",
-              newStatus: "pending",
-              note: `Payout request created. Amount: ${totalAmount}`,
-            },
+            data: { requestId: payoutReq.requestId, userId, action: "create", newStatus: "pending", note: `Payout request created. Amount: ${totalAmount}` },
           });
 
           return payoutReq.requestId;
@@ -410,9 +317,8 @@ export async function POST(req) {
       }
     }
 
-    // -------- 3) Payout talebi iptal --------
+    // 3) Payout iptal
     if ("cancelRequest" in body && body.cancelRequest === true) {
-      // ✅ merkezi schema ile doğrula
       const { requestId } = safeParse(PayoutCancelSchema, body);
 
       try {
@@ -434,17 +340,11 @@ export async function POST(req) {
             return secureJson({ error: "This payout request is locked and cannot be cancelled." }, { status: 400 });
           }
 
-          // satışları geri bağla
           for (const item of reqItem.payoutRequestItems) {
             const saleIds = String(item.sourceSaleIds || "")
-              .split(",")
-              .map((n) => Number(n))
-              .filter((n) => Number.isFinite(n));
+              .split(",").map(n => Number(n)).filter(n => Number.isFinite(n));
             if (saleIds.length) {
-              await tx.affiliateUserSale.updateMany({
-                where: { saleId: { in: saleIds }, userId },
-                data: { payoutItemId: null },
-              });
+              await tx.affiliateUserSale.updateMany({ where: { saleId: { in: saleIds }, userId }, data: { payoutItemId: null } });
             }
           }
 
@@ -467,9 +367,8 @@ export async function POST(req) {
       }
     }
 
-    // -------- 4) Talep bankası güncelle --------
+    // 4) Talep banka güncelle
     if ("updateRequestBank" in body && body.updateRequestBank === true) {
-      // ✅ merkezi schema ile sanitize/validate
       const { requestId, iban, bankName, realName } = safeParse(PayoutUpdateBankSchema, body);
 
       const reqItem = await prisma.payoutRequest.findUnique({
@@ -495,14 +394,7 @@ export async function POST(req) {
       });
 
       await prisma.payoutRequestLog.create({
-        data: {
-          requestId,
-          userId,
-          action: "update_bank",
-          oldStatus: "pending",
-          newStatus: "pending",
-          note: "User updated payout request bank snapshot",
-        },
+        data: { requestId, userId, action: "update_bank", oldStatus: "pending", newStatus: "pending", note: "User updated payout request bank snapshot" },
       });
 
       return secureJson({ ok: true, message: "Payout request bank info updated" });

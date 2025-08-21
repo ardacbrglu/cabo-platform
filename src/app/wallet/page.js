@@ -116,7 +116,7 @@ export default function WalletPage() {
   });
 
   // Details modal
-  const [detailsModal, setDetailsModal] = useState<any>({
+  const [detailsModal, setDetailsModal] = useState({
     open: false,
     sales: [],
     total: 0,
