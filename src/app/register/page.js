@@ -16,11 +16,114 @@ import { apiFetch } from "@/lib/apiFetch";
 // reCAPTCHA v3
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
-/* ... translations (aynı) ... */
+const translations = {
+  en: {
+    title: "Create your Cabo account",
+    infoTitle: "Ready to earn with Cabo?",
+    infoDesc:
+      "Join our network of affiliate promoters — get your unique links, share them, and earn when people make purchases.",
+    infoStrong: "Claim products, promote your links, and get paid!",
+    li1: "No upfront cost or approval needed",
+    li2: "Each product has a unique referral link",
+    li3: "Real-time dashboard with clicks, earnings, payouts",
+    li4: "Withdraw anytime — direct to your bank",
+    faq: "Curious how it works?",
+    faqLink: "Read the FAQ",
+    username: "Username",
+    usernamePH: "Enter your username",
+    email: "Email",
+    emailPH: "you@example.com",
+    password: "Password",
+    passwordPH: "Create a password",
+    terms: (
+      <>
+        I accept the{" "}
+        <Link
+          href="/terms_privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Terms and Privacy Policy
+        </Link>
+      </>
+    ),
+    registerBtn: "Register",
+    already: "Already have an account?",
+    loginLink: "Log in",
+    required: "Please fill in all fields.",
+    termsReq: "You must accept the terms.",
+    captchaReq: "Please complete the captcha.",
+    success:
+      "Registration successful! Please check your email to activate your account.",
+    failed: "Registration failed.",
+    server: "Server error. Please try again later.",
+    or: "or",
+    googleBtn: "Sign up with Google",
+    emailSent: "Activation email sent to",
+    mailfail: "Activation email could not be sent. Please try again later.",
+    csrfWait: "Preparing a secure session… Please try again.",
+    missingReasons: "To continue:",
+  },
+  tr: {
+    title: "Cabo hesabını oluştur",
+    infoTitle: "Cabo ile kazanmaya hazır mısın?",
+    infoDesc:
+      "Büyüyen affiliate ağımıza katıl — kendine özel linklerini al, paylaş ve alışverişlerden kazan!",
+    infoStrong: "Ürünleri seç, linklerini paylaş, ödülünü anında al!",
+    li1: "Onay veya ücret gerekmez",
+    li2: "Her ürünün sana özel referans linki var",
+    li3: "Anlık dashboard: tık, kazanç, çekim",
+    li4: "Kazancını istediğin zaman çek, doğrudan banka hesabına",
+    faq: "Nasıl çalışıyor merak ettin mi?",
+    faqLink: "SSS'yi oku",
+    username: "Kullanıcı adı",
+    usernamePH: "Kullanıcı adını gir",
+    email: "E-posta",
+    emailPH: "sen@example.com",
+    password: "Şifre",
+    passwordPH: "Şifre oluştur",
+    terms: (
+      <>
+        {" "}
+        <Link
+          href="/terms_privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Kullanım ve Gizlilik Şartlarını
+        </Link>{" "}
+        kabul ediyorum
+      </>
+    ),
+    registerBtn: "Kaydol",
+    already: "Zaten hesabın var mı?",
+    loginLink: "Giriş yap",
+    required: "Lütfen tüm alanları doldurun.",
+    termsReq: "Şartları kabul etmelisin.",
+    captchaReq: "Lütfen robot olmadığınızı doğrulayın.",
+    success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et.",
+    failed: "Kayıt başarısız.",
+    server: "Sunucu hatası. Lütfen tekrar deneyin.",
+    or: "veya",
+    googleBtn: "Google ile kayıt ol",
+    emailSent: "Aktivasyon e-postası gönderildi:",
+    mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen tekrar deneyin.",
+    csrfWait: "Güvenli oturum hazırlanıyor… Lütfen tekrar deneyin.",
+    missingReasons: "Devam etmek için:",
+  },
+};
 
 export default function RegisterPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
+
+  const dict = useMemo(
+    () => translations[locale] ?? translations.en,
+    [locale]
+  );
+  const t = (key) => dict[key] ?? key;
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,9 +152,9 @@ export default function RegisterPage() {
   }, []);
 
   if (!ready) return null;
-  const t = (key) => translations[locale][key] || key;
 
-  const handleSuccessRedirect = () => setTimeout(() => router.push("/login"), 1800);
+  const handleSuccessRedirect = () =>
+    setTimeout(() => router.push("/login"), 1800);
 
   // Manuel akış için eksikler
   const manualMissing = useMemo(() => {
@@ -61,19 +164,20 @@ export default function RegisterPage() {
     if (!captcha) arr.push(t("captchaReq"));
     if (!csrfReady) arr.push(t("csrfWait"));
     return arr;
-  }, [name, email, password, terms, captcha, csrfReady, locale]);
+  }, [name, email, password, terms, captcha, csrfReady, dict]);
 
-  // Google akışı: CSRF bekletme yok (apiFetch header ekler)
+  // Google akışı: CSRF bekletme yok
   const googleMissing = useMemo(() => {
     const arr = [];
     if (!terms) arr.push(t("termsReq"));
     if (!captcha) arr.push(t("captchaReq"));
     return arr;
-  }, [terms, captcha, locale]);
+  }, [terms, captcha, dict]);
 
   // Google: precheck → signIn
   const handleGoogleSignIn = async () => {
-    setError(""); setSuccess("");
+    setError("");
+    setSuccess("");
     if (!terms) return setError(t("termsReq"));
     if (!captcha) return setError(t("captchaReq"));
 
@@ -103,7 +207,8 @@ export default function RegisterPage() {
   // Manuel kayıt
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(""); setSuccess("");
+    setError("");
+    setSuccess("");
     if (manualMissing.length) return;
 
     const payload = {
