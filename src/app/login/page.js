@@ -175,7 +175,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await signIn("google", { callbackUrl });
+      await signIn("google", { callbackUrl, redirect: true });
     } catch {
       setError(t("googleSignInError"));
       setLoading(false);

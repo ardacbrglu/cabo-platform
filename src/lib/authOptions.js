@@ -1,4 +1,3 @@
-// src/lib/authOptions.js
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import prisma from "@/lib/prisma";
@@ -21,7 +20,7 @@ export const authOptions = {
   trustHost: true,
   secret: process.env.NEXTAUTH_SECRET,
 
-  // Stateless session, Railway gibi ortamlarda problemsiz
+  // Stateless session
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
 
   providers: [
@@ -37,19 +36,14 @@ export const authOptions = {
           const user = await prisma.user.findUnique({
             where: { email },
             select: {
-              id: true,
-              email: true,
-              passwordHash: true,
-              role: true,
-              status: true,
-              name: true,
-              image: true,
+              id: true, email: true, passwordHash: true,
+              role: true, status: true, name: true, image: true,
               accounts: { select: { provider: true }, take: 1 },
             },
           });
           if (!user) return null;
 
-          // Google-only hesapları burada engelle
+          // Google-only hesaplar burada giremez
           const isGoogleOnly = !user.passwordHash && (user.accounts || []).some(a => a.provider === "google");
           if (isGoogleOnly) return null;
 
@@ -81,28 +75,44 @@ export const authOptions = {
   pages: { signIn: "/login" },
 
   callbacks: {
-    // Google signup için precheck (opsiyonel ama güvenli)
+    /**
+     * Google sign-in politikası:
+     * - DB'de kullanıcı varsa → sadece status === "active" ise izin ver.
+     * - Kullanıcı yoksa → google_reg_precheck (JWT) çerezi mecburi.
+     *   Yok/bozuksa AccessDenied yerine Register'a redirect et (daha iyi UX).
+     */
     async signIn({ user, account, req }) {
       if (account?.provider !== "google") return true;
 
       const emailLower = (user?.email || "").toLowerCase();
       if (!emailLower) return false;
 
-      const existing = await prisma.user.findUnique({ where: { email: emailLower } });
+      const existing = await prisma.user.findUnique({
+        where: { email: emailLower },
+        select: { status: true },
+      });
+
       if (existing) {
-        return existing.status === "active";
+        return existing.status === "active"; // pending/inactive ise reddet
       }
 
-      // Yeni kullanıcı açılacaksa precheck cookie kontrolü (opsiyonel)
+      // Yeni kullanıcı → precheck cookie zorunlu
+      const cookieHeader = req?.headers?.get?.("cookie") || "";
+      const match = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
+      const token = match ? decodeURIComponent(match[1]) : null;
+
+      const scheme =
+        req?.headers?.get?.("x-forwarded-proto") ||
+        (req?.url ? new URL(req.url).protocol.replace(":", "") : "https");
+      const host = req?.headers?.get?.("x-forwarded-host") || req?.headers?.get?.("host") || "";
+      const baseUrl = process.env.NEXTAUTH_URL || `${scheme}://${host}`;
+
       try {
-        const cookieHeader = req?.headers?.get?.("cookie") || "";
-        const match = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
-        const token = match ? decodeURIComponent(match[1]) : null;
-        if (!token) return false;
-        jwt.verify(token, process.env.NEXTAUTH_SECRET); // süre + imza kontrolü
+        if (!token) return `${baseUrl}/register?err=google_precheck`;
+        jwt.verify(token, process.env.NEXTAUTH_SECRET); // süre + imza kontrol
         return true;
       } catch {
-        return false;
+        return `${baseUrl}/register?err=google_precheck`;
       }
     },
 
@@ -127,11 +137,9 @@ export const authOptions = {
       return session;
     },
 
-    // callbackUrl’i koru; loop/bozuk yönlendirme olmasın
     async redirect({ url, baseUrl }) {
       try {
         const u = new URL(url, baseUrl);
-        // sadece aynı origin’e izin ver
         if (u.origin === baseUrl) return u.toString();
         return baseUrl;
       } catch {
