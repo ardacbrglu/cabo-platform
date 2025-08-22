@@ -2,13 +2,15 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * File: src/app/api/register/route.js
- * Purpose: Manuel kayıt (+aktivasyon e-postası) ve Google kayıt precheck akışı.
- * Security Notes:
- * - CSRF: Auth dışı API → Origin/Referer eşleşmesi + X-Requested-With + X-Request-Id (ops. X-CSRF-Token kabul edilir).
- * - RateLimit: 8/dk (IP).
- * - Validation: Zod ile sıkı şema; sanitize.
- * - Audit: success/failure olayları loglanır (PII sızdırmadan).
+ * Affiliate register:
+ * - flow=manual  → kullanıcı oluştur + aktivasyon e-postası
+ * - flow=google  → precheck (terms+captcha), 10 dk imzalı cookie → NextAuth Google
+ *
+ * Security:
+ * - Origin/Referer + X-Requested-With + X-Request-Id
+ * - RL 8/dk (IP)
+ * - Zod validation + sanitize
+ * - ReCAPTCHA doğrulaması
  */
 
 import { NextResponse } from "next/server";
@@ -94,7 +96,7 @@ export async function POST(req) {
   if (!ok) {
     const res = NextResponse.json(
       { success: false, error: "too_many_requests", message: t("ratelimit"), request_id: requestId },
-      { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } },
     );
     return withHeaders(res);
   }
@@ -104,21 +106,36 @@ export async function POST(req) {
   try {
     bodyRaw = await req.json();
   } catch {
-    return withHeaders(NextResponse.json({ success: false, error: "bad_request", message: t("required"), request_id: requestId }, { status: 400 }));
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "bad_request", message: t("required"), request_id: requestId },
+        { status: 400 },
+      ),
+    );
   }
 
-  // GOOGLE precheck
+  // GOOGLE PRECHECK
   if (bodyRaw?.flow === "google") {
     let data;
     try {
       data = GooglePrecheckSchema.parse(bodyRaw);
     } catch {
-      return withHeaders(NextResponse.json({ success: false, error: "invalid_payload", message: t("required"), request_id: requestId }, { status: 400 }));
+      return withHeaders(
+        NextResponse.json(
+          { success: false, error: "invalid_payload", message: t("required"), request_id: requestId },
+          { status: 400 },
+        ),
+      );
     }
 
     const cap = await verifyRecaptcha(data.captcha);
     if (!cap.ok) {
-      return withHeaders(NextResponse.json({ success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId }, { status: 400 }));
+      return withHeaders(
+        NextResponse.json(
+          { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
+          { status: 400 },
+        ),
+      );
     }
 
     // 10 dakikalık imzalı precheck cookie
@@ -145,12 +162,22 @@ export async function POST(req) {
       e?.errors?.[0]?.path?.[0] === "name" ? t("username") :
       e?.errors?.[0]?.path?.[0] === "password" ? t("password") :
       t("required");
-    return withHeaders(NextResponse.json({ success: false, error: "invalid_payload", message: msg, request_id: requestId }, { status: 400 }));
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "invalid_payload", message: msg, request_id: requestId },
+        { status: 400 },
+      ),
+    );
   }
 
   const cap = await verifyRecaptcha(data.captcha);
   if (!cap.ok) {
-    return withHeaders(NextResponse.json({ success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId }, { status: 400 }));
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
+        { status: 400 },
+      ),
+    );
   }
 
   const email = data.email.trim().toLowerCase();
@@ -159,13 +186,23 @@ export async function POST(req) {
   // Google-only çakışma → manuel kayıt engeli
   const googleAccount = await prisma.account.findFirst({ where: { provider: "google", user: { email } } });
   if (googleAccount) {
-    return withHeaders(NextResponse.json({ success: false, error: "google_only", message: t("googleReg"), request_id: requestId }, { status: 409 }));
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "google_only", message: t("googleReg"), request_id: requestId },
+        { status: 409 },
+      ),
+    );
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     if (existing.status === "active") {
-      return withHeaders(NextResponse.json({ success: false, error: "already_active", message: t("alreadyActive"), request_id: requestId }, { status: 409 }));
+      return withHeaders(
+        NextResponse.json(
+          { success: false, error: "already_active", message: t("alreadyActive"), request_id: requestId },
+          { status: 409 },
+        ),
+      );
     }
     // pending → günlük 3 limit
     const now = new Date();
@@ -173,7 +210,12 @@ export async function POST(req) {
     const isSameDay = now.toDateString() === last.toDateString();
     const count = isSameDay ? existing.activationRequestedCount || 0 : 0;
     if (count >= 3) {
-      return withHeaders(NextResponse.json({ success: false, error: "limit_exceeded", message: t("limitExceeded"), request_id: requestId }, { status: 429 }));
+      return withHeaders(
+        NextResponse.json(
+          { success: false, error: "limit_exceeded", message: t("limitExceeded"), request_id: requestId },
+          { status: 429 },
+        ),
+      );
     }
 
     const token = jwt.sign({ email }, ACTIVATION_JWT_SECRET, { expiresIn: "1d" });
@@ -189,7 +231,12 @@ export async function POST(req) {
     try {
       await sendActivationEmail(email, token, locale);
     } catch {
-      return withHeaders(NextResponse.json({ success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId }, { status: 500 }));
+      return withHeaders(
+        NextResponse.json(
+          { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
+          { status: 500 },
+        ),
+      );
     }
     audit({ evt: "register.manual.resend", email, requestId });
     return withHeaders(NextResponse.json({ success: true, message: t("success"), request_id: requestId }));
@@ -216,7 +263,12 @@ export async function POST(req) {
   try {
     await sendActivationEmail(email, activationToken, locale);
   } catch {
-    return withHeaders(NextResponse.json({ success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId }, { status: 500 }));
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
+        { status: 500 },
+      ),
+    );
   }
 
   audit({ evt: "register.manual.created", email, requestId });
