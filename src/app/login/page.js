@@ -1,11 +1,8 @@
 "use client";
 /**
- * File: src/app/login/page.js
- * Purpose: Affiliate login (Credentials + Google).
- * Değişiklikler:
- * - Oturum kontrolü sadece UserContext (/api/me) üzerinden; /api/auth/session KALDIRILDI.
- * - Oturum varsa tek seferlik router.replace(callbackUrl); refresh veya fallback yok.
- * - callbackUrl > from > "/dashboard" önceliği.
+ * Affiliate Login (Credentials + Google)
+ * Hydration-safe: YÖNLENDİRME YOK — sadece başarıda push,
+ * oturum varsa üstte info banner + "Go to Dashboard" butonu gösterir.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +13,6 @@ import { signIn } from "next-auth/react";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { useUser } from "@/context/UserContext";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { apiFetch } from "@/lib/apiFetch";
 
 const translations = {
@@ -47,6 +43,8 @@ const translations = {
     setPassword: "You signed up with Google. Please log in with your Google account.",
     activatedBanner: "Your account has been activated! You can now log in.",
     csrfWait: "Preparing a secure session… Please wait a moment.",
+    alreadyIn: "You are already logged in.",
+    gotoDash: "Go to Dashboard",
   },
   tr: {
     title: "Kullanıcı Girişi",
@@ -75,22 +73,23 @@ const translations = {
     setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap.",
     activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
     csrfWait: "Güvenli oturum hazırlanıyor… Lütfen bekleyin.",
+    alreadyIn: "Zaten giriş yapmışsınız.",
+    gotoDash: "Panele Git",
   },
 };
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { locale, ready: localeReady } = useLocale();
-  const { user, ready: userReady, isAuthenticated, refreshUser } = useUser();
-  const { csrfToken, ready: csrfReady } = useCsrfToken();
+  const { locale, ready } = useLocale();
+  const { user: me, ready: userReady } = useUser();
 
   const t = useMemo(() => {
     const lang = locale === "tr" ? "tr" : "en";
     return (key) => translations[lang][key] ?? key;
   }, [locale]);
 
-  // Hydration-safe render
+  // Hydration-safe gate
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -100,20 +99,23 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
 
+  const [csrfToken, setCsrfToken] = useState("");
+  const [csrfReady, setCsrfReady] = useState(false);
+
   const firstInputRef = useRef(null);
+  const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  // callback hedefi: callbackUrl > from > /dashboard
-  const callbackUrl =
-    searchParams?.get("callbackUrl") ||
-    searchParams?.get("from") ||
-    "/dashboard";
-
-  // Zaten oturumluysan login sayfasında durma
+  // CSRF preload (NextAuth) — sadece client
   useEffect(() => {
-    if (!userReady) return;
-    if (isAuthenticated) router.replace(callbackUrl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userReady, isAuthenticated, callbackUrl]);
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (j?.csrfToken) setCsrfToken(j.csrfToken);
+      } catch {}
+      setCsrfReady(true);
+    })();
+  }, []);
 
   // Aktivasyon bildirimi (query temizliği ile)
   useEffect(() => {
@@ -129,7 +131,10 @@ export default function LoginPage() {
     firstInputRef.current?.focus();
   }, []);
 
-  if (!mounted || !localeReady) return null;
+  // Artık otomatik yönlendirme YOK: burada sadece banner göstereceğiz.
+  const alreadyAuthed = mounted && userReady && me && (me.id || me.userId);
+
+  if (!mounted || !ready) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
@@ -139,7 +144,7 @@ export default function LoginPage() {
 
     if (!email || !password) return setError(t("errorFill"));
     if (!validateEmail(email)) return setError(t("errorEmailFormat"));
-    if (!csrfReady && typeof window !== "undefined") return setError(t("csrfWait"));
+    if (!csrfReady) return setError(t("csrfWait"));
 
     setError("");
     setLoading(true);
@@ -155,9 +160,7 @@ export default function LoginPage() {
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        // context'i güncelle, sonra tek seferde yönlendir
-        try { await refreshUser?.(); } catch {}
-        router.replace(callbackUrl);
+        router.push(callbackUrl);
         return;
       }
 
@@ -182,6 +185,21 @@ export default function LoginPage() {
 
   return (
     <PublicLayout>
+      {/* Oturum zaten varsa banner + buton (auto redirect yok → hydration güvenli) */}
+      {alreadyAuthed && (
+        <div className="w-full max-w-3xl mx-auto mb-4 px-4">
+          <div className="rounded-lg border border-[#2a2a2a] bg-[#141414] p-3 text-center">
+            <div className="text-sm text-[#d1ffd0] font-semibold">{t("alreadyIn")}</div>
+            <button
+              className="mt-2 px-4 py-2 rounded bg-[#81d742] text-[#0b0b0b] font-bold hover:bg-[#b3ffb3] transition"
+              onClick={() => router.push("/dashboard")}
+            >
+              {t("gotoDash")}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
         {/* SOL BİLGİ BLOĞU */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
@@ -189,10 +207,7 @@ export default function LoginPage() {
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
             <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>

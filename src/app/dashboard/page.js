@@ -1,16 +1,12 @@
 "use client";
-
 /**
- * File: src/app/dashboard/page.js
- * Purpose: Affiliate dashboard (summary, live activity, wallet+payout, leaderboard)
- * Güvenli değişiklikler:
- * - Polling sadece /dashboard görünürken ve doküman görünür durumdayken çalışır.
- * - setInterval yerine setTimeout kullanıldı (fırtına/çakışma yok).
- * - 429 Retry-After saygılı tek deneme planı.
+ * Affiliate Dashboard (compact) — HYDRATION SAFE
+ * - localStorage → navbar jitter fix: useEffect (useLayoutEffect DEĞİL!)
+ * - /api/dashboard polling with 429 backoff
  */
 
-import { useState, useEffect, useLayoutEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from "lucide-react";
 import { useUser } from "@/context/UserContext";
@@ -20,7 +16,6 @@ import { apiFetch } from "@/lib/apiFetch";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
-/* --- Compact progress ring --- */
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max || 1, 1)) * 100, 100);
   const size = 104, radius = 40, stroke = 6, center = size / 2, circumference = 2 * Math.PI * radius;
@@ -30,10 +25,9 @@ function WalletProgress({ value, max }) {
       <svg width={size} height={size} className="absolute left-0 top-0 z-0" aria-hidden>
         <circle cx={center} cy={center} r={radius} fill="none" stroke="#232323" strokeWidth={stroke} />
         <circle
-          cx={center} cy={center} r={radius} fill="none"
-          stroke={COLOR_CABO} strokeWidth={stroke}
-          strokeDasharray={circumference} strokeDashoffset={offset}
-          strokeLinecap="round" style={{ transition: "stroke-dashoffset 1s" }}
+          cx={center} cy={center} r={radius} fill="none" stroke={COLOR_CABO} strokeWidth={stroke}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1s" }}
         />
       </svg>
       <PiggyBank className="absolute" style={{ color: COLOR_CABO, width: 48, height: 48, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
@@ -41,7 +35,6 @@ function WalletProgress({ value, max }) {
   );
 }
 
-/* --- Stat Card --- */
 function StatCard({ value, label, icon }) {
   return (
     <div className="h-[84px] bg-[#181818] rounded-xl shadow flex flex-col items-center justify-center gap-1.5 overflow-hidden hover:scale-[1.02] transition">
@@ -54,43 +47,42 @@ function StatCard({ value, label, icon }) {
 
 export default function Dashboard() {
   const router = useRouter();
-  const pathname = usePathname();
-  const ctx = useUser() || {};
-  const me = ctx.user;
-  const setUser = ctx.setUser || (() => {});
+  const { user: me, setUser, ready } = useUser();
   const { t } = useTranslation();
-  const isReady = typeof ctx.ready === "boolean" ? ctx.ready : me !== undefined;
-  const isAuthed = !!(me && (me.id || me.userId));
+
+  const isReady = typeof ready === "boolean" ? ready : me !== undefined;
 
   const [stats, setStats] = useState({
     totalClicks: 0, totalSales: 0, totalEarnings: 0,
     balance: 0, minPayout: 100, platformCommission: 5,
     username: "", email: "", userId: null,
-    iban: "", bankName: "", ibanMissing: false, bankMissing: false, realNameMissing: false,
-    recentActions: [], leaderboard: [], lastConversion: null, lastClick: null,
+    iban: "", bankName: "",
+    ibanMissing: false, bankMissing: false, realNameMissing: false,
+    recentActions: [], leaderboard: [],
+    lastConversion: null, lastClick: null,
   });
   const [loading, setLoading] = useState(true);
   const [payoutstatus, setPayoutstatus] = useState("");
   const [isMobile, setIsMobile] = useState(false);
 
-  // Navbar username "jitter" fix (pre-hydrate cache)
-  useLayoutEffect(() => {
+  // ✅ navbar jitter fix — hydrate sonrası çalışsın (useEffect)
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const cachedName = localStorage.getItem("cabo_username");
     const cachedEmail = localStorage.getItem("cabo_email");
     const cachedId = localStorage.getItem("cabo_userId");
-    if (cachedName) {
+    if (cachedName || cachedEmail || cachedId) {
       setUser((u) => ({
         ...(u || {}),
-        name: u?.name || cachedName,
-        email: u?.email || cachedEmail || u?.email,
+        name: u?.name || cachedName || "",
+        email: u?.email || cachedEmail || "",
         id: u?.id || (cachedId ? Number(cachedId) : u?.id),
         role: u?.role || "affiliate",
       }));
     }
   }, [setUser]);
 
-  // Role guard (client side)
+  // Role guard
   useEffect(() => {
     if (!isReady) return;
     if (me?.role && me.role !== "affiliate") router.replace("/unauthorized");
@@ -99,124 +91,88 @@ export default function Dashboard() {
   // Mobile breakpoint
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 700);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
+    checkMobile(); window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  /**
-   * POLLING – güvenli
-   * - Sadece aktif rota tam olarak /dashboard ise,
-   * - ve document.visible ise,
-   * - ve kullanıcı doğrulanmışsa çalışır.
-   * setTimeout ile tek atımlık döngü kullanılır, 429 Retry-After saygılıdır.
-   */
+  // Poll /api/dashboard with 429 backoff
   useEffect(() => {
-    if (!isReady || !isAuthed) return;
-    // Rota guard: bu component mount olsa bile sadece gerçek rota /dashboard ise tetikle
-    if (typeof window !== "undefined" && window.location.pathname !== "/dashboard") return;
+    if (!isReady) return;
 
-    let cancelled = false;
     let timer = null;
+    let alive = true;
 
-    const loop = async (delayMs = 0) => {
-      if (cancelled) return;
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (cancelled) return;
+    const schedule = (ms) => {
+      if (!alive) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchStats, Math.max(ms, 8000));
+    };
 
-        // Görünürlük guard: kullanıcı sekmesi görünmüyorsa daha sonra dene
-        if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-          loop(2000);
+    const fetchStats = async () => {
+      try {
+        const res = await apiFetch("/api/dashboard", { method: "GET" });
+        if (!alive) return;
+
+        if (res.status === 401 || res.status === 403) {
+          router.replace("/login");
           return;
         }
-
-        try {
-          const res = await apiFetch("/api/dashboard", { method: "GET", cache: "no-store" });
-
-          if (res.status === 401 || res.status === 403) {
-            router.replace("/login");
-            return;
-          }
-
-          if (res.status === 429) {
-            const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
-            let retryBody = 0;
-            try { retryBody = Number((await res.clone().json())?.retry_after) || 0; } catch {}
-            const waitMs = Math.max((retryHeader || retryBody || 8) * 1000, 8000);
-            loop(waitMs);
-            return;
-          }
-
-          if (!res.ok) {
-            // 5xx vs. için küçük backoff
-            loop(10000);
-            return;
-          }
-
-          const data = await res.json().catch(() => ({}));
-
-          setStats((prev) => ({
-            ...prev,
-            ...data,
-            platformCommission: typeof data.platformCommission === "number" ? data.platformCommission : 5,
-            ibanMissing: !!data.ibanMissing,
-            bankMissing: !!data.bankMissing,
-            realNameMissing: !!data.realNameMissing,
-            recentActions: Array.isArray(data.recentActions) ? data.recentActions : [],
-            leaderboard: Array.isArray(data.leaderboard) ? data.leaderboard : [],
-            lastConversion: data.lastConversion || null,
-            lastClick: data.lastClick || null,
-          }));
-
-          // Context + cache (navbar stabil)
-          setUser((u) => ({
-            ...(u || {}),
-            name: data.username || u?.name || "",
-            email: data.email || u?.email || "",
-            id: data.userId || u?.id || null,
-            userId: data.userId || u?.userId || null,
-            role: "affiliate",
-          }));
-          if (typeof window !== "undefined") {
-            if (data?.username) localStorage.setItem("cabo_username", data.username);
-            if (data?.email) localStorage.setItem("cabo_email", data.email);
-            if (data?.userId) localStorage.setItem("cabo_userId", String(data.userId));
-          }
-
-          setLoading(false);
-          loop(8000); // normal periyot
-        } catch {
-          // Ağ hatası: kısa backoff
-          loop(8000);
+        if (res.status === 429) {
+          const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
+          let retryBody = 0;
+          try { const j = await res.clone().json(); retryBody = Number(j?.retry_after) || 0; } catch {}
+          const waitMs = Math.max((retryHeader || retryBody || 8) * 1000, 8000);
+          schedule(waitMs);
+          return;
         }
-      }, Math.max(0, delayMs));
-    };
+        if (!res.ok) { schedule(8000); return; }
 
-    loop(0);
+        const data = await res.json().catch(() => ({}));
 
-    // Görünürlük değişirse döngüyü hızla adapte et
-    const visHandler = () => {
-      if (!cancelled && document.visibilityState === "visible") {
-        loop(0);
+        setStats((prev) => ({
+          ...prev,
+          ...data,
+          platformCommission: typeof data.platformCommission === "number" ? data.platformCommission : 5,
+          ibanMissing: !!data.ibanMissing, bankMissing: !!data.bankMissing, realNameMissing: !!data.realNameMissing,
+          recentActions: Array.isArray(data.recentActions) ? data.recentActions : [],
+          leaderboard: Array.isArray(data.leaderboard) ? data.leaderboard : [],
+          lastConversion: data.lastConversion || null, lastClick: data.lastClick || null,
+        }));
+
+        // Context + cache
+        setUser((u) => ({
+          ...(u || {}),
+          name: data.username || u?.name || "",
+          email: data.email || u?.email || "",
+          id: data.userId || u?.id || null,
+          userId: data.userId || u?.userId || null,
+          role: "affiliate",
+        }));
+        if (typeof window !== "undefined") {
+          if (data?.username) localStorage.setItem("cabo_username", data.username);
+          if (data?.email) localStorage.setItem("cabo_email", data.email);
+          if (data?.userId) localStorage.setItem("cabo_userId", String(data.userId));
+        }
+
+        setLoading(false);
+        schedule(8000);
+      } catch {
+        schedule(8000);
       }
     };
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", visHandler);
-    }
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", visHandler);
-      }
-    };
-  }, [isReady, isAuthed, router, pathname, setUser]);
+    fetchStats();
+    schedule(8000);
+
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [isReady, setUser, router]);
 
   const {
-    totalClicks, totalSales, totalEarnings, balance, minPayout, platformCommission,
-    recentActions, leaderboard, ibanMissing, bankMissing, realNameMissing, lastConversion, lastClick,
+    totalClicks, totalSales, totalEarnings,
+    balance, minPayout, platformCommission,
+    recentActions, leaderboard,
+    ibanMissing, bankMissing, realNameMissing,
+    lastConversion, lastClick,
   } = stats;
 
   const payoutDisabled = loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing;
