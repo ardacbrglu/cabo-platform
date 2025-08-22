@@ -1,26 +1,23 @@
-// src/lib/apiFetch.js
 /**
  * File: src/lib/apiFetch.js
  * Purpose: Tek HTTP wrapper (Cabo PROD).
  *
- * Özellikler:
- * - credentials: 'include'
- * - X-Requested-With, X-Request-Id otomatik
- * - Body (object) -> JSON.stringify (FormData'ya dokunmaz)
- * - Mutasyonlarda (POST/PUT/PATCH/DELETE) NextAuth CSRF token'ı otomatik alır (/api/auth/csrf) ve 10dk cache'ler
- * - SSR güvenli: window yoksa CSRF istenmez
+ * Security Docblock:
+ * - credentials:'include', X-Requested-With ve X-Request-Id otomatik.
+ * - Mutasyonlarda NextAuth CSRF token (/api/auth/csrf) otomatik eklenir ve 10dk cache'lenir.
+ * - FormData hariç gövde otomatik JSON.stringify edilir.
  */
 
 let _csrf = { token: "", ts: 0 };
 const CSRF_TTL = 10 * 60 * 1000; // 10 dk
 
 async function getCsrfToken() {
-  if (typeof window === "undefined") return ""; // SSR/Route içinde dokunma
+  if (typeof window === "undefined") return ""; // SSR/Route içinde isteme
   const fresh = _csrf.token && Date.now() - _csrf.ts < CSRF_TTL;
   if (fresh) return _csrf.token;
 
   try {
-    const r = await fetch("/api/auth/csrf", { credentials: "include" });
+    const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     const token = j?.csrfToken || "";
     _csrf = { token, ts: Date.now() };
@@ -66,7 +63,7 @@ export async function apiFetch(input, init = {}) {
     headers,
     body,
     credentials: "include",
-    cache: isMutation ? "no-store" : init.cache,
+    cache: isMutation ? "no-store" : (init.cache ?? "no-store"),
   });
 }
 

@@ -1,11 +1,14 @@
 "use client";
+
 /**
  * File: src/context/UserContext.jsx
- * Purpose: Oturum bilgisini tek kez çekip uygulama genelinde paylaşmak.
- * Güvenlik/UX:
- * - /api/me 401/403 → anon kabul; sadece tamamlandıktan sonra ready=true.
- * - Navbar jitter fix: ilk boyada localStorage'dan hafif hydrate; ancak redirect kararları /api/me sonucuna göre.
- * - Sekmeler arası senkron ve temiz cache yönetimi.
+ * Purpose: Oturum bilgisini tek kez sunucudan doğrulayıp uygulama genelinde paylaşmak.
+ *
+ * Security Docblock (Cabo PROD):
+ * - Kimlik durumu yalnızca /api/me yanıtıyla "server-verified" kabul edilir.
+ * - localStorage sadece görsel sarsıntıyı azaltmak için kullanılır; asla auth kaynağı değildir.
+ * - /api/me 200 + {authenticated:false} durumunda user=null ve cache temizlenir.
+ * - İstemci-yanı etkilerde XSS riskine karşı sadece beklenen primitive alanlar tutulur.
  */
 
 import React, {
@@ -15,9 +18,9 @@ import React, {
 import { apiFetch } from "@/lib/apiFetch";
 
 const Ctx = createContext({
-  user: undefined,       // undefined: yüklenmedi, null: anon, object: auth
-  ready: false,          // yalnızca /api/me bittiğinde true
-  isAuthenticated: false,
+  user: undefined,          // undefined: yüklenmedi, null: anon, object: server-verified user
+  ready: false,             // yalnızca /api/me tamamlandığında true
+  isAuthenticated: false,   // Sadece server-verified auth → true
   lastError: null,
   refreshUser: async () => {},
   setUser: () => {},
@@ -27,6 +30,7 @@ const LS_NAME = "cabo_username";
 const LS_EMAIL = "cabo_email";
 const LS_ID = "cabo_userId";
 
+/* Hafif UI cache: sadece navbar titremesini azaltır */
 function readCache() {
   if (typeof window === "undefined") return null;
   try {
@@ -35,7 +39,7 @@ function readCache() {
     const idStr = localStorage.getItem(LS_ID);
     const id = idStr ? Number(idStr) : null;
     if (!name && !email && !id) return null;
-    return { id, userId: id, name, email, role: "affiliate" };
+    return { id, userId: id, name, email, role: "affiliate", _source: "cache" };
   } catch {
     return null;
   }
@@ -60,27 +64,30 @@ function clearCache() {
 
 export function UserProvider({ children }) {
   const [user, setUser] = useState(undefined);
-  const [lastError, setLastError] = useState(null);
   const [ready, setReady] = useState(false);
+  const [lastError, setLastError] = useState(null);
+  const [serverAuthenticated, setServerAuthenticated] = useState(false);
 
-  // 1) İlk boya öncesi hafif hydrate (sadece görsel stabilite için)
+  // 1) İlk boya öncesi: sadece görsel stabilite için cache'i geçir (auth sayılmaz)
   useLayoutEffect(() => {
     const cached = readCache();
     if (cached) setUser((u) => ({ ...(u || {}), ...cached }));
   }, []);
 
-  // 2) /api/me : redirect/guard kararları bu bittiğinde alınsın
+  // 2) /api/me → auth kaynağı sadece burasıdır
   const fetchMe = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/me", { method: "GET" });
+      const res = await apiFetch("/api/me", { method: "GET", cache: "no-store" });
       if (!res.ok) {
         setUser(null);
+        setServerAuthenticated(false);
         clearCache();
         setLastError(null);
         return;
       }
       const data = await res.json().catch(() => ({}));
-      if (data?.id || data?.userId) {
+
+      if (data && (data.id || data.userId)) {
         const normalized = {
           id: data.id ?? data.userId ?? null,
           userId: data.userId ?? data.id ?? null,
@@ -88,18 +95,20 @@ export function UserProvider({ children }) {
           name: data.name || data.username || "",
           role: data.role || "affiliate",
           status: data.status || "active",
-          ...data,
         };
         setUser(normalized);
+        setServerAuthenticated(true);
         writeCache(normalized);
         setLastError(null);
       } else {
         setUser(null);
+        setServerAuthenticated(false);
         clearCache();
         setLastError(null);
       }
     } catch {
       setUser(null);
+      setServerAuthenticated(false);
       setLastError("network_error");
     } finally {
       setReady(true);
@@ -108,13 +117,13 @@ export function UserProvider({ children }) {
 
   useEffect(() => { fetchMe(); }, [fetchMe]);
 
-  // 3) user değişince cache senkronu
+  // 3) user değişince cache senkronu (yalnız server doğrulanmışsa kalıcılaştır)
   useEffect(() => {
-    if (user && (user.id || user.userId)) writeCache(user);
+    if (serverAuthenticated && user && (user.id || user.userId)) writeCache(user);
     if (user === null) clearCache();
-  }, [user]);
+  }, [serverAuthenticated, user]);
 
-  // 4) Sekmeler arası senkron
+  // 4) Sekmeler arası basit senkron
   useEffect(() => {
     function onStorage(e) {
       if (e.key === LS_ID || e.key === LS_NAME || e.key === LS_EMAIL) {
@@ -131,14 +140,15 @@ export function UserProvider({ children }) {
     user,
     setUser: (u) => {
       setUser(u);
+      // dışarıdan setUser çağrılarında auth state’i değiştirmeyiz
       if (u && (u.id || u.userId)) writeCache(u);
       if (u === null) clearCache();
     },
     ready,
-    isAuthenticated: !!(user && (user.id || user.userId)),
+    isAuthenticated: serverAuthenticated, // 🔒 sadece server-verified
     lastError,
     refreshUser: fetchMe,
-  }), [user, ready, lastError, fetchMe]);
+  }), [user, ready, serverAuthenticated, lastError, fetchMe]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

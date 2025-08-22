@@ -1,9 +1,14 @@
 "use client";
 
 /**
- * Affiliate Login (Credentials + Google)
- * - Artık auto-banner YOK. Oturum varsa mount sonrası direkt /dashboard'a redirect.
- * - CSRF preload + sade, hydrasyon güvenli form.
+ * File: src/app/login/page.js
+ * Purpose: Affiliate Login (Credentials + Google). Oturum varsa yalnızca server-verified ise /dashboard’a yönlendir.
+ *
+ * Security Docblock:
+ * - CSRF: NextAuth /api/auth/csrf preload.
+ * - Form gönderimleri apiFetch ile (X-Requested-With, X-Request-Id).
+ * - Google giriş signIn("google") ile yapılır; callbackUrl yalnızca aynı origin.
+ * - Redirect kararı: `isAuthenticated && ready` (server-verified). UI cache kesinlikle tetiklemez.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -75,7 +80,7 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
-  const { user: me, ready: userReady } = useUser();
+  const { isAuthenticated, ready: userReady } = useUser(); // 🔒 sadece server-verified
 
   const t = useMemo(() => {
     const lang = locale === "tr" ? "tr" : "en";
@@ -86,11 +91,11 @@ export default function LoginPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // if already authed → silent redirect (banner yok)
+  // Sadece server-verified ise redirect
   useEffect(() => {
     if (!mounted || !userReady) return;
-    if (me && (me.id || me.userId)) router.replace("/dashboard");
-  }, [mounted, userReady, me, router]);
+    if (isAuthenticated) router.replace("/dashboard");
+  }, [mounted, userReady, isAuthenticated, router]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

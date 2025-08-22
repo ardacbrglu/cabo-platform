@@ -4,10 +4,11 @@ export const runtime = "nodejs";
 /**
  * File: src/app/api/me/route.js
  * Purpose: Oturum bilgisini minimal ve DÜZ döndür (status/role dahil).
- * Sözleşme:
- *  - 200 OK + { authenticated:false }  → anon
- *  - 200 OK + { authenticated:true, id, email, name, role, status } → auth
- *  - Cache: no-store; Vary: Cookie
+ *
+ * Security Docblock:
+ * - 200 OK + { authenticated:false } → anon (401 döndürmeyiz; UI akışını sadeleştirir).
+ * - Vary: Cookie + no-store (proxy/edge cache kirlenmez).
+ * - Rate limit: 60/dk (IP).
  */
 
 import { NextResponse } from "next/server";
@@ -38,19 +39,14 @@ export async function GET(req) {
   try {
     const session = await getServerSession(authOptions);
     const email = session?.user?.email?.toLowerCase?.();
-    if (!email) {
-      // 401 yerine 200 + authenticated:false
-      return json({ authenticated: false });
-    }
+    if (!email) return json({ authenticated: false });
 
     const u = await prisma.user.findUnique({
       where: { email },
       select: { id: true, email: true, name: true, role: true, status: true },
     });
-
     if (!u) return json({ authenticated: false });
 
-    // DÜZ yapı:
     return json({
       authenticated: true,
       id: u.id,
@@ -60,7 +56,6 @@ export async function GET(req) {
       status: u.status || "active",
     });
   } catch {
-    // Güvenli fallback: UI patlamasın
     return json({ authenticated: false });
   }
 }
