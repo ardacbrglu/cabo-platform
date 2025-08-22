@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Merchant Register (no Google)
- * - Modern, large inputs (tasarım korunur)
- * - Field-level tooltip errors (ilk submit’te görünür, tıklayınca/focus’ta kapanır)
- * - TR (+90) ve US (+1) ülke kodu
- * - Password + Confirm Password eşleşme kontrolü
- * - CSRF preload + reCAPTCHA
+ * File: src/app/merchant/register/page.js
+ * Purpose: Merchant Register (no Google) — modern form + field-level hints
+ * Security Docblock:
+ * - All submits go through fetch() with credentials:include.
+ * - Sends X-Requested-With and X-Request-Id headers; NextAuth CSRF token header eklenir.
+ * - Server-side: Origin/Referer check, rate limit, Zod validation, reCAPTCHA verification.
+ * - No sensitive data in client logs. No inline events that leak PII.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,7 +18,7 @@ import { useLocale } from "@/context/LocaleContext";
 import dynamic from "next/dynamic";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 
-// reCAPTCHA v3 (SSR off)
+// reCAPTCHA (SSR off)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 /* i18n */
@@ -160,7 +161,7 @@ const translations = {
   },
 };
 
-/** Small tooltip over inputs; hidden until first submit, closes on click/focus */
+/** Small tooltip over inputs; hidden until first submit, closes on real user action */
 function FieldHint({ show, message }) {
   if (!show) return null;
   return (
@@ -205,24 +206,31 @@ export default function MerchantRegisterPage() {
   const [success, setSuccess] = useState(false);
   const [serverError, setServerError] = useState("");
 
-  // Tooltip visibility (after first submit); clicking anywhere or focusing input hides them
+  // Tooltip visibility (after first submit)
   const [hintsVisible, setHintsVisible] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
 
-  // preload NextAuth CSRF cookies (edge-case azaltır)
+  // NEW: programatik odak ile kullanıcı odaklanmasını ayırt edelim (blink fix)
+  const programmaticFocusRef = useRef(false);
+
+  // preload NextAuth CSRF cookies
   useEffect(() => {
     fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
   }, []);
 
-  // global click ile ipuçlarını kapat
+  // gerçek kullanıcı etkileşiminde ipuçlarını kapat (pointer/keyboard)
   useEffect(() => {
     function closeHints() {
       setHintsVisible(false);
     }
     if (hintsVisible) {
       window.addEventListener("pointerdown", closeHints, { once: true });
-      return () => window.removeEventListener("pointerdown", closeHints);
+      window.addEventListener("keydown", closeHints, { once: true });
+      return () => {
+        window.removeEventListener("pointerdown", closeHints);
+        window.removeEventListener("keydown", closeHints);
+      };
     }
   }, [hintsVisible]);
 
@@ -232,7 +240,6 @@ export default function MerchantRegisterPage() {
     const { name, value } = e.target;
     setServerError("");
     if (name === "phone") {
-      // sadece rakam
       const digits = value.replace(/\D+/g, "");
       setForm((s) => ({ ...s, phone: digits }));
       return;
@@ -241,7 +248,7 @@ export default function MerchantRegisterPage() {
   };
 
   const reName = /^[\p{L}\p{N}_ ]+$/u;
-  const reCompany = /^[\p{L}\p{N}\s&_.,'’()\-]+$/u;
+  const reCompany = /^[\p{L}\p{N}\s&_.,'’()-]+$/u;
 
   const validate = () => {
     const errs = {};
@@ -287,22 +294,39 @@ export default function MerchantRegisterPage() {
     return errs;
   };
 
+  // programatik odak sırasında focus ile ipuçlarını kapatma
+  const handleFocus = () => {
+    if (!programmaticFocusRef.current) {
+      setHintsVisible(false);
+    }
+  };
+
   async function onSubmit(e) {
     e.preventDefault();
     setSubmitted(true);
-    setHintsVisible(true);
     setServerError("");
     setSuccess(false);
     firstInvalidRef.current = null;
 
     const errs = validate();
     if (Object.keys(errs).length) {
+      // Önce programatik odak bayrağını aç
+      programmaticFocusRef.current = true;
+
       // İlk hatalı alana odaklan
-      // Odak referansı input render edilirken atanıyor
-      setTimeout(() => firstInvalidRef.current?.focus(), 0);
+      // (ref callback render’da ayarlanacak)
+      requestAnimationFrame(() => {
+        firstInvalidRef.current?.focus?.();
+        // Odak verildikten kısa bir süre sonra ipucunu göster
+        setTimeout(() => {
+          programmaticFocusRef.current = false; // artık kullanıcı odaklarını ayırt ederiz
+          setHintsVisible(true);
+        }, 80);
+      });
       return;
     }
 
+    setHintsVisible(false);
     setLoading(true);
     try {
       const fullPhone = `${form.countryCode}${form.phone}`.trim();
@@ -348,7 +372,7 @@ export default function MerchantRegisterPage() {
     }
   }
 
-  // Hatalar sadece submit sonrası hesaplanır (tooltip spam olmaz)
+  // Hatalar sadece submit sonrası hesaplanır
   const errors = submitted ? validate() : {};
   const show = (name) => hintsVisible && !!errors[name];
   const needsRef = (name) =>
@@ -415,7 +439,7 @@ export default function MerchantRegisterPage() {
             noValidate
           >
             {/* Company */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <FieldHint show={show("companyName")} message={errors.companyName} />
               <input
                 ref={(el) => {
@@ -433,7 +457,7 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* Name */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <FieldHint show={show("name")} message={errors.name} />
               <input
                 ref={(el) => {
@@ -451,7 +475,7 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* Email */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <FieldHint show={show("email")} message={errors.email} />
               <input
                 ref={(el) => {
@@ -480,7 +504,7 @@ export default function MerchantRegisterPage() {
                 <option value="+90">🇹🇷 +90</option>
                 <option value="+1">🇺🇸 +1</option>
               </select>
-              <div className="relative flex-1" onFocus={() => setHintsVisible(false)}>
+              <div className="relative flex-1" onFocus={handleFocus}>
                 <FieldHint show={show("phone")} message={errors.phone} />
                 <input
                   ref={(el) => {
@@ -500,7 +524,7 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* Password */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <FieldHint show={show("password")} message={errors.password} />
               <input
                 ref={(el) => {
@@ -520,7 +544,7 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* Confirm Password */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <FieldHint show={show("password2")} message={errors.password2} />
               <input
                 ref={(el) => {
@@ -540,7 +564,7 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* Terms */}
-            <div className="relative flex items-center gap-2 mb-1" onFocus={() => setHintsVisible(false)}>
+            <div className="relative flex items-center gap-2 mb-1" onFocus={handleFocus}>
               <input
                 id="terms"
                 type="checkbox"
@@ -560,18 +584,18 @@ export default function MerchantRegisterPage() {
             </div>
 
             {/* CAPTCHA */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
+            <div className="relative" onFocus={handleFocus}>
               <Captcha onChange={setCaptcha} lang={locale} />
               <FieldHint show={show("captcha")} message={errors.captcha} />
             </div>
 
             {serverError && (
-              <p className="text-red-500 text-base" role="alert">
+              <p className="text-red-500 text-base" role="alert" aria-live="polite">
                 {serverError}
               </p>
             )}
             {success && (
-              <p className="text-green-400 text-base" role="status">
+              <p className="text-green-400 text-base" role="status" aria-live="polite">
                 {t("success")}
               </p>
             )}

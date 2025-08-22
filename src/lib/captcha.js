@@ -1,47 +1,71 @@
+// File: src/lib/captcha.js
+// Purpose: Server-side Google reCAPTCHA verification (v2 checkbox & v3)
+// Security Docblock:
+// - Uses only server-side secret (RECAPTCHA_SECRET_KEY). No secrets on client.
+// - Optional dev bypass: NODE_ENV!=="production" && RECAPTCHA_BYPASS_DEV==="1".
+// - Short network timeout; does not log PII by default.
+
+const MODE = (process.env.NEXT_PUBLIC_RECAPTCHA_MODE || "v2").toLowerCase();
+const SECRET = process.env.RECAPTCHA_SECRET_KEY;
+const MIN_SCORE = Number(process.env.RECAPTCHA_MIN_SCORE || 0.5);
+
+export function clientIpFromRequest(req) {
+  const fwd = req?.headers?.get?.("x-forwarded-for") || "";
+  return fwd.split(",")[0]?.trim() || undefined;
+}
+
 /**
- * Server-side reCAPTCHA doğrulaması (v2 & v3).
- * ENV:
- *   RECAPTCHA_SECRET_KEY
- *   NEXT_PUBLIC_RECAPTCHA_MODE = "v2" | "v3"
- *   RECAPTCHA_MIN_SCORE (ops, v3 için, vars: 0.5)
- *   RECAPTCHA_BYPASS_DEV=1  // sadece development’ta kolay test
+ * Low-level verify: returns { ok, raw }
  */
 export async function verifyRecaptcha(token, remoteIp) {
-  const secret = process.env.RECAPTCHA_SECRET_KEY;
-  const mode = (process.env.NEXT_PUBLIC_RECAPTCHA_MODE || "v2").toLowerCase();
-
-  if (process.env.NODE_ENV !== "production" && process.env.RECAPTCHA_BYPASS_DEV === "1") {
+  // Dev bypass (only non-production)
+  if (
+    process.env.NODE_ENV !== "production" &&
+    process.env.RECAPTCHA_BYPASS_DEV === "1"
+  ) {
     return { ok: true, raw: { devBypass: true } };
   }
-  if (!secret || !token) return { ok: false };
+
+  if (!SECRET || !token) return { ok: false, raw: { reason: "missing" } };
+
+  // POST https://www.google.com/recaptcha/api/siteverify
+  const body = new URLSearchParams({ secret: SECRET, response: token });
+  if (remoteIp) body.set("remoteip", remoteIp);
+
+  // timeout-safe fetch
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
 
   try {
-    const body = new URLSearchParams({ secret, response: token });
-    if (remoteIp) body.set("remoteip", remoteIp);
-
     const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
+
     const data = await res.json().catch(() => ({}));
     if (!data?.success) return { ok: false, raw: data };
 
-    if (mode === "v3") {
-      const min = Number(process.env.RECAPTCHA_MIN_SCORE || 0.5);
-      return { ok: (data.score ?? 0) >= min, raw: data };
+    if (MODE === "v3") {
+      const ok = (data.score ?? 0) >= MIN_SCORE;
+      return { ok, raw: data };
     }
+    // v2
     return { ok: true, raw: data };
-  } catch {
-    return { ok: false };
+  } catch (e) {
+    clearTimeout(timer);
+    return { ok: false, raw: { error: "network", detail: String(e?.message || e) } };
   }
 }
 
-// İstekten IP alıp verify’e geçirmen kolay olsun diye bir yardımcı:
-export function clientIpFromRequest(req) {
-  const fwd = req.headers.get("x-forwarded-for") || "";
-  return fwd.split(",")[0]?.trim() || undefined;
+/**
+ * Convenience wrapper used by API routes:
+ * same signature you already use: (req, token) -> boolean
+ */
+export async function verifyRecaptchaFromRequest(req, token) {
+  const ip = clientIpFromRequest(req);
+  const { ok } = await verifyRecaptcha(token, ip);
+  return ok;
 }
-
-// Örnek kullanım (API route içinde):
-// const ok = await verifyRecaptcha(body.captcha, clientIpFromRequest(req));

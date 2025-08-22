@@ -3,11 +3,9 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { cookies } from "next/headers";
-import jwt from "jsonwebtoken";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
-
-const JWT_SECRET = process.env.JWT_SECRET || "";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth"; // << yolu kendi projenle uyumlu tut
 
 function json(data, init = {}) {
   const res = NextResponse.json(data, init);
@@ -18,9 +16,13 @@ function json(data, init = {}) {
 
 export async function GET(req) {
   try {
-    // --- Rate limit (IP bazlı 30/dk) ---
+    // --- Rate limit (IP bazlı 30/dk)
     const rlKey = makeRateLimitKey(req, { scope: "products_list" });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 30, windowMs: 60_000 });
+    const { ok, resetMs } = await checkRateLimit({
+      key: rlKey,
+      limit: 30,
+      windowMs: 60_000,
+    });
     if (!ok) {
       return json(
         { error: "Too many requests" },
@@ -28,20 +30,20 @@ export async function GET(req) {
       );
     }
 
-    // --- Opsiyonel kullanıcı (JWT cookie) ---
-    const cookieStore = cookies(); // DİKKAT: await yok
-    const token = cookieStore.get("cabo_token")?.value;
-    let userId = null;
-    if (token && JWT_SECRET) {
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        userId = Number(decoded?.userId) || null;
-      } catch {
-        // geçersiz JWT → anonim gibi davran
-      }
+    // --- Opsiyonel kullanıcı (NextAuth session)
+    const session = await getServerSession(authOptions);
+    let userId = session?.user?.id ?? null;
+
+    // Bazı kurulumlardaki callback'lerde id gelmeyebilir → email'den id bulun
+    if (!userId && session?.user?.email) {
+      const u = await prisma.user.findUnique({
+        where: { email: session.user.email.toLowerCase() },
+        select: { id: true },
+      });
+      userId = u?.id ?? null;
     }
 
-    // --- Ürünler (aktif + admin onaylı) ---
+    // --- Ürünler (aktif + admin onaylı)
     const allProducts = await prisma.merchantProduct.findMany({
       where: { isActive: true, activatedByAdmin: true },
       orderBy: { createdAt: "desc" },
@@ -62,12 +64,12 @@ export async function GET(req) {
       },
     });
 
-    // Kota (maxSalesLimit) aşanları ele
+    // Kota aşılmışları ele
     const products = allProducts.filter(
       (p) => p.maxSalesLimit == null || p.totalPurchases < p.maxSalesLimit
     );
 
-    // --- Kullanıcının linkleri (bilgi amaçlı) ---
+    // --- Kullanıcının linkleri (opsiyonel bilgi)
     let userLinks = [];
     let visibleLinkIds = [];
     if (userId) {
@@ -75,9 +77,9 @@ export async function GET(req) {
         where: { userId },
         select: { productId: true, token: true, isVisible: true, expiresAt: true },
       });
-      const activeProductIds = new Set(products.map((p) => p.productId));
+      const activeIds = new Set(products.map((p) => p.productId));
       visibleLinkIds = userLinks
-        .filter((l) => l.isVisible && activeProductIds.has(l.productId))
+        .filter((l) => l.isVisible && activeIds.has(l.productId))
         .map((l) => l.productId);
     }
 
