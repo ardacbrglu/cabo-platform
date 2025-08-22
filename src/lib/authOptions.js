@@ -1,3 +1,4 @@
+// src/lib/authOptions.js
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import prisma from "@/lib/prisma";
@@ -19,8 +20,6 @@ function shapeUser(u) {
 export const authOptions = {
   trustHost: true,
   secret: process.env.NEXTAUTH_SECRET,
-
-  // Stateless session
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
 
   providers: [
@@ -47,8 +46,8 @@ export const authOptions = {
           const isGoogleOnly = !user.passwordHash && (user.accounts || []).some(a => a.provider === "google");
           if (isGoogleOnly) return null;
 
-          // RBAC + status
-          if (user.role !== "affiliate") return null;
+          // ✅ Hem affiliate hem merchant login olabilir
+          if (!["affiliate", "merchant"].includes(user.role)) return null;
           if (user.status !== "active") return null;
 
           const ok = user.passwordHash ? await bcrypt.compare(password, user.passwordHash) : false;
@@ -62,28 +61,19 @@ export const authOptions = {
     }),
 
     ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
-      ? [
-          GoogleProvider({
-            clientId: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            allowDangerousEmailAccountLinking: false,
-          }),
-        ]
+      ? [GoogleProvider({
+          clientId: process.env.GOOGLE_CLIENT_ID,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+          allowDangerousEmailAccountLinking: false,
+        })]
       : []),
   ],
 
   pages: { signIn: "/login" },
 
   callbacks: {
-    /**
-     * Google sign-in politikası:
-     * - DB'de kullanıcı varsa → sadece status === "active" ise izin ver.
-     * - Kullanıcı yoksa → google_reg_precheck (JWT) çerezi mecburi.
-     *   Yok/bozuksa AccessDenied yerine Register'a redirect et (daha iyi UX).
-     */
     async signIn({ user, account, req }) {
       if (account?.provider !== "google") return true;
-
       const emailLower = (user?.email || "").toLowerCase();
       if (!emailLower) return false;
 
@@ -91,12 +81,9 @@ export const authOptions = {
         where: { email: emailLower },
         select: { status: true },
       });
+      if (existing) return existing.status === "active";
 
-      if (existing) {
-        return existing.status === "active"; // pending/inactive ise reddet
-      }
-
-      // Yeni kullanıcı → precheck cookie zorunlu
+      // Yeni kullanıcı için precheck cookie bekle
       const cookieHeader = req?.headers?.get?.("cookie") || "";
       const match = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
       const token = match ? decodeURIComponent(match[1]) : null;
@@ -109,7 +96,7 @@ export const authOptions = {
 
       try {
         if (!token) return `${baseUrl}/register?err=google_precheck`;
-        jwt.verify(token, process.env.NEXTAUTH_SECRET); // süre + imza kontrol
+        jwt.verify(token, process.env.NEXTAUTH_SECRET);
         return true;
       } catch {
         return `${baseUrl}/register?err=google_precheck`;

@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * File: src/app/merchant/login/page.js
+ * Purpose: Merchant Login (Credentials)
+ * Security Docblock:
+ * - Tüm istekler apiFetch ile gider (credentials: include, X-Requested-With, X-Request-Id).
+ * - CSRF preload (useCsrfToken), header'da x-csrf-token gönderilir.
+ * - Field ipuçları (tooltip) minimum: burada sadece kırmızı çerçeve, yazı yok.
+ * - PII loglanmaz. Inputlar autocomplete güvenli ve hatırlatıcıları kapalı.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -7,9 +17,7 @@ import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { apiFetch } from "@/lib/apiFetch";
-import { AlertTriangle } from "lucide-react";
 
-/* i18n */
 const translations = {
   en: {
     title: "Merchant Login",
@@ -35,6 +43,7 @@ const translations = {
     req_email: "Please fill out this field.",
     req_password: "Please fill out this field.",
     invalidEmail: "Invalid email address.",
+    failed: "Login failed.",
   },
   tr: {
     title: "Satıcı Girişi",
@@ -60,31 +69,14 @@ const translations = {
     req_email: "Lütfen bu alanı doldurun.",
     req_password: "Lütfen bu alanı doldurun.",
     invalidEmail: "Geçersiz e-posta.",
+    failed: "Giriş başarısız.",
   },
 };
-
-/** Mini tooltip; ilk submit'te görünür, tıklayınca/focus'ta kapanır */
-function FieldHint({ show, message }) {
-  if (!show) return null;
-  return (
-    <div className="absolute -top-10 left-0 z-[5] rounded-md bg-[#222] text-white text-sm px-3 py-2 shadow-lg border border-[#333]">
-      <div className="flex items-center gap-2">
-        <AlertTriangle size={16} className="text-[#ffb74d]" />
-        <span>{message}</span>
-      </div>
-      <span
-        aria-hidden
-        className="absolute left-4 -bottom-2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-[#222]"
-      />
-    </div>
-  );
-}
 
 export default function MerchantLoginPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
   const { csrfToken } = useCsrfToken();
-
   const t = useMemo(() => (k) => translations[locale]?.[k] ?? k, [locale]);
 
   const [email, setEmail] = useState("");
@@ -93,10 +85,11 @@ export default function MerchantLoginPage() {
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
 
-  // tooltip kontrolü
+  // minimal hint behavior (register ile aynı “blink” fix)
   const [submitted, setSubmitted] = useState(false);
-  const [hintsVisible, setHintsVisible] = useState(false);
   const firstInvalidRef = useRef(null);
+  const programmaticFocusRef = useRef(false);
+  const [hintsVisible, setHintsVisible] = useState(false); // burada görsel ipucu göstermiyoruz ama blink engeli için var
 
   useEffect(() => {
     document.body.style.overflow = showForgot ? "hidden" : "";
@@ -105,14 +98,15 @@ export default function MerchantLoginPage() {
     };
   }, [showForgot]);
 
-  // global click ile ipuçlarını kapat
   useEffect(() => {
-    function close() {
-      setHintsVisible(false);
-    }
     if (hintsVisible) {
+      const close = () => setHintsVisible(false);
       window.addEventListener("pointerdown", close, { once: true });
-      return () => window.removeEventListener("pointerdown", close);
+      window.addEventListener("keydown", close, { once: true });
+      return () => {
+        window.removeEventListener("pointerdown", close);
+        window.removeEventListener("keydown", close);
+      };
     }
   }, [hintsVisible]);
 
@@ -126,16 +120,26 @@ export default function MerchantLoginPage() {
     return errs;
   };
 
+  const handleFocus = () => {
+    if (!programmaticFocusRef.current) setHintsVisible(false);
+  };
+
   async function onSubmit(e) {
     e.preventDefault();
     setSubmitted(true);
-    setHintsVisible(true);
     setServerError("");
     firstInvalidRef.current = null;
 
     const errs = validate();
     if (Object.keys(errs).length) {
-      setTimeout(() => firstInvalidRef.current?.focus(), 0);
+      programmaticFocusRef.current = true;
+      requestAnimationFrame(() => {
+        firstInvalidRef.current?.focus?.();
+        setTimeout(() => {
+          programmaticFocusRef.current = false;
+          setHintsVisible(true);
+        }, 80);
+      });
       return;
     }
 
@@ -152,23 +156,20 @@ export default function MerchantLoginPage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
-        // pending / locked / invalid vs. backend mesajını göster
-        setServerError(data?.message || (locale === "tr" ? "Giriş başarısız." : "Login failed."));
+        setServerError(data?.message || t("failed"));
       } else {
         router.push("/merchant/dashboard");
       }
     } catch {
-      setServerError(locale === "tr" ? "Giriş başarısız. Lütfen tekrar deneyin." : "Login failed. Please try again.");
+      setServerError(t("failed"));
     } finally {
       setLoading(false);
     }
   }
 
   const errors = submitted ? validate() : {};
-  const show = (name) => hintsVisible && !!errors[name];
   const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
 
-  // register ile aynı input stili
   const inputBase =
     "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
   const ringOk = "focus:ring-[#81d742]";
@@ -215,12 +216,9 @@ export default function MerchantLoginPage() {
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
             {/* Email */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
-              <FieldHint show={show("email")} message={errors.email} />
+            <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("email")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
                 type="email"
                 placeholder={t("emailPlaceholder")}
                 value={email}
@@ -235,12 +233,9 @@ export default function MerchantLoginPage() {
             </div>
 
             {/* Password */}
-            <div className="relative" onFocus={() => setHintsVisible(false)}>
-              <FieldHint show={show("password")} message={errors.password} />
+            <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("password")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
                 type="password"
                 placeholder={t("passwordPlaceholder")}
                 value={password}
@@ -265,7 +260,7 @@ export default function MerchantLoginPage() {
             </div>
 
             {serverError && (
-              <div className="text-red-500 text-base text-center" role="alert">
+              <div className="text-red-500 text-base text-center" role="alert" aria-live="polite">
                 {serverError}
               </div>
             )}
@@ -288,7 +283,7 @@ export default function MerchantLoginPage() {
         </div>
       </div>
 
-      {/* Şifremi Unuttum Modal (placeholder) */}
+      {/* Forgot Password Modal (placeholder) */}
       {showForgot && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
           <div className="bg-[#181818] rounded-xl shadow-xl p-8 max-w-sm w-full border border-[#232323] text-center">
@@ -306,12 +301,8 @@ export default function MerchantLoginPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 3rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem; }
+          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>

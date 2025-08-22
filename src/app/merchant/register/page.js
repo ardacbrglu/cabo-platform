@@ -2,12 +2,11 @@
 
 /**
  * File: src/app/merchant/register/page.js
- * Purpose: Merchant Register (no Google) — modern form + field-level hints
+ * Purpose: Merchant Register (no Google) — modern form + minimal hints
  * Security Docblock:
- * - All submits go through fetch() with credentials:include.
- * - Sends X-Requested-With and X-Request-Id headers; NextAuth CSRF token header eklenir.
- * - Server-side: Origin/Referer check, rate limit, Zod validation, reCAPTCHA verification.
- * - No sensitive data in client logs. No inline events that leak PII.
+ * - fetch() credentials:include; X-Requested-With & X-Request-Id; CSRF header.
+ * - Server-side: Origin/Referer + AJAX + Request-Id; rate-limit; Zod; reCAPTCHA verify.
+ * - No PII logs on client. No inline secrets.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +20,7 @@ import { useCsrfToken } from "@/hooks/useCsrfToken";
 // reCAPTCHA (SSR off)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
-/* i18n */
+/* i18n (kısaltılmadı) */
 const translations = {
   en: {
     title: "Register Your Business",
@@ -82,7 +81,6 @@ const translations = {
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details",
     csrfWait: "Preparing a secure session… Please try again.",
-    // field-level required strings
     req_company: "Please fill out this field.",
     req_name: "Please fill out this field.",
     req_email: "Please fill out this field.",
@@ -91,6 +89,8 @@ const translations = {
     req_password2: "Please confirm your password.",
     req_terms: "You must accept the Terms.",
     req_captcha: "Please complete the captcha.",
+    bottomLoginText: "Already have an account?",
+    bottomLoginLink: "Log in",
   },
   tr: {
     title: "İşletmeni Kaydet",
@@ -158,10 +158,12 @@ const translations = {
     req_password2: "Lütfen şifreyi tekrar girin.",
     req_terms: "Şartları kabul etmelisiniz.",
     req_captcha: "Lütfen robot olmadığınızı doğrulayın.",
+    bottomLoginText: "Zaten hesabın var mı?",
+    bottomLoginLink: "Giriş yap",
   },
 };
 
-/** Small tooltip over inputs; hidden until first submit, closes on real user action */
+/** Küçük tooltip; artık yalnızca terms/captcha için kullanacağız */
 function FieldHint({ show, message }) {
   if (!show) return null;
   return (
@@ -185,10 +187,7 @@ export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
   const { csrfToken, ready: csrfReady } = useCsrfToken();
 
-  const t = useMemo(
-    () => (key) => translations[locale]?.[key] ?? key,
-    [locale]
-  );
+  const t = useMemo(() => (key) => translations[locale]?.[key] ?? key, [locale]);
 
   const [form, setForm] = useState({
     companyName: "",
@@ -200,26 +199,35 @@ export default function MerchantRegisterPage() {
     countryCode: "+90",
   });
   const [terms, setTerms] = useState(false);
+
   const [captcha, setCaptcha] = useState("");
+  const [captchaEnabled, setCaptchaEnabled] = useState(true);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [serverError, setServerError] = useState("");
 
-  // Tooltip visibility (after first submit)
+  // Tooltip visibility
   const [hintsVisible, setHintsVisible] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
-
-  // NEW: programatik odak ile kullanıcı odaklanmasını ayırt edelim (blink fix)
   const programmaticFocusRef = useRef(false);
 
-  // preload NextAuth CSRF cookies
+  // CSRF preload
   useEffect(() => {
     fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
   }, []);
 
-  // gerçek kullanıcı etkileşiminde ipuçlarını kapat (pointer/keyboard)
+  // Lokal captcha disable desteği
+  useEffect(() => {
+    const disableLocal = process.env.NEXT_PUBLIC_RECAPTCHA_DISABLE_LOCAL === "1";
+    if (disableLocal && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+      setCaptchaEnabled(false);
+    }
+  }, []);
+
+  // gerçek kullanıcı etkileşiminde ipuçlarını kapat
   useEffect(() => {
     function closeHints() {
       setHintsVisible(false);
@@ -239,6 +247,13 @@ export default function MerchantRegisterPage() {
   const onChange = (e) => {
     const { name, value } = e.target;
     setServerError("");
+
+    // e-mail değiştiyse ve captcha aktifse: token’ı sıfırla (v2 tek kullanımlık)
+    if (name === "email" && captchaEnabled && captcha) {
+      setCaptcha("");
+      setCaptchaResetKey((k) => k + 1);
+    }
+
     if (name === "phone") {
       const digits = value.replace(/\D+/g, "");
       setForm((s) => ({ ...s, phone: digits }));
@@ -288,17 +303,14 @@ export default function MerchantRegisterPage() {
       errs.password2 = t("passwordMismatch");
 
     if (!terms) errs.terms = t("req_terms");
-    if (!captcha) errs.captcha = t("req_captcha");
+    if (captchaEnabled && !captcha) errs.captcha = t("req_captcha");
     if (!csrfReady || !csrfToken) errs.csrf = t("csrfWait");
 
     return errs;
   };
 
-  // programatik odak sırasında focus ile ipuçlarını kapatma
   const handleFocus = () => {
-    if (!programmaticFocusRef.current) {
-      setHintsVisible(false);
-    }
+    if (!programmaticFocusRef.current) setHintsVisible(false);
   };
 
   async function onSubmit(e) {
@@ -310,16 +322,11 @@ export default function MerchantRegisterPage() {
 
     const errs = validate();
     if (Object.keys(errs).length) {
-      // Önce programatik odak bayrağını aç
       programmaticFocusRef.current = true;
-
-      // İlk hatalı alana odaklan
-      // (ref callback render’da ayarlanacak)
       requestAnimationFrame(() => {
         firstInvalidRef.current?.focus?.();
-        // Odak verildikten kısa bir süre sonra ipucunu göster
         setTimeout(() => {
-          programmaticFocusRef.current = false; // artık kullanıcı odaklarını ayırt ederiz
+          programmaticFocusRef.current = false;
           setHintsVisible(true);
         }, 80);
       });
@@ -352,21 +359,30 @@ export default function MerchantRegisterPage() {
           password: form.password,
           phoneNumber: fullPhone,
           termsAccepted: true,
-          captcha,
+          captcha: captchaEnabled ? captcha : undefined,
         }),
       });
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setServerError(data?.message || t("failed"));
+        // Her başarısız denemeden sonra reCAPTCHA'yı resetle (v2 token tek kullanımlık)
+        if (captchaEnabled) {
+          setCaptcha("");
+          setCaptchaResetKey((k) => k + 1);
+        }
       } else {
         setSuccess(true);
         setTimeout(() => {
-          window.location.assign("/merchant"); // merchant login
+          window.location.assign("/merchant");
         }, 2200);
       }
     } catch {
       setServerError(t("failed"));
+      if (captchaEnabled) {
+        setCaptcha("");
+        setCaptchaResetKey((k) => k + 1);
+      }
     } finally {
       setLoading(false);
     }
@@ -374,9 +390,10 @@ export default function MerchantRegisterPage() {
 
   // Hatalar sadece submit sonrası hesaplanır
   const errors = submitted ? validate() : {};
-  const show = (name) => hintsVisible && !!errors[name];
-  const needsRef = (name) =>
-    submitted && errors[name] && !firstInvalidRef.current;
+  // İPUCU SADECE terms/captcha (ve csrf) için
+  const show = (name) =>
+    hintsVisible && !!errors[name] && (name === "terms" || name === "captcha" || name === "csrf");
+  const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
 
   const inputBase =
     "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
@@ -426,25 +443,18 @@ export default function MerchantRegisterPage() {
           </div>
         </div>
 
-        {/* FORM */}
+        {/* FORM CARD */}
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
             {t("title")}
           </h3>
 
-          <form
-            onSubmit={onSubmit}
-            className="w-full flex flex-col gap-6"
-            autoComplete="off"
-            noValidate
-          >
+          <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" autoComplete="off" noValidate>
             {/* Company */}
             <div className="relative" onFocus={handleFocus}>
-              <FieldHint show={show("companyName")} message={errors.companyName} />
+              {/* ipucu gösterme: devre dışı (sadece kırmızı çerçeve) */}
               <input
-                ref={(el) => {
-                  if (needsRef("companyName")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("companyName")) firstInvalidRef.current = el; }}
                 type="text"
                 name="companyName"
                 placeholder={t("company")}
@@ -458,11 +468,8 @@ export default function MerchantRegisterPage() {
 
             {/* Name */}
             <div className="relative" onFocus={handleFocus}>
-              <FieldHint show={show("name")} message={errors.name} />
               <input
-                ref={(el) => {
-                  if (needsRef("name")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
                 type="text"
                 name="name"
                 placeholder={t("fullName")}
@@ -476,11 +483,8 @@ export default function MerchantRegisterPage() {
 
             {/* Email */}
             <div className="relative" onFocus={handleFocus}>
-              <FieldHint show={show("email")} message={errors.email} />
               <input
-                ref={(el) => {
-                  if (needsRef("email")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
                 type="email"
                 name="email"
                 placeholder={t("email")}
@@ -505,11 +509,8 @@ export default function MerchantRegisterPage() {
                 <option value="+1">🇺🇸 +1</option>
               </select>
               <div className="relative flex-1" onFocus={handleFocus}>
-                <FieldHint show={show("phone")} message={errors.phone} />
                 <input
-                  ref={(el) => {
-                    if (needsRef("phone")) firstInvalidRef.current = el;
-                  }}
+                  ref={(el) => { if (needsRef("phone")) firstInvalidRef.current = el; }}
                   type="tel"
                   name="phone"
                   placeholder={t("phone")}
@@ -525,11 +526,8 @@ export default function MerchantRegisterPage() {
 
             {/* Password */}
             <div className="relative" onFocus={handleFocus}>
-              <FieldHint show={show("password")} message={errors.password} />
               <input
-                ref={(el) => {
-                  if (needsRef("password")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
                 type="password"
                 name="password"
                 placeholder={t("password")}
@@ -545,11 +543,8 @@ export default function MerchantRegisterPage() {
 
             {/* Confirm Password */}
             <div className="relative" onFocus={handleFocus}>
-              <FieldHint show={show("password2")} message={errors.password2} />
               <input
-                ref={(el) => {
-                  if (needsRef("password2")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password2")) firstInvalidRef.current = el; }}
                 type="password"
                 name="password2"
                 placeholder={t("confirmPassword")}
@@ -563,7 +558,7 @@ export default function MerchantRegisterPage() {
               />
             </div>
 
-            {/* Terms */}
+            {/* Terms (ipucu açık) */}
             <div className="relative flex items-center gap-2 mb-1" onFocus={handleFocus}>
               <input
                 id="terms"
@@ -574,21 +569,21 @@ export default function MerchantRegisterPage() {
                 aria-invalid={!!errors.terms}
                 className="accent-[#81d742] h-4 w-4"
               />
-              <label
-                htmlFor="terms"
-                className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap"
-              >
+              <label htmlFor="terms" className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
                 {t("acceptTerms")}
               </label>
               <FieldHint show={show("terms")} message={errors.terms} />
             </div>
 
-            {/* CAPTCHA */}
-            <div className="relative" onFocus={handleFocus}>
-              <Captcha onChange={setCaptcha} lang={locale} />
-              <FieldHint show={show("captcha")} message={errors.captcha} />
-            </div>
+            {/* CAPTCHA (opsiyonel olarak gizlenebilir) */}
+            {captchaEnabled && (
+              <div className="relative" onFocus={handleFocus}>
+                <Captcha onChange={setCaptcha} lang={locale} resetKey={captchaResetKey} />
+                <FieldHint show={show("captcha")} message={errors.captcha} />
+              </div>
+            )}
 
+            {/* Server messages */}
             {serverError && (
               <p className="text-red-500 text-base" role="alert" aria-live="polite">
                 {serverError}
@@ -615,6 +610,14 @@ export default function MerchantRegisterPage() {
               )}
             </button>
           </form>
+
+          {/* Kart altı login (affiliate tarzı) */}
+          <div className="w-full mt-8 pt-6 border-t border-[#232323] text-center text-sm text-gray-400">
+            {t("bottomLoginText")}{" "}
+            <Link href="/merchant" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+              {t("bottomLoginLink")}
+            </Link>
+          </div>
         </div>
       </div>
 
