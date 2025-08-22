@@ -3,8 +3,8 @@
  * File: src/app/login/page.js
  * Purpose: Affiliate login (Credentials + Google).
  * Güvenli Akış:
+ * - Guard: /api/me ile gerçek auth kontrolü (eski cookie’lere takılmaz).
  * - Hydration güvenliği: mounted + locale.ready beklenir (React #185 fix).
- * - Oturum guard: yalnızca gerçek NextAuth session varsa redirect.
  * - Submit: /api/login (server proxy). apiFetch → credentials:include.
  */
 
@@ -100,25 +100,23 @@ export default function LoginPage() {
   const [csrfReady, setCsrfReady] = useState(false);
 
   const firstInputRef = useRef(null);
-  const callbackUrl =
-    searchParams?.get("callbackUrl") ||
-    searchParams?.get("from") ||
-    "/dashboard";
 
-  // Session guard: yalnızca gerçek NextAuth session varsa login'den çıkar
+  // middleware "/login?callbackUrl=..." kullanıyor → onu oku; yoksa /dashboard
+  const callbackUrl = searchParams?.get("callbackUrl") || "/dashboard";
+
+  // ✅ Guard: yalnızca /api/me authenticated:true ise yönlendir
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/auth/session", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const s = await r.json().catch(() => null);
-        if (s?.user) {
+        const r = await apiFetch("/api/me", { method: "GET", cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (j?.authenticated === true) {
           router.replace(callbackUrl);
           router.refresh();
         }
-      } catch {}
+      } catch {
+        /* sessiz düş */
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -217,7 +215,10 @@ export default function LoginPage() {
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
             <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -249,7 +250,9 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
+            <label className="sr-only" htmlFor="email">
+              {t("emailPlaceholder")}
+            </label>
             <input
               ref={firstInputRef}
               id="email"
@@ -267,7 +270,9 @@ export default function LoginPage() {
               aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
+            <label className="sr-only" htmlFor="password">
+              {t("passwordPlaceholder")}
+            </label>
             <input
               id="password"
               type="password"
