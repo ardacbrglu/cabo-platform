@@ -1,422 +1,513 @@
 "use client";
 
 /**
- * File: src/app/dashboard/page.jsx
- * Purpose: Affiliate Dashboard (compact) — HYDRATION SAFE + STABLE POLLING
+ * File: src/app/merchant/dashboard/page.jsx
+ * Purpose: Merchant Dashboard — add/edit/deactivate products with secure mutations
  *
- * Security/Perf Docblock:
- * - Polling: MIN_INTERVAL_MS >= 12s → GET 60/dk limitine uyar.
- * - 429 gelirse Retry-After başlığına göre bekler.
- * - useEffect sadece server-verified isReady olduğunda çalışır (UserContext.ready).
- * - setUser sadece değer değişince çağrılır → render/polling loop oluşmaz.
- * - AbortController + visibilitychange ile sızan istek ve boş yere trafik yok.
+ * Security Docblock (Cabo PROD Standard):
+ * - AuthZ: Server tarafı kapılar (requireSession, requireStatus('active'), requireRole('merchant')). Frontend soft-guard: yanlış role → /unauthorized.
+ * - CSRF: Mutasyonlarda NextAuth CSRF kullanılır. `/api/auth/csrf` → header `X-CSRF-Token`.
+ * - Transport: Tüm istekler merkezi `apiFetch` ile gider (credentials:include, X-Requested-With, X-Request-Id).
+ * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (backend). Frontend 429’larda kullanıcıya mesaj verir.
+ * - Security headers & logging: backend’de merkezi; burada ek JS yok. XSS: metinler backend’de sanitize edilir; img fallback mevcut.
  */
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Layout from "@/components/Layout";
-import { PiggyBank, Link2, ShoppingCart, BarChart2, Trophy, Lock } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
+import MerchantLayout from "@/components/merchant/MerchantLayout";
 import useTranslation from "@/hooks/useTranslation";
 import { apiFetch } from "@/lib/apiFetch";
 
-const COLOR_CABO = "#d1ffd0";
-const COLOR_GREEN = "#81d742";
+const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 
-/* Progress ring */
-function WalletProgress({ value, max }) {
-  const percent = Math.min((value / Math.max(max || 1, 1)) * 100, 100);
-  const size = 104, radius = 40, stroke = 6, center = size / 2, circumference = 2 * Math.PI * radius;
-  const offset = circumference * (1 - percent / 100);
-  return (
-    <div className="relative w-[104px] h-[104px] flex items-center justify-center mb-1 select-none">
-      <svg width={size} height={size} className="absolute left-0 top-0 z-0" aria-hidden>
-        <circle cx={center} cy={center} r={radius} fill="none" stroke="#232323" strokeWidth={stroke} />
-        <circle
-          cx={center} cy={center} r={radius} fill="none" stroke={COLOR_CABO} strokeWidth={stroke}
-          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 1s" }}
-        />
-      </svg>
-      <PiggyBank className="absolute" style={{ color: COLOR_CABO, width: 48, height: 48, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
-    </div>
-  );
+function handleImgError(e) {
+  e.target.onerror = null;
+  e.target.src = PLACEHOLDER;
+}
+function getQuotaStatus(product) {
+  if (!product.isActive) return "inactive";
+  if (product.total_purchases >= product.max_sales_limit) return "quota";
+  return null;
 }
 
-function StatCard({ value, label, icon }) {
-  return (
-    <div className="h-[84px] bg-[#181818] rounded-xl shadow flex flex-col items-center justify-center gap-1.5 overflow-hidden hover:scale-[1.02] transition">
-      <span className="text-white">{icon}</span>
-      <span className="text-[17px] font-extrabold font-mono text-white leading-none">{value}</span>
-      <span className="text-[12px] font-mono text-gray-400">{label}</span>
-    </div>
-  );
-}
-
-/* shallow compare only the keys we set into context here */
-function shallowEqualUser(a, b) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const keys = ["name", "email", "id", "userId", "role"];
-  for (const k of keys) if (a[k] !== b[k]) return false;
-  return true;
-}
-
-export default function Dashboard() {
+export default function MerchantDashboardPage() {
   const router = useRouter();
-  const { user: me, setUser, ready } = useUser();
   const { t } = useTranslation();
-  const isReady = !!ready;
+  const { user, ready } = useUser();
 
-  const [stats, setStats] = useState({
-    totalClicks: 0, totalSales: 0, totalEarnings: 0,
-    balance: 0, minPayout: 100, platformCommission: 5,
-    username: "", email: "", userId: null,
-    iban: "", bankName: "",
-    ibanMissing: false, bankMissing: false, realNameMissing: false,
-    recentActions: [], leaderboard: [],
-    lastConversion: null, lastClick: null,
-  });
-
-  const [statsLoading, setStatsLoading] = useState(true);
-  const [isMobile, setIsMobile] = useState(false);
-
-  // Role guard (server-verified context)
+  // Frontend soft-guard (UX): Yanlış rol → unauthorized
   useEffect(() => {
-    if (!isReady) return;
-    if (me?.role && me.role !== "affiliate") router.replace("/unauthorized");
-  }, [isReady, me?.role, router]);
+    if (!ready) return;
+    if (user?.role && user.role !== "merchant") router.replace("/unauthorized");
+  }, [ready, user?.role, router]);
 
-  // Mobile bp
+  const [csrfToken, setCsrfToken] = useState("");
+  const csrfLoaded = useRef(false);
+
+  // Load NextAuth CSRF once for this page (mutations)
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 700);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-
-  // Polling (stable, no self-trigger loop)
-  useEffect(() => {
-    if (!isReady) return;
-
     let alive = true;
-    let timer = null;
     const controller = new AbortController();
-    const MIN_INTERVAL_MS = 12000;
-
-    const schedule = (ms) => {
-      if (!alive) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(run, Math.max(ms, MIN_INTERVAL_MS));
-    };
-
-    const markLoadedOnce = () => setStatsLoading((prev) => (prev ? false : prev));
-
-    const run = async () => {
+    const load = async () => {
       try {
-        const res = await apiFetch("/api/dashboard", { method: "GET", signal: controller.signal });
-        if (!alive) return;
-
-        if (res.status === 401 || res.status === 403) {
-          markLoadedOnce();
-          router.replace("/login");
-          return;
+        const res = await apiFetch("/api/auth/csrf", { method: "GET", signal: controller.signal });
+        if (!alive || !res.ok) return;
+        // NextAuth returns { csrfToken: "..." }
+        const j = await res.json().catch(() => ({}));
+        const token = j?.csrfToken || j?.csrf?.token || "";
+        if (alive && token) {
+          setCsrfToken(token);
+          csrfLoaded.current = true;
         }
-
-        if (res.status === 429) {
-          markLoadedOnce();
-          const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
-          let retryBody = 0;
-          try { const j = await res.clone().json(); retryBody = Number(j?.retry_after) || 0; } catch {}
-          const waitMs = Math.max((retryHeader || retryBody || 15) * 1000, MIN_INTERVAL_MS);
-          schedule(waitMs);
-          return;
-        }
-
-        if (!res.ok) {
-          markLoadedOnce();
-          schedule(MIN_INTERVAL_MS + 3000);
-          return;
-        }
-
-        const data = await res.json().catch(() => ({}));
-
-        setStats((prev) => ({
-          ...prev,
-          ...data,
-          platformCommission: typeof data.platformCommission === "number" ? data.platformCommission : 5,
-          ibanMissing: !!data.ibanMissing, bankMissing: !!data.bankMissing, realNameMissing: !!data.realNameMissing,
-          recentActions: Array.isArray(data.recentActions) ? data.recentActions : [],
-          leaderboard: Array.isArray(data.leaderboard) ? data.leaderboard : [],
-          lastConversion: data.lastConversion || null, lastClick: data.lastClick || null,
-        }));
-
-        // Context + cache (only if different)
-        const nextUser = {
-          name: data.username || "",
-          email: data.email || "",
-          id: data.userId || null,
-          userId: data.userId || null,
-          role: "affiliate",
-        };
-        setUser((u) => (shallowEqualUser(u, nextUser) ? u : { ...(u || {}), ...nextUser }));
-
-        markLoadedOnce();
-        schedule(MIN_INTERVAL_MS);
-      } catch {
-        markLoadedOnce();
-        schedule(MIN_INTERVAL_MS + 3000);
-      }
+      } catch {}
     };
-
-    run();
-    schedule(MIN_INTERVAL_MS);
-
-    // Pause when hidden to save resources
-    const onVis = () => {
-      if (document.visibilityState === "hidden") {
-        if (timer) clearTimeout(timer);
-      } else {
-        schedule(0);
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-
+    load();
     return () => {
       alive = false;
-      if (timer) clearTimeout(timer);
       controller.abort();
-      document.removeEventListener("visibilitychange", onVis);
     };
-  }, [isReady, setUser, router]); // setUser burada stable (UserContext'te useCallback)
+  }, []);
 
-  const {
-    totalClicks, totalSales, totalEarnings,
-    balance, minPayout, platformCommission,
-    recentActions, leaderboard,
-    ibanMissing, bankMissing, realNameMissing,
-    lastConversion, lastClick,
-  } = stats;
+  const [products, setProducts] = useState([]);
+  const [formVisible, setFormVisible] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    image_url: "",
+    price: "",
+    commissionRate: "",
+    merchant_url: "",
+    max_sales_limit: "",
+  });
+  const [message, setMessage] = useState("");
+  const [minCommission, setMinCommission] = useState(5);
+  const [showCode, setShowCode] = useState({});
+  const [copyMsg, setCopyMsg] = useState({});
+  const [editingProductId, setEditingProductId] = useState(null);
+  const [editValues, setEditValues] = useState({ commissionRate: "", max_sales_limit: "" });
+  const [loading, setLoading] = useState(false);
 
-  const payoutDisabled = balance < minPayout || ibanMissing || bankMissing || realNameMissing;
+  // PRODUCTS FETCH (GET)
+  const fetchProducts = async () => {
+    try {
+      const res = await apiFetch("/api/merchant_dashboard", { method: "GET" });
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return;
+      }
+      if (res.status === 403) {
+        router.replace("/unauthorized");
+        return;
+      }
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
+        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
+        setTimeout(() => setMessage(""), Math.min(retryAfter, 60) * 1000);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setProducts(data.products || []);
+        setMinCommission(typeof data.minCommission === "number" ? data.minCommission : 5);
+      } else {
+        setProducts([]);
+        if (data?.error) setMessage(`❌ ${data.error}`);
+      }
+    } catch {
+      setProducts([]);
+      setMessage("❌ " + t("serverError"));
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // FORM HANDLERS — POST
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await apiFetch("/api/merchant_dashboard", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken || "",
+        },
+        body: JSON.stringify(form),
+      });
+
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return;
+      }
+      if (res.status === 403) {
+        setMessage("❌ " + t("forbidden"));
+        return;
+      }
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
+        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setFormVisible(false);
+        setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
+        await fetchProducts();
+        setMessage(t("productReviewMsg"));
+        setTimeout(() => setMessage(""), 4000);
+      } else {
+        setMessage(`❌ ${data?.error || t("failedAddProduct")}`);
+      }
+    } catch {
+      setMessage("❌ " + t("serverError"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // PATCH (activate/deactivate or edits)
+  const mutate = async (payload) => {
+    try {
+      const res = await apiFetch("/api/merchant_dashboard", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken || "",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return { ok: false };
+      }
+      if (res.status === 403) {
+        setMessage("❌ " + t("forbidden"));
+        return { ok: false };
+      }
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
+        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
+        return { ok: false };
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(`❌ ${data?.error || t("failedProductUpdate")}`);
+        return { ok: false };
+      }
+      return { ok: true, data };
+    } catch {
+      setMessage("❌ " + t("serverError"));
+      return { ok: false };
+    }
+  };
+
+  const handleDeactivate = async (productId, action) => {
+    setLoading(true);
+    const res = await mutate({ productId, action });
+    if (res.ok) await fetchProducts();
+    setLoading(false);
+  };
+
+  const remainingQuota = (limit, sold) => Math.max(0, Number(limit) - Number(sold));
+  const toggleShowCode = (productId) => setShowCode((prev) => ({ ...prev, [productId]: !prev[productId] }));
+  const copyProductCode = async (productId, code) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyMsg((prev) => ({ ...prev, [productId]: t("copied") }));
+      setTimeout(() => setCopyMsg((prev) => ({ ...prev, [productId]: "" })), 1200);
+    } catch {
+      setMessage(t("failedCopy"));
+    }
+  };
+
+  const startEditing = (product) => {
+    setEditingProductId(product.productId);
+    setEditValues({
+      commissionRate: product.commissionRate,
+      max_sales_limit: product.max_sales_limit,
+    });
+  };
+  const handleEditChange = (field, value) => setEditValues((prev) => ({ ...prev, [field]: value }));
+
+  const saveEdits = async () => {
+    if (Number(editValues.commissionRate) < minCommission) {
+      alert(t("minCommissionWarn").replace("{minCommission}", String(minCommission)));
+      return;
+    }
+    if (!Number.isInteger(Number(editValues.max_sales_limit)) || Number(editValues.max_sales_limit) < 0) {
+      alert(t("maxSalesLimitWarn"));
+      return;
+    }
+    setLoading(true);
+    const res = await mutate({
+      productId: editingProductId,
+      commissionRate: Number(editValues.commissionRate),
+      max_sales_limit: Number(editValues.max_sales_limit),
+    });
+    if (res.ok) {
+      setEditingProductId(null);
+      setEditValues({ commissionRate: "", max_sales_limit: "" });
+      await fetchProducts();
+    }
+    setLoading(false);
+  };
+  const cancelEdits = () => {
+    setEditingProductId(null);
+    setEditValues({ commissionRate: "", max_sales_limit: "" });
+  };
+
+  const inputClass =
+    "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
 
   return (
-    <Layout>
-      <main className="flex flex-col items-center w-full max-w-6xl lg:max-w-7xl mx-auto flex-1 justify-center mt-5 gap-8 px-4 overflow-x-hidden">
-        {/* DESKTOP */}
-        {!isMobile ? (
-          <section className="grid w-full grid-cols-12 gap-7">
-            {/* Row 1 */}
-            <div className="col-span-4"><StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={18} />} /></div>
-            <div className="col-span-4"><StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={18} />} /></div>
-            <div className="col-span-4"><StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={18} />} /></div>
+    <MerchantLayout>
+      <section className="flex flex-col md:flex-row md:justify-between md:items-center mb-8 gap-4">
+        <h1 className="text-3xl font-bold text-[#d1ffd0]">{t("manageProducts")}</h1>
+        <button
+          onClick={() => setFormVisible((v) => !v)}
+          className="flex items-center gap-2 bg-[#81d742] text-[#101010] px-5 py-2 rounded hover:bg-[#aaff6c] transition font-semibold text-base shadow"
+        >
+          <PlusCircle size={19} /> {t("addNewProduct")}
+        </button>
+      </section>
 
-            {/* Row 2: Live / Leaderboard */}
-            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-4 min-h-[140px] overflow-hidden">
-              <span className="flex items-center gap-2 font-mono font-bold text-[15px]" style={{ color: "#81d742" }}>
-                <BarChart2 className="text-white" size={16} /> {t("liveStats")}
-              </span>
-              <p className="text-gray-400 mt-1 text-[12px] font-mono">{t("liveStatsDesc")}</p>
-              {lastConversion && (
-                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#191b19] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[12px]">
-                  <span className="font-bold text-[#81d742]">
-                    {new Date(lastConversion.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                  </span>
-                  <span className="text-[#d1ffd0]">{lastConversion.productName}</span>
-                  <span className="font-bold text-[#81d742]">₺{Number(lastConversion.commission).toFixed(2)}</span>
-                  <span className="text-gray-400">x{lastConversion.quantity}</span>
-                </div>
+      {message && (
+        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow">
+          <CheckCircle size={18} className="text-green-400" /> {message}
+        </div>
+      )}
+
+      {/* --- ADD PRODUCT FORM --- */}
+      {formVisible && (
+        <form onSubmit={handleSubmit} className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <input
+              type="text"
+              className={inputClass}
+              placeholder={t("productTitle")}
+              required
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+            <input
+              type="text"
+              className={inputClass}
+              placeholder={t("productUrl")}
+              required
+              onChange={(e) => setForm({ ...form, merchant_url: e.target.value })}
+            />
+            <input
+              type="text"
+              className={inputClass}
+              placeholder={t("productImage")}
+              required
+              onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+            />
+            <input
+              type="number"
+              className={inputClass}
+              placeholder={t("productPrice")}
+              required
+              step="0.01"
+              onChange={(e) => setForm({ ...form, price: e.target.value })}
+            />
+            <input
+              type="number"
+              className={inputClass}
+              placeholder={t("commissionRate")}
+              required
+              step="0.1"
+              min={minCommission}
+              onChange={(e) => setForm({ ...form, commissionRate: e.target.value })}
+            />
+            <input
+              type="number"
+              className={inputClass}
+              placeholder={t("maxSalesLimit")}
+              required
+              onChange={(e) => setForm({ ...form, max_sales_limit: e.target.value })}
+            />
+          </div>
+          <textarea
+            className={inputClass + " w-full"}
+            placeholder={t("productDesc")}
+            rows={3}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+          ></textarea>
+          <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
+          <button type="submit" disabled={loading} className="bg-[#262f24] text-[#d1ffd0] font-semibold py-2 px-6 rounded hover:bg-[#293f21] mt-3 transition">
+            {loading ? t("adding") : t("submitReview")}
+          </button>
+        </form>
+      )}
+
+      {/* --- PRODUCT CARDS --- */}
+      <div className="grid gap-x-10 gap-y-14 md:grid-cols-2 xl:grid-cols-3">
+        {products.map((p) => {
+          const status = getQuotaStatus(p);
+          return (
+            <div
+              key={p.productId}
+              className={`relative bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col shadow-lg hover:shadow-2xl transition-all duration-300 min-h[490px] max-w-lg mx-auto group ${
+                status ? "opacity-60 grayscale" : ""
+              }`}
+            >
+              {/* status BADGES */}
+              {status === "inactive" && (
+                <span className="absolute left-5 top-5 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
+                  <Ban size={13} /> {t("inactive")}
+                </span>
               )}
-              {lastClick && (
-                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#232523] rounded-lg items-center w-full max-w-xs justify-between font-mono text-[12px]">
-                  <span className="font-bold text-[#81d742]">
-                    {new Date(lastClick.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                  </span>
-                  <span className="text-[#d1ffd0]">{lastClick.productName}</span>
-                  <span className="text-blue-400">Click</span>
-                  <span className="text-gray-400">{lastClick.extra || "-"}</span>
-                </div>
+              {status === "quota" && (
+                <span className="absolute left-5 top-5 bg-yellow-600/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
+                  <Ban size={13} /> {t("quotaReached")}
+                </span>
               )}
-              {!lastConversion && !lastClick && <span className="text-gray-500 mt-2 text-[12px]">{t("noRecentActivity")}</span>}
-            </div>
-
-            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-4 flex flex-col items-center min-h-[140px] overflow-hidden">
-              <div className="flex items-center gap-2 mb-2">
-                <Trophy className="text-[#81d742]" size={16} />
-                <span className="font-extrabold text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
+              {/* Product IMAGE */}
+              <img
+                src={p.image_url || PLACEHOLDER}
+                onError={handleImgError}
+                alt={p.name}
+                className="rounded-xl mb-4 h-44 w-full object-cover border border-[#202720]"
+                style={{ background: "#23262a" }}
+              />
+              <h3 className="text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
+              <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
+              <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
+                <span>
+                  <span className="text-gray-500">{t("price")}</span>: <span className="font-bold">${Number(p.price).toFixed(2)}</span>
+                </span>
+                <span>
+                  <span className="text-gray-500">{t("commission")}</span>:{" "}
+                  <span className="font-bold text-green-300">{Number(p.commissionRate).toFixed(2)}%</span>
+                </span>
               </div>
-              <div className="flex flex-col gap-1 w-full">
-                {(leaderboard || []).map((lb, i) => (
-                  <div key={`${lb.name}-${i}`} className="flex justify-between w-full text-[12px] px-2 font-mono">
-                    <span className="font-bold" style={{ color: COLOR_GREEN }}>{i + 1}.</span>
-                    <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
-                      {lb.name === stats.username ? t("you") : lb.name}
-                    </span>
-                    <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
+              <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
+                <span>
+                  {t("clicks")}: <b>{p.totalClicks}</b>
+                </span>
+                <span>
+                  {t("sales")}: <b>{p.total_purchases}</b>
+                </span>
+                <span>
+                  {t("quotaLeft")}: <b>{remainingQuota(p.max_sales_limit, p.total_purchases)}</b>
+                </span>
+              </div>
+              <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
+                <span>
+                  {t("affiliates")}: <b>{p.link_count}</b>
+                </span>
+                <span>Product ID: {p.productId}</span>
+              </div>
+              {/* Product Code */}
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs text-gray-400">{t("productCode")}:</span>
+                {showCode[p.productId] ? (
+                  <>
+                    <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
+                    <button
+                      type="button"
+                      onClick={() => copyProductCode(p.productId, p.productCode)}
+                      className="ml-1 text-[#81d742] hover:text-green-200 transition"
+                      title={t("copyCode")}
+                    >
+                      <Copy size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleShowCode(p.productId)}
+                      className="text-gray-400 hover:text-gray-200 transition"
+                      title={t("hide")}
+                    >
+                      <EyeOff size={15} />
+                    </button>
+                    {copyMsg[p.productId] && <span className="ml-2 text-green-400 font-mono text-xs">{copyMsg[p.productId]}</span>}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleShowCode(p.productId)}
+                    className="flex items-center gap-1 text-gray-400 hover:text-[#81d742] font-mono text-xs bg-[#161616] rounded px-2 py-1 ml-1"
+                    title={t("showCode")}
+                  >
+                    <Eye size={14} /> {t("show")}
+                  </button>
+                )}
+              </div>
+              <div className={`mt-4 text-xs font-semibold ${p.activated_by_admin ? "text-green-500" : "text-yellow-400"}`}>
+                {p.activated_by_admin ? t("approvedByAdmin") : t("waitingApproval")}
+              </div>
+              {/* Edit & Activate/Deactivate */}
+              <div className="flex flex-col gap-2 mt-auto pt-4">
+                {editingProductId === p.productId ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="mb-3 bg-yellow-900/70 border border-yellow-600 text-yellow-100 px-3 py-2 rounded text-xs font-mono font-bold">
+                      ⚠️ {t("adminApprovalWarn")}
+                    </div>
+                    <div className="flex gap-3 items-center">
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("commissionShort")}</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min={minCommission}
+                        max={99}
+                        value={editValues.commissionRate}
+                        onChange={(e) => handleEditChange("commissionRate", e.target.value)}
+                        className={inputClass + " w-24 text-green-300"}
+                        placeholder={t("commissionShort")}
+                      />
+                      <span className="ml-2 text-xs text-gray-400">(min: {minCommission})</span>
+                    </div>
+                    <div className="flex gap-3 items-center">
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("maxSales")}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={editValues.max_sales_limit}
+                        onChange={(e) => handleEditChange("max_sales_limit", e.target.value)}
+                        className={inputClass + " w-28 text-blue-300"}
+                        placeholder={t("maxSales")}
+                      />
+                      <span className="ml-2 text-xs text-gray-400">
+                        ({t("sold")}: {p.total_purchases})
+                      </span>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={saveEdits} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">
+                        {t("save")}
+                      </button>
+                      <button onClick={cancelEdits} disabled={loading} className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs">
+                        {t("cancel")}
+                      </button>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Row 3: Wallet + Payout */}
-            <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5 min-h-[240px] overflow-hidden">
-              <WalletProgress value={balance} max={minPayout} />
-              <div className="text-[17px] font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
-              <div className="text-gray-400 text-[12px] font-mono">{t("balance")}</div>
-              <div className="text-[18px] font-extrabold font-mono" style={{ color: COLOR_CABO }}>₺{Number(balance).toFixed(2)}</div>
-              <div className="text-[12px] mb-1 font-mono"><span style={{ color: "#81d742" }}>{t("minPayout")}:</span><span style={{ color: COLOR_GREEN, fontWeight: 700 }}> {minPayout}</span></div>
-              <div className="mt-1 text-[12px] font-bold font-mono" style={{ color: balance < minPayout ? "#e3d67d" : COLOR_GREEN }}>
-                {balance < minPayout ? t("earnMoreToPayout") : t("eligiblePayout")}
-              </div>
-
-              <div className="w-full max-w-sm mt-3">
-                <div className="text-[13px] font-extrabold mb-2 font-mono text-center" style={{ color: COLOR_CABO }}>{t("payoutRequest")}</div>
-                <button
-                  className={`flex items-center justify-center gap-2 w-full py-2.5 rounded font-bold font-mono text-[#181818] ${
-                    payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition-all"
-                  } text-[14px]`}
-                  disabled={payoutDisabled}
-                  onClick={() => router.push("/wallet")}
-                >
-                  {payoutDisabled ? (<><Lock size={17} className="inline-block mr-1" />{t("enterValidBank")}</>) : t("requestPayout")}
-                </button>
-                <div className="mt-2 text-[12px] font-mono text-gray-400 text-center">
-                  <span className="text-gray-300">{t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span></span>
-                </div>
-                <div className="mt-1 text-[12px] font-mono text-gray-400 text-center">{t("minThresholdNote")}</div>
-              </div>
-            </div>
-
-            {/* Onboarding */}
-            <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-6 flex flex-col items-center justify-center min-h-[220px] overflow-hidden">
-              <div className="font-extrabold mb-2 text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
-              <ul className="list-disc pl-4 text-gray-300 text-[12px] flex flex-col gap-1 font-mono">
-                <li>{t("trackStats")}</li><li>{t("inviteFriends")}</li><li>{t("withdrawEarnings")}</li><li>{t("checkProducts")}</li>
-              </ul>
-              <button className="mt-5 w-full py-2 rounded font-bold font-mono transition" style={{ background: COLOR_GREEN, color: "#181818", fontSize: "0.95rem" }}>
-                {t("referFriends")}
-              </button>
-            </div>
-
-            {/* Row 4: Recent Activity */}
-            <div className="col-span-12 bg-[#181818] rounded-xl shadow py-4 px-6 overflow-hidden">
-              <div className="font-extrabold mb-3 text-[15px] font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
-              <div className="flex flex-col gap-2">
-                {Array.isArray(recentActions) && recentActions.length > 0 ? recentActions.map((a, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-[12px] py-1 border-b border-[#1b1b1b] last:border-none font-mono">
-                    <span className="font-bold" style={{ color: COLOR_GREEN }}>{a.amount}</span>
-                    <span className="text-gray-300">{a.desc}</span>
-                    <span className="text-gray-400 text-[11px]">{a.date}</span>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => startEditing(p)} className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition">
+                      {t("edit")}
+                    </button>
+                    <button
+                      onClick={() => handleDeactivate(p.productId, p.isActive ? "deactivate" : "activate")}
+                      className={`${p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"} text-white py-2 rounded text-sm flex-1`}
+                    >
+                      {p.isActive ? t("deactivate") : t("activate")}
+                    </button>
                   </div>
-                )) : <div className="text-gray-400 text-[12px] font-mono py-2">{t("noActivity")}</div>}
+                )}
               </div>
             </div>
-          </section>
-        ) : (
-          /* MOBILE */
-          <>
-            <section className="w-full">
-              <div className="grid grid-cols-3 gap-3 w-full">
-                <StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={20} />} />
-                <StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={20} />} />
-                <StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={20} />} />
-              </div>
-            </section>
-
-            <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-3 px-2 mt-2 w-full">
-              <span className="flex items-center gap-2 font-mono font-bold text-base" style={{ color: COLOR_GREEN }}>
-                <BarChart2 className="text-white" size={17} /> {t("liveStats")}
-              </span>
-              <p className="text-gray-400 mt-1 text-xs font-mono">{t("liveStatsDesc")}</p>
-              {lastConversion ? (
-                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#191b19] rounded-lg items-center w-full max-w-xs justify-between font-mono text-xs">
-                  <span className="font-bold text-[#81d742]">
-                    {new Date(lastConversion.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                  </span>
-                  <span className="text-[#d1ffd0]">{lastConversion.productName}</span>
-                  <span className="font-bold text-[#81d742]">₺{Number(lastConversion.commission).toFixed(2)}</span>
-                  <span className="text-gray-400">x{lastConversion.quantity}</span>
-                </div>
-              ) : lastClick ? (
-                <div className="flex gap-3 mt-3 px-3 py-2 bg-[#232523] rounded-lg items-center w-full max-w-xs justify-between font-mono text-xs">
-                  <span className="font-bold text-[#81d742]">
-                    {new Date(lastClick.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
-                  </span>
-                  <span className="text-[#d1ffd0]">{lastClick.productName}</span>
-                  <span className="text-blue-400">Click</span>
-                  <span className="text-gray-400">{lastClick.extra || "-"}</span>
-                </div>
-              ) : <span className="text-gray-500 mt-2">{t("noRecentActivity")}</span>}
-            </div>
-
-            {/* Wallet + Payout */}
-            <div className="bg-[#181818] rounded-xl shadow flex flex-col items-center py-5 px-4 mt-3 w-full">
-              <WalletProgress value={balance} max={minPayout} />
-              <div className="text-lg font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
-              <div className="text-gray-400 text-xs font-mono">{t("balance")}</div>
-              <div className="text-xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>₺{Number(balance).toFixed(2)}</div>
-              <div className="text-xs mb-1 font-mono"><span style={{ color: "#81d742" }}>{t("minPayout")}:</span><span style={{ color: COLOR_GREEN, fontWeight: 700 }}> {minPayout}</span></div>
-              <div className="mt-1 text-xs font-bold font-mono" style={{ color: balance < minPayout ? "#e3d67d" : COLOR_GREEN }}>
-                {balance < minPayout ? t("earnMoreToPayout") : t("eligiblePayout")}
-              </div>
-
-              <button
-                className={`w-full mt-3 py-3 rounded-lg font-bold font-mono text-[#181818] ${
-                  payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
-                } text-base`}
-                disabled={payoutDisabled}
-                onClick={() => router.push("/wallet")}
-              >
-                {payoutDisabled ? (<><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
-              </button>
-              <div className="mt-2 text-xs font-mono text-gray-400 text-center">
-                <span className="text-gray-300">{t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span></span>
-              </div>
-              <div className="mt-1 text-xs text-gray-400 text-center font-mono">{t("minThresholdNote")}</div>
-            </div>
-
-            {/* Leaderboard */}
-            <div className="bg-[#181818] rounded-xl shadow py-4 px-3 flex flex-col items-center mt-3 w-full">
-              <div className="flex items-center gap-2 mb-2">
-                <Trophy className="text-[#81d742]" size={16} />
-                <span className="font-extrabold text-sm font-mono" style={{ color: COLOR_CABO }}>{t("leaderboard")}</span>
-              </div>
-              <div className="flex flex-col gap-1 w-full">
-                {(leaderboard || []).map((lb, i) => (
-                  <div key={`${lb.name}-${i}`} className="flex justify-between w-full text-xs px-2 font-mono">
-                    <span className="font-bold" style={{ color: COLOR_GREEN }}>{i + 1}.</span>
-                    <span className={lb.name === stats.username ? "font-bold" : ""} style={{ color: lb.name === stats.username ? COLOR_CABO : "#f6f6f6" }}>
-                      {lb.name === stats.username ? t("you") : lb.name}
-                    </span>
-                    <span className={i === 0 ? "text-yellow-200" : "text-gray-400"}>{lb.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Recent Activity */}
-            <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full">
-              <div className="font-extrabold mb-2 text-sm font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
-              <div className="flex flex-col gap-2">
-                {Array.isArray(recentActions) && recentActions.length > 0 ? recentActions.map((a, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-[#1b1b1b] last:border-none font-mono">
-                    <span className="font-bold" style={{ color: COLOR_GREEN }}>{a.amount}</span>
-                    <span className="text-gray-300">{a.desc}</span>
-                    <span className="text-gray-400 text-[11px]">{a.date}</span>
-                  </div>
-                )) : <div className="text-gray-400 text-xs font-mono py-1.5">{t("noActivity")}</div>}
-              </div>
-            </div>
-          </>
-        )}
-      </main>
-
-      <style jsx global>{`
-        html, body, #__next, main { overflow-x: hidden !important; }
-        @media (max-width: 700px) {
-          main, section, .w-full { width: 100% !important; min-width: 0 !important; }
-        }
-      `}</style>
-    </Layout>
+          );
+        })}
+      </div>
+    </MerchantLayout>
   );
 }
