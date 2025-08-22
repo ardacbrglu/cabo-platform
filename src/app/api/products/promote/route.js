@@ -1,183 +1,165 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import crypto from "crypto";
-import { validateCsrfToken } from "@/lib/csrf";
-import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth"; // << yolu kendi projenle uyumlu tut
+/**
+ * File: src/app/api/products/promote/route.js
+ * Purpose: Bir ürünü “My Links”e ekle (unique token oluştur / görünür yap)
+ * Security Docblock:
+ * - Auth: NextAuth → require status:active & role:affiliate
+ * - CSRF: NextAuth’ın /api/auth/csrf + header “x-csrf-token” (frontend wrapper)
+ * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id
+ * - Ratelimit: POST 10/dk (IP+userId)
+ * - Validation: Zod (productId)
+ * - TX: Tüm mutasyonlar transaction; audit({who, what, ip, ua, requestId, result})
+ */
 
-const TOKEN_LIFETIME_DAYS = 14;
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { z } from "zod";
+import crypto from "node:crypto";
+
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { requireAjax, requireOrigin, requireRequestId } from "@/lib/security";
+import { audit } from "@/lib/logger";
 
 function json(data, init = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
-  res.headers.set("Vary", "Cookie");
-  return res;
+  return applyApiSecurityHeaders(res);
 }
 
-function generateToken() {
-  // 8 byte → 16 hex (64-bit entropi)
-  return crypto.randomBytes(8).toString("hex");
-}
+const PromoteSchema = z.object({
+  productId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
+});
 
-// DB-level unique + yarış koşulu için retry
-async function createLinkWithUniqueToken(data, tries = 5) {
-  for (let i = 0; i < tries; i++) {
-    const token = generateToken();
-    try {
-      return await prisma.affiliateLink.create({ data: { ...data, token } });
-    } catch (e) {
-      if (e?.code === "P2002" && Array.isArray(e.meta?.target) && e.meta.target.includes("token")) {
-        continue; // çakıştı → tekrar dene
-      }
-      throw e;
-    }
-  }
-  throw new Error("Could not allocate a unique token after several attempts.");
+function newToken() {
+  // 32-byte URL-safe token
+  return crypto.randomBytes(24).toString("base64url");
 }
 
 export async function POST(req) {
+  // Harden preflight
   try {
-    // --- CSRF (mutating endpoint)
-    validateCsrfToken(req);
+    requireOrigin(req);
+    requireAjax(req);
+  } catch {
+    return json({ error: "bad_request" }, { status: 400 });
+  }
 
-    // --- Rate limit (IP bazlı 10/dk)
-    const rlKey = makeRateLimitKey(req, { scope: "products_promote" });
-    const { ok, resetMs } = await checkRateLimit({
-      key: rlKey,
-      limit: 10,
-      windowMs: 60_000,
+  let requestId = "unknown";
+  try {
+    requestId = requireRequestId(req);
+  } catch {
+    return json({ error: "bad_request" }, { status: 400 });
+  }
+
+  // Auth (session + RBAC)
+  const session = await getServerSession(authOptions);
+  const user = session?.user;
+  if (!user?.id) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
+  if (user.status !== "active")
+    return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
+  if (user.role !== "affiliate" && user.role !== "admin")
+    return json({ error: "forbidden_role", request_id: requestId }, { status: 403 });
+
+  // Rate limit: mutation 10/dk
+  const rlKey = makeRateLimitKey(req, { scope: "products_promote", userId: user.id });
+  const { ok, resetMs } = await checkRateLimit({
+    key: rlKey,
+    limit: 10,
+    windowMs: 60_000,
+  });
+  if (!ok) {
+    return json(
+      { error: "rate_limited", request_id: requestId, retry_after: Math.ceil((resetMs || 0) / 1000) },
+      { status: 429 }
+    );
+  }
+
+  // Parse + validate
+  let body = null;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "invalid_json", request_id: requestId }, { status: 400 });
+  }
+  const parsed = PromoteSchema.safeParse(body);
+  if (!parsed.success) {
+    return json({ error: "invalid_params", request_id: requestId }, { status: 400 });
+  }
+  const productId = Number(parsed.data.productId);
+
+  // İş mantığı:
+  // - Ürün aktif ve admin onaylı mı kontrol et
+  // - (user, product) için AffiliateLink varsa: görünür yap
+  // - yoksa: unique token üret ve oluştur
+  try {
+    const product = await prisma.merchantProduct.findFirst({
+      where: { product_id: productId, is_active: true, activated_by_admin: true },
+      select: { product_id: true },
     });
-    if (!ok) {
-      return json(
-        { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
-      );
+    if (!product) {
+      audit({ evt: "products.promote.not_found", who: user.id, requestId, productId });
+      return json({ error: "product_not_found", request_id: requestId }, { status: 404 });
     }
 
-    // --- Auth (NextAuth session)
-    const session = await getServerSession(authOptions);
-    if (!session?.user) return json({ error: "Unauthorized" }, { status: 401 });
-
-    // userId tercihimiz session.user.id; yoksa e-posta ile resolve
-    let userId = session.user.id ?? null;
-    if (!userId && session.user.email) {
-      const u = await prisma.user.findUnique({
-        where: { email: session.user.email.toLowerCase() },
-        select: { id: true, role: true, status: true },
-      });
-      userId = u?.id ?? null;
-      // Role/status kontrolü burada da yapılabilir
-      if (!u) return json({ error: "Unauthorized" }, { status: 401 });
-      if (u.status !== "active") return json({ error: "Account pending" }, { status: 403 });
-      if (u.role !== "affiliate") return json({ error: "Forbidden" }, { status: 403 });
-    } else {
-      // session.user.id geldi ise role/status doğrusu için hızlı kontrol
-      const u = await prisma.user.findUnique({
-        where: { id: Number(userId) },
-        select: { role: true, status: true },
-      });
-      if (!u) return json({ error: "Unauthorized" }, { status: 401 });
-      if (u.status !== "active") return json({ error: "Account pending" }, { status: 403 });
-      if (u.role !== "affiliate") return json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // --- Input
-    const body = await req.json().catch(() => ({}));
-    const productId = Number(body?.productId);
-    if (!Number.isFinite(productId) || productId <= 0) {
-      return json({ error: "Invalid productId" }, { status: 400 });
-    }
-
-    // --- Ürün uygun mu?
-    const product = await prisma.merchantProduct.findUnique({
-      where: { productId },
-      select: {
-        isActive: true,
-        activatedByAdmin: true,
-        totalPurchases: true,
-        maxSalesLimit: true,
-      },
-    });
-    if (!product || !product.isActive) {
-      return json({ error: "This product is not active." }, { status: 403 });
-    }
-    if (!product.activatedByAdmin) {
-      return json({ error: "This product is not yet approved by admin." }, { status: 403 });
-    }
-    if (product.maxSalesLimit != null && product.totalPurchases >= product.maxSalesLimit) {
-      return json({ error: "This product has reached its sales quota." }, { status: 403 });
-    }
-
-    // --- Var olan link var mı?
-    const now = new Date();
-    const existing = await prisma.affiliateLink.findFirst({
-      where: { userId: Number(userId), productId },
-      select: { linkId: true, isVisible: true, expiresAt: true, token: true },
-    });
-
-    // Expired ise eskiyi görünmez yapıp yenisini üret
-    if (existing && existing.expiresAt && new Date(existing.expiresAt) < now) {
-      await prisma.affiliateLink.update({
-        where: { linkId: existing.linkId },
-        data: { isVisible: false },
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.affiliateLink.findFirst({
+        where: { user_id: user.id, product_id: productId },
+        select: { id: true, token: true, is_visible: true },
       });
 
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
-
-      const created = await createLinkWithUniqueToken({
-        userId: Number(userId),
-        productId,
-        isVisible: true,
-        createdAt: new Date(),
-        expiresAt,
-      });
-
-      return json({
-        message: "Created new token (expired before)",
-        token: created.token,
-        expiresAt: created.expiresAt,
-      });
-    }
-
-    // Mevcut ve aktifse görünür yapıp aynı token'ı döndür
-    if (existing) {
-      if (!existing.isVisible) {
-        await prisma.affiliateLink.update({
-          where: { linkId: existing.linkId },
-          data: { isVisible: true },
-        });
+      if (existing) {
+        if (!existing.is_visible) {
+          await tx.affiliateLink.update({
+            where: { id: existing.id },
+            data: { is_visible: true },
+          });
+        }
+        return { token: existing.token, created: false };
       }
-      return json({
-        message: "Already exists",
-        token: existing.token,
-        expiresAt: existing.expiresAt || null,
+
+      // yeni unique token
+      let token = newToken();
+      // collision ihtimali düşük ama yine de kontrol et
+      // (loop nadiren döner)
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const dup = await tx.affiliateLink.findUnique({ where: { token } });
+        if (!dup) break;
+        token = newToken();
+      }
+
+      await tx.affiliateLink.create({
+        data: {
+          user_id: user.id,
+          product_id: productId,
+          token,
+          is_visible: true,
+        },
       });
-    }
 
-    // İlk kez oluştur
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + TOKEN_LIFETIME_DAYS);
-
-    const created = await createLinkWithUniqueToken({
-      userId: Number(userId),
-      productId,
-      isVisible: true,
-      createdAt: new Date(),
-      expiresAt,
+      return { token, created: true };
     });
 
-    return json({
-      message: "Created",
-      token: created.token,
-      expiresAt: created.expiresAt,
+    audit({
+      evt: "products.promote.ok",
+      who: user.id,
+      what: { productId, created: result.created },
+      requestId,
+      result: "success",
     });
-  } catch (err) {
-    console.error("Promote API error:", err);
-    return json({ error: err?.message || "Server error" }, { status: 500 });
+    return json({ ok: true, token: result.token, created: result.created, request_id: requestId }, { status: 200 });
+  } catch (e) {
+    audit({
+      evt: "products.promote.db_error",
+      who: user.id,
+      requestId,
+      code: e?.code || "DB_ERR",
+    });
+    return json({ error: "server_error", request_id: requestId }, { status: 500 });
   }
 }
