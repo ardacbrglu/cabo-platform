@@ -1,8 +1,9 @@
 "use client";
+
 /**
  * Affiliate Dashboard (compact) — HYDRATION SAFE
- * - localStorage → navbar jitter fix: useEffect (useLayoutEffect DEĞİL!)
- * - /api/dashboard polling with 429 backoff
+ * - Tek seferlik polling (setTimeout). 429 gelirse Retry-After kadar bekleyip devam.
+ * - İlk yanıt nasıl gelirse gelsin (200/429/hata) loading kapanır → “Processing…” kilidi yok.
  */
 
 import { useState, useEffect } from "react";
@@ -16,6 +17,7 @@ import { apiFetch } from "@/lib/apiFetch";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
+/* Progress ring */
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max || 1, 1)) * 100, 100);
   const size = 104, radius = 40, stroke = 6, center = size / 2, circumference = 2 * Math.PI * radius;
@@ -49,7 +51,6 @@ export default function Dashboard() {
   const router = useRouter();
   const { user: me, setUser, ready } = useUser();
   const { t } = useTranslation();
-
   const isReady = typeof ready === "boolean" ? ready : me !== undefined;
 
   const [stats, setStats] = useState({
@@ -61,11 +62,12 @@ export default function Dashboard() {
     recentActions: [], leaderboard: [],
     lastConversion: null, lastClick: null,
   });
-  const [loading, setLoading] = useState(true);
-  const [payoutstatus, setPayoutstatus] = useState("");
+
+  // yalnızca istatistik fetch yüklemesi (UI disable etmesin)
+  const [statsLoading, setStatsLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
 
-  // ✅ navbar jitter fix — hydrate sonrası çalışsın (useEffect)
+  // navbar cache jitter fix (hydrate SONRASI)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const cachedName = localStorage.getItem("cabo_username");
@@ -88,14 +90,15 @@ export default function Dashboard() {
     if (me?.role && me.role !== "affiliate") router.replace("/unauthorized");
   }, [isReady, me?.role, router]);
 
-  // Mobile breakpoint
+  // Mobile bp
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 700);
-    checkMobile(); window.addEventListener("resize", checkMobile);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // Poll /api/dashboard with 429 backoff
+  // Polling with backoff
   useEffect(() => {
     if (!isReady) return;
 
@@ -108,16 +111,21 @@ export default function Dashboard() {
       timer = setTimeout(fetchStats, Math.max(ms, 8000));
     };
 
+    const markLoadedOnce = () => setStatsLoading((prev) => (prev ? false : prev));
+
     const fetchStats = async () => {
       try {
         const res = await apiFetch("/api/dashboard", { method: "GET" });
         if (!alive) return;
 
         if (res.status === 401 || res.status === 403) {
+          markLoadedOnce();
           router.replace("/login");
           return;
         }
+
         if (res.status === 429) {
+          markLoadedOnce();
           const retryHeader = Number(res.headers?.get?.("Retry-After")) || 0;
           let retryBody = 0;
           try { const j = await res.clone().json(); retryBody = Number(j?.retry_after) || 0; } catch {}
@@ -125,7 +133,12 @@ export default function Dashboard() {
           schedule(waitMs);
           return;
         }
-        if (!res.ok) { schedule(8000); return; }
+
+        if (!res.ok) {
+          markLoadedOnce();
+          schedule(8000);
+          return;
+        }
 
         const data = await res.json().catch(() => ({}));
 
@@ -154,9 +167,10 @@ export default function Dashboard() {
           if (data?.userId) localStorage.setItem("cabo_userId", String(data.userId));
         }
 
-        setLoading(false);
+        markLoadedOnce();
         schedule(8000);
       } catch {
+        markLoadedOnce();
         schedule(8000);
       }
     };
@@ -175,7 +189,8 @@ export default function Dashboard() {
     lastConversion, lastClick,
   } = stats;
 
-  const payoutDisabled = loading || balance < minPayout || ibanMissing || bankMissing || realNameMissing;
+  // “Processing…” kilidi kalktı: sadece gerçek engellerde disable
+  const payoutDisabled = balance < minPayout || ibanMissing || bankMissing || realNameMissing;
 
   return (
     <Layout>
@@ -183,7 +198,7 @@ export default function Dashboard() {
         {/* DESKTOP */}
         {!isMobile ? (
           <section className="grid w-full grid-cols-12 gap-7">
-            {/* Row 1: Stats */}
+            {/* Row 1 */}
             <div className="col-span-4"><StatCard value={totalClicks} label={t("totalClicks")} icon={<Link2 size={18} />} /></div>
             <div className="col-span-4"><StatCard value={totalSales} label={t("totalSales")} icon={<ShoppingCart size={18} />} /></div>
             <div className="col-span-4"><StatCard value={`₺${Number(totalEarnings).toFixed(2)}`} label={t("totalEarnings")} icon={<BarChart2 size={18} />} /></div>
@@ -235,7 +250,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Row 3: Wallet+Payout / Onboarding */}
+            {/* Row 3: Wallet + Payout */}
             <div className="col-span-8 bg-[#181818] rounded-xl shadow flex flex-col items-center py-4 px-5 min-h-[240px] overflow-hidden">
               <WalletProgress value={balance} max={minPayout} />
               <div className="text-[17px] font-extrabold mb-1 font-mono" style={{ color: COLOR_CABO }}>{t("wallet")}</div>
@@ -255,17 +270,16 @@ export default function Dashboard() {
                   disabled={payoutDisabled}
                   onClick={() => router.push("/wallet")}
                 >
-                  {loading ? t("processing") : payoutDisabled ? (<><Lock size={17} className="inline-block mr-1" />{t("enterValidBank")}</>) : t("requestPayout")}
+                  {payoutDisabled ? (<><Lock size={17} className="inline-block mr-1" />{t("enterValidBank")}</>) : t("requestPayout")}
                 </button>
                 <div className="mt-2 text-[12px] font-mono text-gray-400 text-center">
                   <span className="text-gray-300">{t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span></span>
                 </div>
-                {payoutstatus === "success" && <div className="mt-2 text-green-400 text-[12px] text-center font-mono">{t("requestCreated")}</div>}
-                {payoutstatus && payoutstatus !== "success" && <div className="mt-2 text-red-400 text-[12px] text-center font-mono">{payoutstatus}</div>}
                 <div className="mt-1 text-[12px] text-gray-400 text-center font-mono">{t("minThresholdNote")}</div>
               </div>
             </div>
 
+            {/* Onboarding */}
             <div className="col-span-4 bg-[#181818] rounded-xl shadow py-4 px-6 flex flex-col items-center justify-center min-h-[220px] overflow-hidden">
               <div className="font-extrabold mb-2 text-[15px] font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
               <ul className="list-disc pl-4 text-gray-300 text-[12px] flex flex-col gap-1 font-mono">
@@ -291,7 +305,7 @@ export default function Dashboard() {
             </div>
           </section>
         ) : (
-          /* MOBILE */
+          /* MOBILE (aynı içerik, kompakt) */
           <>
             <section className="w-full">
               <div className="grid grid-cols-3 gap-3 w-full">
@@ -345,7 +359,7 @@ export default function Dashboard() {
                 disabled={payoutDisabled}
                 onClick={() => router.push("/wallet")}
               >
-                {loading ? t("processing") : payoutDisabled ? (<><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
+                {payoutDisabled ? (<><Lock size={17} className="inline-block mr-2" />{t("enterValidBank")}</>) : t("requestPayout")}
               </button>
               <div className="mt-2 text-xs font-mono text-gray-400 text-center">
                 <span className="text-gray-300">{t("platformCommission")}: <span style={{ color: COLOR_GREEN }}>{platformCommission}%</span></span>
@@ -372,7 +386,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Recent Activity - Mobile */}
+            {/* Recent Activity */}
             <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full">
               <div className="font-extrabold mb-2 text-sm font-mono" style={{ color: "#81d742" }}>{t("recentActivity")}</div>
               <div className="flex flex-col gap-2">
@@ -384,17 +398,6 @@ export default function Dashboard() {
                   </div>
                 )) : <div className="text-gray-400 text-xs font-mono py-1.5">{t("noActivity")}</div>}
               </div>
-            </div>
-
-            {/* Onboarding */}
-            <div className="bg-[#181818] rounded-xl shadow py-4 px-4 mt-3 w-full flex flex-col items-center">
-              <div className="font-extrabold mb-2 text-base font-mono" style={{ color: COLOR_CABO }}>{t("welcomeDashboard")}</div>
-              <ul className="list-disc pl-4 text-gray-300 text-xs flex flex-col gap-1 font-mono">
-                <li>{t("trackStats")}</li><li>{t("inviteFriends")}</li><li>{t("withdrawEarnings")}</li><li>{t("checkProducts")}</li>
-              </ul>
-              <button className="mt-5 w-full py-2 rounded font-bold font-mono transition" style={{ background: COLOR_GREEN, color: "#181818", fontSize: "0.95rem" }}>
-                {t("referFriends")}
-              </button>
             </div>
           </>
         )}

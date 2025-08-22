@@ -1,8 +1,9 @@
 "use client";
+
 /**
  * Affiliate Login (Credentials + Google)
- * Hydration-safe: YÖNLENDİRME YOK — sadece başarıda push,
- * oturum varsa üstte info banner + "Go to Dashboard" butonu gösterir.
+ * - Artık auto-banner YOK. Oturum varsa mount sonrası direkt /dashboard'a redirect.
+ * - CSRF preload + sade, hydrasyon güvenli form.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,8 +20,7 @@ const translations = {
   en: {
     title: "User Login",
     infoTitle: "Start earning by sharing",
-    infoDesc:
-      "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
+    infoDesc: "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
     infoStrong: "Promote products, earn commission, track your stats in real-time.",
     li1: "Each product you claim generates a unique referral link",
     li2: "You get paid when people buy through your link",
@@ -40,17 +40,13 @@ const translations = {
     googleBtn: "Sign in with Google",
     googleSignInError: "Google sign-in failed.",
     serverError: "Server error. Please try again later.",
-    setPassword: "You signed up with Google. Please log in with your Google account.",
     activatedBanner: "Your account has been activated! You can now log in.",
     csrfWait: "Preparing a secure session… Please wait a moment.",
-    alreadyIn: "You are already logged in.",
-    gotoDash: "Go to Dashboard",
   },
   tr: {
     title: "Kullanıcı Girişi",
     infoTitle: "Paylaş, kazanmaya başla",
-    infoDesc:
-      "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
+    infoDesc: "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
     infoStrong: "Ürünleri tanıt, komisyon kazan, istatistiklerini anlık takip et.",
     li1: "Her ürün için sana özel referans linki oluşur",
     li2: "Birileri senin linkinden alışveriş yaparsa ödeme alırsın",
@@ -70,11 +66,8 @@ const translations = {
     googleBtn: "Google ile giriş yap",
     googleSignInError: "Google ile giriş başarısız oldu.",
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
-    setPassword: "Google ile kayıt oldunuz. Lütfen Google hesabın ile giriş yap.",
     activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
     csrfWait: "Güvenli oturum hazırlanıyor… Lütfen bekleyin.",
-    alreadyIn: "Zaten giriş yapmışsınız.",
-    gotoDash: "Panele Git",
   },
 };
 
@@ -89,23 +82,29 @@ export default function LoginPage() {
     return (key) => translations[lang][key] ?? key;
   }, [locale]);
 
-  // Hydration-safe gate
+  // mount flag
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // if already authed → silent redirect (banner yok)
+  useEffect(() => {
+    if (!mounted || !userReady) return;
+    if (me && (me.id || me.userId)) router.replace("/dashboard");
+  }, [mounted, userReady, me, router]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [justActivated, setJustActivated] = useState(false);
 
   const [csrfToken, setCsrfToken] = useState("");
   const [csrfReady, setCsrfReady] = useState(false);
 
+  const [justActivated, setJustActivated] = useState(false);
   const firstInputRef = useRef(null);
   const callbackUrl = searchParams?.get("from") || "/dashboard";
 
-  // CSRF preload (NextAuth) — sadece client
+  // CSRF preload
   useEffect(() => {
     (async () => {
       try {
@@ -117,7 +116,7 @@ export default function LoginPage() {
     })();
   }, []);
 
-  // Aktivasyon bildirimi (query temizliği ile)
+  // Activated notice (query temizliği)
   useEffect(() => {
     if (searchParams?.get("activated") === "1") {
       setJustActivated(true);
@@ -130,9 +129,6 @@ export default function LoginPage() {
   useEffect(() => {
     firstInputRef.current?.focus();
   }, []);
-
-  // Artık otomatik yönlendirme YOK: burada sadece banner göstereceğiz.
-  const alreadyAuthed = mounted && userReady && me && (me.id || me.userId);
 
   if (!mounted || !ready) return null;
 
@@ -158,13 +154,11 @@ export default function LoginPage() {
         body: { email: email.trim().toLowerCase(), password },
       });
       const data = await res.json().catch(() => ({}));
-
       if (res.ok && data?.success) {
         router.push(callbackUrl);
-        return;
+      } else {
+        setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
       }
-
-      setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
     } catch {
       setError(t("serverError"));
     } finally {
@@ -185,23 +179,8 @@ export default function LoginPage() {
 
   return (
     <PublicLayout>
-      {/* Oturum zaten varsa banner + buton (auto redirect yok → hydration güvenli) */}
-      {alreadyAuthed && (
-        <div className="w-full max-w-3xl mx-auto mb-4 px-4">
-          <div className="rounded-lg border border-[#2a2a2a] bg-[#141414] p-3 text-center">
-            <div className="text-sm text-[#d1ffd0] font-semibold">{t("alreadyIn")}</div>
-            <button
-              className="mt-2 px-4 py-2 rounded bg-[#81d742] text-[#0b0b0b] font-bold hover:bg-[#b3ffb3] transition"
-              onClick={() => router.push("/dashboard")}
-            >
-              {t("gotoDash")}
-            </button>
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* SOL BİLGİ BLOĞU */}
+        {/* SOL BİLGİ */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
@@ -239,9 +218,7 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
-            <label className="sr-only" htmlFor="email">
-              {t("emailPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
             <input
               ref={firstInputRef}
               id="email"
@@ -256,12 +233,9 @@ export default function LoginPage() {
               spellCheck="false"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
-              aria-invalid={!!error && !email}
             />
 
-            <label className="sr-only" htmlFor="password">
-              {t("passwordPlaceholder")}
-            </label>
+            <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
             <input
               id="password"
               type="password"
@@ -274,7 +248,6 @@ export default function LoginPage() {
               spellCheck="false"
               className="bg-[#232323] text-white rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
               required
-              aria-invalid={!!error && !password}
             />
 
             <div className="flex items-center justify-between">
@@ -296,8 +269,6 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !csrfReady}
-              aria-disabled={loading || !csrfReady}
-              aria-busy={loading ? "true" : "false"}
               className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
             >
               {loading ? t("loggingIn") : t("loginBtn")}
@@ -313,8 +284,6 @@ export default function LoginPage() {
               type="button"
               onClick={onGoogle}
               disabled={loading || !csrfReady}
-              aria-disabled={loading || !csrfReady}
-              aria-busy={loading ? "true" : "false"}
               className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full disabled:opacity-60"
               aria-label={t("googleBtn")}
             >
