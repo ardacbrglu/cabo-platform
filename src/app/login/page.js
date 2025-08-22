@@ -2,10 +2,10 @@
 /**
  * File: src/app/login/page.js
  * Purpose: Affiliate login (Credentials + Google).
- * Güvenli Akış:
- * - Guard: /api/me ile gerçek auth kontrolü (eski cookie’lere takılmaz).
- * - Hydration güvenliği: mounted + locale.ready beklenir (React #185 fix).
- * - Submit: /api/login (server proxy). apiFetch → credentials:include.
+ * Değişiklikler:
+ * - Oturum kontrolü sadece UserContext (/api/me) üzerinden; /api/auth/session KALDIRILDI.
+ * - Oturum varsa tek seferlik router.replace(callbackUrl); refresh veya fallback yok.
+ * - callbackUrl > from > "/dashboard" önceliği.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,8 @@ import Image from "next/image";
 import { signIn } from "next-auth/react";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
+import { useUser } from "@/context/UserContext";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 import { apiFetch } from "@/lib/apiFetch";
 
 const translations = {
@@ -79,7 +81,9 @@ const translations = {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { locale, ready } = useLocale();
+  const { locale, ready: localeReady } = useLocale();
+  const { user, ready: userReady, isAuthenticated, refreshUser } = useUser();
+  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const t = useMemo(() => {
     const lang = locale === "tr" ? "tr" : "en";
@@ -96,45 +100,20 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [justActivated, setJustActivated] = useState(false);
 
-  const [csrfToken, setCsrfToken] = useState("");
-  const [csrfReady, setCsrfReady] = useState(false);
-
   const firstInputRef = useRef(null);
 
-  // middleware "/login?callbackUrl=..." kullanıyor → onu oku; yoksa /dashboard
-  const callbackUrl = searchParams?.get("callbackUrl") || "/dashboard";
+  // callback hedefi: callbackUrl > from > /dashboard
+  const callbackUrl =
+    searchParams?.get("callbackUrl") ||
+    searchParams?.get("from") ||
+    "/dashboard";
 
-  // ✅ Guard: yalnızca /api/me authenticated:true ise yönlendir
+  // Zaten oturumluysan login sayfasında durma
   useEffect(() => {
-    (async () => {
-      try {
-        const r = await apiFetch("/api/me", { method: "GET", cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        if (j?.authenticated === true) {
-          router.replace(callbackUrl);
-          router.refresh();
-        }
-      } catch {
-        /* sessiz düş */
-      }
-    })();
+    if (!userReady) return;
+    if (isAuthenticated) router.replace(callbackUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // CSRF preload (NextAuth)
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/auth/csrf", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const j = await r.json().catch(() => ({}));
-        if (j?.csrfToken) setCsrfToken(j.csrfToken);
-      } catch {}
-      setCsrfReady(true);
-    })();
-  }, []);
+  }, [userReady, isAuthenticated, callbackUrl]);
 
   // Aktivasyon bildirimi (query temizliği ile)
   useEffect(() => {
@@ -150,7 +129,7 @@ export default function LoginPage() {
     firstInputRef.current?.focus();
   }, []);
 
-  if (!mounted || !ready) return null;
+  if (!mounted || !localeReady) return null;
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
@@ -160,7 +139,7 @@ export default function LoginPage() {
 
     if (!email || !password) return setError(t("errorFill"));
     if (!validateEmail(email)) return setError(t("errorEmailFormat"));
-    if (!csrfReady) return setError(t("csrfWait"));
+    if (!csrfReady && typeof window !== "undefined") return setError(t("csrfWait"));
 
     setError("");
     setLoading(true);
@@ -176,14 +155,9 @@ export default function LoginPage() {
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
+        // context'i güncelle, sonra tek seferde yönlendir
+        try { await refreshUser?.(); } catch {}
         router.replace(callbackUrl);
-        router.refresh();
-        // router state takılırsa hard navigate fallback
-        setTimeout(() => {
-          if (window.location.pathname === "/login") {
-            window.location.assign(callbackUrl);
-          }
-        }, 60);
         return;
       }
 
