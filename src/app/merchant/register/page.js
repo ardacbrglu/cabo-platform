@@ -1,25 +1,38 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from "react";
+/**
+ * Merchant Register (no Google)
+ * - Modern, large inputs (tasarım korunur)
+ * - Field-level tooltip errors (ilk submit’te görünür, tıklayınca/focus’ta kapanır)
+ * - TR (+90) ve US (+1) ülke kodu
+ * - Password + Confirm Password eşleşme kontrolü
+ * - CSRF preload + reCAPTCHA
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
-import PublicLayout from '@/components/PublicLayout';
+import { Loader2, AlertTriangle } from "lucide-react";
+import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
 import dynamic from "next/dynamic";
+import { useCsrfToken } from "@/hooks/useCsrfToken";
 
+// reCAPTCHA v3 (SSR off)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
+/* i18n */
 const translations = {
   en: {
     title: "Register Your Business",
     infoTitle: "Grow your business with Cabo",
-    infoDesc: "Register your business, create your merchant account and start tracking your affiliate-driven product sales.",
-    infoStrong: "Cabo gives you a complete affiliate infrastructure — so you can focus on growth.",
-    li1: "Live tracking and conversion validation",
+    infoDesc:
+      "Register your business, create your merchant account and start tracking affiliate-driven product sales.",
+    infoStrong:
+      "Cabo gives you a complete affiliate infrastructure — so you can focus on growth.",
+    li1: "Live tracking & conversion validation",
     li2: "Control commissions per product",
-    li3: "Webhook integration and analytics dashboard",
-    li4: "Secure payment reporting & sales stats",
+    li3: "Webhook integration & analytics",
+    li4: "Secure payment reporting",
     loginQ: "Already have a merchant account?",
     loginBtn: "Login here",
     company: "Company Name",
@@ -27,33 +40,68 @@ const translations = {
     email: "Business Email",
     phone: "Phone Number",
     password: "Password",
+    confirmPassword: "Confirm Password",
     submit: "Create Account",
     loading: "Creating...",
     required: "Please fill in all fields.",
-    success: "Your merchant account request has been received and is now pending approval. You will be notified by email once your account is activated.",
+    success:
+      "Your merchant request has been received and is pending approval. You’ll be notified by email once your account is activated.",
     failed: "Registration failed.",
     invalidCompany: "Company name must be 2–150 valid characters.",
-    invalidName: "Full name must be 3–40 characters (letters/numbers/space/_).",
+    invalidName:
+      "Full name must be 3–40 characters (letters/numbers/space/_).",
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
-    invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
-    acceptTerms: <>
-      I accept the <Link href="/merchant/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Terms</Link> and <Link href="/merchant/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Privacy Policy</Link>
-    </>,
+    invalidPassword:
+      "Password must be at least 8 characters and include both letters and numbers.",
+    passwordMismatch: "Passwords do not match.",
+    acceptTerms: (
+      <>
+        I accept the{" "}
+        <Link
+          href="/merchant/terms"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link
+          href="/merchant/privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Privacy Policy
+        </Link>
+      </>
+    ),
     mustAccept: "You must accept the Terms and Privacy Policy.",
     howWorksQ: "How does our system work?",
     howWorksLink: "See Details",
     csrfWait: "Preparing a secure session… Please try again.",
+    // field-level required strings
+    req_company: "Please fill out this field.",
+    req_name: "Please fill out this field.",
+    req_email: "Please fill out this field.",
+    req_phone: "Please fill out this field.",
+    req_password: "Please fill out this field.",
+    req_password2: "Please confirm your password.",
+    req_terms: "You must accept the Terms.",
+    req_captcha: "Please complete the captcha.",
   },
   tr: {
     title: "İşletmeni Kaydet",
     infoTitle: "İşletmeni Cabo ile büyüt",
-    infoDesc: "İşletmeni kaydet, satıcı hesabını oluştur ve affiliate yönlendirmeleriyle gelen satışlarını anlık takip et.",
-    infoStrong: "Cabo, eksiksiz affiliate altyapısı sunar — sen sadece büyümeye odaklan.",
+    infoDesc:
+      "İşletmeni kaydet, satıcı hesabını oluştur ve affiliate yönlendirmeleriyle gelen satışlarını anlık takip et.",
+    infoStrong:
+      "Cabo eksiksiz bir affiliate altyapısı sunar — sen sadece büyümeye odaklan.",
     li1: "Anlık takip & dönüşüm doğrulama",
-    li2: "Her ürün için komisyon kontrolü",
-    li3: "Webhook entegrasyonu & analiz paneli",
-    li4: "Güvenli ödeme ve satış raporları",
+    li2: "Ürün başına komisyon kontrolü",
+    li3: "Webhook entegrasyonu & analiz",
+    li4: "Güvenli ödeme raporları",
     loginQ: "Zaten satıcı hesabın var mı?",
     loginBtn: "Giriş yap",
     company: "Şirket Adı",
@@ -61,115 +109,255 @@ const translations = {
     email: "Firma E-posta",
     phone: "Telefon Numarası",
     password: "Şifre",
+    confirmPassword: "Şifre (Tekrar)",
     submit: "Hesabı Oluştur",
     loading: "Kaydediliyor...",
     required: "Lütfen tüm alanları doldurun.",
-    success: "Satıcı başvurun alındı ve onay bekliyor. Hesabın aktif olduğunda e-posta ile bilgilendirileceksin.",
+    success:
+      "Satıcı başvurun alındı ve onay bekliyor. Hesabın aktif olduğunda e-posta ile bilgilendirileceksin.",
     failed: "Kayıt başarısız.",
     invalidCompany: "Şirket adı 2–150 geçerli karakter olmalı.",
     invalidName: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
-    invalidPassword: "Şifre en az 8 karakter olmalı; harf ve rakam içermeli.",
-    acceptTerms: <>
-      <Link href="/merchant/terms" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Kullanım</Link>
-      {" ve "}
-      <Link href="/merchant/privacy" className="text-[#81d742] underline hover:text-[#b3ffb3]" target="_blank">Gizlilik Şartlarını</Link>
-      {" kabul ediyorum"}
-    </>,
+    invalidPassword:
+      "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
+    passwordMismatch: "Şifreler eşleşmiyor.",
+    acceptTerms: (
+      <>
+        <Link
+          href="/merchant/terms"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Kullanım
+        </Link>{" "}
+        ve{" "}
+        <Link
+          href="/merchant/privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Gizlilik Şartlarını
+        </Link>{" "}
+        kabul ediyorum
+      </>
+    ),
     mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi",
     csrfWait: "Güvenli oturum hazırlanıyor… Lütfen tekrar deneyin.",
-  }
+    req_company: "Lütfen bu alanı doldurun.",
+    req_name: "Lütfen bu alanı doldurun.",
+    req_email: "Lütfen bu alanı doldurun.",
+    req_phone: "Lütfen bu alanı doldurun.",
+    req_password: "Lütfen bu alanı doldurun.",
+    req_password2: "Lütfen şifreyi tekrar girin.",
+    req_terms: "Şartları kabul etmelisiniz.",
+    req_captcha: "Lütfen robot olmadığınızı doğrulayın.",
+  },
 };
+
+/** Small tooltip over inputs; hidden until first submit, closes on click/focus */
+function FieldHint({ show, message }) {
+  if (!show) return null;
+  return (
+    <div
+      className="absolute -top-10 left-0 z-[5] rounded-md bg-[#222] text-white text-sm px-3 py-2 shadow-lg border border-[#333]"
+      role="alert"
+    >
+      <div className="flex items-center gap-2">
+        <AlertTriangle size={16} className="text-[#ffb74d]" />
+        <span>{message}</span>
+      </div>
+      <span
+        aria-hidden
+        className="absolute left-4 -bottom-2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-[#222]"
+      />
+    </div>
+  );
+}
 
 export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
   const { csrfToken, ready: csrfReady } = useCsrfToken();
+
+  const t = useMemo(
+    () => (key) => translations[locale]?.[key] ?? key,
+    [locale]
+  );
 
   const [form, setForm] = useState({
     companyName: "",
     name: "",
     email: "",
     password: "",
+    password2: "",
     phone: "",
     countryCode: "+90",
   });
   const [terms, setTerms] = useState(false);
   const [captcha, setCaptcha] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [error, setError] = useState("");
+  const [serverError, setServerError] = useState("");
 
-  // NextAuth CSRF çerezlerini önden bırak (edge-case azaltır)
+  // Tooltip visibility (after first submit); clicking anywhere or focusing input hides them
+  const [hintsVisible, setHintsVisible] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const firstInvalidRef = useRef(null);
+
+  // preload NextAuth CSRF cookies (edge-case azaltır)
   useEffect(() => {
     fetch("/api/auth/csrf", { credentials: "include" }).catch(() => {});
   }, []);
 
+  // global click ile ipuçlarını kapat
+  useEffect(() => {
+    function closeHints() {
+      setHintsVisible(false);
+    }
+    if (hintsVisible) {
+      window.addEventListener("pointerdown", closeHints, { once: true });
+      return () => window.removeEventListener("pointerdown", closeHints);
+    }
+  }, [hintsVisible]);
+
   if (!ready) return null;
-  const t = (key) => translations[locale][key] || key;
 
-  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+  const onChange = (e) => {
+    const { name, value } = e.target;
+    setServerError("");
+    if (name === "phone") {
+      // sadece rakam
+      const digits = value.replace(/\D+/g, "");
+      setForm((s) => ({ ...s, phone: digits }));
+      return;
+    }
+    setForm((s) => ({ ...s, [name]: value }));
+  };
 
-  // backend Zod ile hizalı basic regexler
   const reName = /^[\p{L}\p{N}_ ]+$/u;
   const reCompany = /^[\p{L}\p{N}\s&_.,'’()\-]+$/u;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    setSuccess(false);
+  const validate = () => {
+    const errs = {};
+    if (!form.companyName) errs.companyName = t("req_company");
+    else if (
+      form.companyName.length < 2 ||
+      form.companyName.length > 150 ||
+      !reCompany.test(form.companyName.trim())
+    )
+      errs.companyName = t("invalidCompany");
 
-    if (!csrfReady || !csrfToken) { setError(t("csrfWait")); setLoading(false); return; }
-    if (!terms) { setError(t("mustAccept")); setLoading(false); return; }
-    if (!form.companyName || !form.name || !form.email || !form.password || !form.phone) { setError(t("required")); setLoading(false); return; }
-    if (form.companyName.length < 2 || form.companyName.length > 150 || !reCompany.test(form.companyName.trim())) { setError(t("invalidCompany")); setLoading(false); return; }
-    if (form.name.length < 3 || form.name.length > 40 || !reName.test(form.name.trim())) { setError(t("invalidName")); setLoading(false); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError(t("invalidEmail")); setLoading(false); return; }
-    if (form.password.length < 8 || !/\d/.test(form.password) || !/[a-zA-Z]/.test(form.password)) { setError(t("invalidPassword")); setLoading(false); return; }
-    if (!/^\d{10,15}$/.test(form.phone)) { setError(t("invalidPhone")); setLoading(false); return; }
-    if (!captcha) { setError(locale === "tr" ? "Lütfen robot olmadığınızı doğrulayın." : "Please complete the captcha."); setLoading(false); return; }
+    if (!form.name) errs.name = t("req_name");
+    else if (
+      form.name.length < 3 ||
+      form.name.length > 40 ||
+      !reName.test(form.name.trim())
+    )
+      errs.name = t("invalidName");
 
-    const fullPhone = `${form.countryCode}${form.phone}`.trim();
+    if (!form.email) errs.email = t("req_email");
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
+      errs.email = t("invalidEmail");
 
-    // 🔒 benzersiz request-id
-    const requestId =
-      (typeof crypto !== "undefined" && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    if (!form.phone) errs.phone = t("req_phone");
+    else if (!/^\d{10,15}$/.test(form.phone)) errs.phone = t("invalidPhone");
 
-    const res = await fetch("/api/register_merchant", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-csrf-token": csrfToken || "",
-        "accept-language": locale || "en",
-        "x-requested-with": "XMLHttpRequest",
-        "x-request-id": requestId,
-      },
-      body: JSON.stringify({
-        companyName: form.companyName,
-        name: form.name,
-        email: form.email.trim().toLowerCase(),
-        password: form.password,
-        phoneNumber: fullPhone,
-        termsAccepted: terms,
-        captcha,
-      }),
-      credentials: "include",
-    });
+    if (!form.password) errs.password = t("req_password");
+    else if (
+      form.password.length < 8 ||
+      !/\d/.test(form.password) ||
+      !/[a-zA-Z]/.test(form.password)
+    )
+      errs.password = t("invalidPassword");
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.success) {
-      setError(data?.message || t("failed"));
-    } else {
-      setSuccess(true);
-      setTimeout(() => { window.location.href = "/merchant"; }, 2500);
-    }
-    setLoading(false);
+    if (!form.password2) errs.password2 = t("req_password2");
+    else if (form.password2 !== form.password)
+      errs.password2 = t("passwordMismatch");
+
+    if (!terms) errs.terms = t("req_terms");
+    if (!captcha) errs.captcha = t("req_captcha");
+    if (!csrfReady || !csrfToken) errs.csrf = t("csrfWait");
+
+    return errs;
   };
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setSubmitted(true);
+    setHintsVisible(true);
+    setServerError("");
+    setSuccess(false);
+    firstInvalidRef.current = null;
+
+    const errs = validate();
+    if (Object.keys(errs).length) {
+      // İlk hatalı alana odaklan
+      // Odak referansı input render edilirken atanıyor
+      setTimeout(() => firstInvalidRef.current?.focus(), 0);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const fullPhone = `${form.countryCode}${form.phone}`.trim();
+      const requestId =
+        (typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+      const res = await fetch("/api/register_merchant", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken || "",
+          "x-requested-with": "XMLHttpRequest",
+          "x-request-id": requestId,
+          "accept-language": locale || "en",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          companyName: form.companyName.trim(),
+          name: form.name.trim(),
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+          phoneNumber: fullPhone,
+          termsAccepted: true,
+          captcha,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setServerError(data?.message || t("failed"));
+      } else {
+        setSuccess(true);
+        setTimeout(() => {
+          window.location.assign("/merchant"); // merchant login
+        }, 2200);
+      }
+    } catch {
+      setServerError(t("failed"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Hatalar sadece submit sonrası hesaplanır (tooltip spam olmaz)
+  const errors = submitted ? validate() : {};
+  const show = (name) => hintsVisible && !!errors[name];
+  const needsRef = (name) =>
+    submitted && errors[name] && !firstInvalidRef.current;
+
+  const inputBase =
+    "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
+  const ringOk = "focus:ring-[#81d742]";
+  const ringErr = "focus:ring-red-400 border-red-500";
 
   return (
     <PublicLayout>
@@ -177,10 +365,17 @@ export default function MerchantRegisterPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
+              {t("infoTitle")}
+            </h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">
+              {t("infoStrong")}
+            </p>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -188,124 +383,212 @@ export default function MerchantRegisterPage() {
             </ul>
             <div className="text-gray-400 text-sm mb-2">
               {t("loginQ")}{" "}
-              <Link href="/merchant" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+              <Link
+                href="/merchant"
+                className="text-[#81d742] underline hover:text-[#b3ffb3]"
+              >
                 {t("loginBtn")}
               </Link>
             </div>
             <div className="text-[#81d742] mt-4 text-base font-semibold">
               {t("howWorksQ")}{" "}
-              <Link href="/merchant/info" className="underline hover:text-[#b3ffb3] transition">
+              <Link
+                href="/merchant/info"
+                className="underline hover:text-[#b3ffb3] transition"
+              >
                 {t("howWorksLink")}
               </Link>
             </div>
           </div>
         </div>
 
-        {/* REGISTER FORM */}
+        {/* FORM */}
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
+            {t("title")}
+          </h3>
 
-          <form onSubmit={handleSubmit} className="w-full flex flex-col gap-6" autoComplete="off">
-            <input
-              type="text"
-              name="companyName"
-              placeholder={t("company")}
-              value={form.companyName}
-              onChange={handleChange}
-              spellCheck={false}
-              inputMode="text"
-              autoCorrect="off"
-              required
-              className="bg-white text-black rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-            />
-            <input
-              type="text"
-              name="name"
-              placeholder={t("fullName")}
-              value={form.name}
-              onChange={handleChange}
-              spellCheck={false}
-              inputMode="text"
-              autoCorrect="off"
-              required
-              className="bg-white text-black rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-            />
-            <input
-              type="email"
-              name="email"
-              placeholder={t("email")}
-              value={form.email}
-              onChange={handleChange}
-              inputMode="email"
-              spellCheck={false}
-              autoCorrect="off"
-              required
-              className="bg-white text-black rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-            />
+          <form
+            onSubmit={onSubmit}
+            className="w-full flex flex-col gap-6"
+            autoComplete="off"
+            noValidate
+          >
+            {/* Company */}
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <FieldHint show={show("companyName")} message={errors.companyName} />
+              <input
+                ref={(el) => {
+                  if (needsRef("companyName")) firstInvalidRef.current = el;
+                }}
+                type="text"
+                name="companyName"
+                placeholder={t("company")}
+                value={form.companyName}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.companyName}
+                className={`${inputBase} ${errors.companyName ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Name */}
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <FieldHint show={show("name")} message={errors.name} />
+              <input
+                ref={(el) => {
+                  if (needsRef("name")) firstInvalidRef.current = el;
+                }}
+                type="text"
+                name="name"
+                placeholder={t("fullName")}
+                value={form.name}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.name}
+                className={`${inputBase} ${errors.name ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Email */}
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <FieldHint show={show("email")} message={errors.email} />
+              <input
+                ref={(el) => {
+                  if (needsRef("email")) firstInvalidRef.current = el;
+                }}
+                type="email"
+                name="email"
+                placeholder={t("email")}
+                value={form.email}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.email}
+                className={`${inputBase} ${errors.email ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Phone */}
             <div className="flex gap-3">
               <select
                 name="countryCode"
                 value={form.countryCode}
-                onChange={handleChange}
-                className="bg-white text-black rounded-lg px-3 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+                onChange={onChange}
+                className="bg-white text-black rounded-lg px-3 py-3 border border-[#232323] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+                aria-label="Country code"
               >
                 <option value="+90">🇹🇷 +90</option>
                 <option value="+1">🇺🇸 +1</option>
-                <option value="+44">🇬🇧 +44</option>
-                <option value="+49">🇩🇪 +49</option>
-                <option value="+33">🇫🇷 +33</option>
               </select>
+              <div className="relative flex-1" onFocus={() => setHintsVisible(false)}>
+                <FieldHint show={show("phone")} message={errors.phone} />
+                <input
+                  ref={(el) => {
+                    if (needsRef("phone")) firstInvalidRef.current = el;
+                  }}
+                  type="tel"
+                  name="phone"
+                  placeholder={t("phone")}
+                  value={form.phone}
+                  onChange={onChange}
+                  inputMode="numeric"
+                  required
+                  aria-invalid={!!errors.phone}
+                  className={`${inputBase} ${errors.phone ? ringErr : ringOk}`}
+                />
+              </div>
+            </div>
+
+            {/* Password */}
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <FieldHint show={show("password")} message={errors.password} />
               <input
-                type="tel"
-                name="phone"
-                placeholder={t("phone")}
-                value={form.phone}
-                onChange={handleChange}
-                inputMode="numeric"
-                autoCorrect="off"
-                spellCheck="false"
+                ref={(el) => {
+                  if (needsRef("password")) firstInvalidRef.current = el;
+                }}
+                type="password"
+                name="password"
+                placeholder={t("password")}
+                value={form.password}
+                onChange={onChange}
+                minLength={8}
+                autoComplete="new-password"
                 required
-                className="bg-white text-black flex-1 rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+                aria-invalid={!!errors.password}
+                className={`${inputBase} ${errors.password ? ringErr : ringOk}`}
               />
             </div>
-            <input
-              type="password"
-              name="password"
-              placeholder={t("password")}
-              value={form.password}
-              onChange={handleChange}
-              minLength={8}
-              autoComplete="new-password"
-              required
-              className="bg-white text-black rounded-lg px-4 py-3 border border-[#222] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-            />
 
-            <div className="flex items-center gap-2 mb-3 w-full">
+            {/* Confirm Password */}
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <FieldHint show={show("password2")} message={errors.password2} />
               <input
-                type="checkbox"
-                id="terms"
-                checked={terms}
-                onChange={e => setTerms(e.target.checked)}
+                ref={(el) => {
+                  if (needsRef("password2")) firstInvalidRef.current = el;
+                }}
+                type="password"
+                name="password2"
+                placeholder={t("confirmPassword")}
+                value={form.password2}
+                onChange={onChange}
+                minLength={8}
+                autoComplete="new-password"
                 required
+                aria-invalid={!!errors.password2}
+                className={`${inputBase} ${errors.password2 ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Terms */}
+            <div className="relative flex items-center gap-2 mb-1" onFocus={() => setHintsVisible(false)}>
+              <input
+                id="terms"
+                type="checkbox"
+                checked={terms}
+                onChange={(e) => setTerms(e.target.checked)}
+                required
+                aria-invalid={!!errors.terms}
                 className="accent-[#81d742] h-4 w-4"
               />
-              <label htmlFor="terms" className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
+              <label
+                htmlFor="terms"
+                className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap"
+              >
                 {t("acceptTerms")}
               </label>
+              <FieldHint show={show("terms")} message={errors.terms} />
             </div>
 
             {/* CAPTCHA */}
-            <Captcha onChange={setCaptcha} lang={locale} />
+            <div className="relative" onFocus={() => setHintsVisible(false)}>
+              <Captcha onChange={setCaptcha} lang={locale} />
+              <FieldHint show={show("captcha")} message={errors.captcha} />
+            </div>
 
-            {error && <p className="text-red-500 text-base">{error}</p>}
-            {success && <p className="text-green-400 text-base">{t("success")}</p>}
+            {serverError && (
+              <p className="text-red-500 text-base" role="alert">
+                {serverError}
+              </p>
+            )}
+            {success && (
+              <p className="text-green-400 text-base" role="status">
+                {t("success")}
+              </p>
+            )}
 
             <button
               type="submit"
-              disabled={loading || !csrfReady}
-              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition"
+              disabled={loading}
+              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
             >
-              {loading ? <Loader2 className="animate-spin mx-auto" size={18} /> : t("submit")}
+              {loading ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="animate-spin" size={18} />
+                  {t("loading")}
+                </span>
+              ) : (
+                t("submit")
+              )}
             </button>
           </form>
         </div>
@@ -313,8 +596,12 @@ export default function MerchantRegisterPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space { margin-top: 1rem; }
-          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
+          .cabo-mobile-top-space {
+            margin-top: 1rem;
+          }
+          .cabo-mobile-bottom-space {
+            margin-bottom: 3rem;
+          }
         }
       `}</style>
     </PublicLayout>
