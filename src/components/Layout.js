@@ -1,5 +1,12 @@
-// components/Layout.jsx
 "use client";
+
+/**
+ * File: src/components/Layout.jsx
+ * Purpose: Authenticated shell (navbar + footer).
+ * Notes:
+ * - Link'lerde prefetch=false: yoğun zamanlarda gereksiz istek atmaz.
+ * - Profil dropdown skeleton: hydrate jitter yok.
+ */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -18,7 +25,6 @@ export default function Layout({ children }) {
   const { user, ready } = useUser();
   const { t } = useTranslation();
 
-  // Hydration-safe çizim (React #185)
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const showProfile = mounted && ready && !!(user && (user.id || user.userId));
@@ -52,35 +58,35 @@ export default function Layout({ children }) {
           <nav aria-label="Main navigation">
             <ul className="flex gap-8 text-sm font-medium items-center">
               <li>
-                <Link href="/dashboard" className={navItemClass("/dashboard")} style={navItemStyle}
+                <Link prefetch={false} href="/dashboard" className={navItemClass("/dashboard")} style={navItemStyle}
                       aria-current={isActive("/dashboard") ? "page" : undefined}>
                   <HomeIcon size={22} />
                   <span>{t("home")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/products" className={navItemClass("/products")} style={navItemStyle}
+                <Link prefetch={false} href="/products" className={navItemClass("/products")} style={navItemStyle}
                       aria-current={isActive("/products") ? "page" : undefined}>
                   <ShoppingCart size={22} />
                   <span>{t("productMarket")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/mylinks" className={navItemClass("/mylinks")} style={navItemStyle}
+                <Link prefetch={false} href="/mylinks" className={navItemClass("/mylinks")} style={navItemStyle}
                       aria-current={isActive("/mylinks") ? "page" : undefined}>
                   <Link2 size={22} />
                   <span>{t("myLinks")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/performance" className={navItemClass("/performance")} style={navItemStyle}
+                <Link prefetch={false} href="/performance" className={navItemClass("/performance")} style={navItemStyle}
                       aria-current={isActive("/performance") ? "page" : undefined}>
                   <BarChart2 size={22} />
                   <span>{t("performance.title")}</span>
                 </Link>
               </li>
               <li>
-                <Link href="/wallet" className={navItemClass("/wallet")} style={navItemStyle}
+                <Link prefetch={false} href="/wallet" className={navItemClass("/wallet")} style={navItemStyle}
                       aria-current={isActive("/wallet") ? "page" : undefined}>
                   <Wallet2 size={22} />
                   <span>{t("wallet")}</span>
@@ -100,9 +106,7 @@ export default function Layout({ children }) {
             </ul>
           </nav>
         ) : (
-          <nav aria-label="Mobile navigation">
-            {/* Buraya istersen mobil hamburger bileşenini koyabilirsin. Boş bırakmak güvenli. */}
-          </nav>
+          <nav aria-label="Mobile navigation">{/* opsiyonel */}</nav>
         )}
       </header>
 

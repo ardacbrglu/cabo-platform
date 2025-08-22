@@ -6,9 +6,8 @@
  *
  * Security Docblock (Cabo PROD):
  * - Kimlik durumu yalnızca /api/me yanıtıyla "server-verified" kabul edilir.
- * - localStorage sadece görsel sarsıntıyı azaltmak için kullanılır; asla auth kaynağı değildir.
- * - /api/me 200 + {authenticated:false} durumunda user=null ve cache temizlenir.
- * - İstemci-yanı etkilerde XSS riskine karşı sadece beklenen primitive alanlar tutulur.
+ * - localStorage sadece görsel sarsıntıyı azaltır; auth kaynağı değildir.
+ * - /api/me 200 + {authenticated:false} → user=null + cache temizliği.
  */
 
 import React, {
@@ -19,8 +18,8 @@ import { apiFetch } from "@/lib/apiFetch";
 
 const Ctx = createContext({
   user: undefined,          // undefined: yüklenmedi, null: anon, object: server-verified user
-  ready: false,             // yalnızca /api/me tamamlandığında true
-  isAuthenticated: false,   // Sadece server-verified auth → true
+  ready: false,             // yalnız /api/me bittiğinde true
+  isAuthenticated: false,   // sadece server-verified ise true
   lastError: null,
   refreshUser: async () => {},
   setUser: () => {},
@@ -30,7 +29,7 @@ const LS_NAME = "cabo_username";
 const LS_EMAIL = "cabo_email";
 const LS_ID = "cabo_userId";
 
-/* Hafif UI cache: sadece navbar titremesini azaltır */
+/* Hafif UI cache */
 function readCache() {
   if (typeof window === "undefined") return null;
   try {
@@ -64,17 +63,17 @@ function clearCache() {
 
 export function UserProvider({ children }) {
   const [user, setUser] = useState(undefined);
-  const [ready, setReady] = useState(false);
   const [lastError, setLastError] = useState(null);
+  const [ready, setReady] = useState(false);
   const [serverAuthenticated, setServerAuthenticated] = useState(false);
 
-  // 1) İlk boya öncesi: sadece görsel stabilite için cache'i geçir (auth sayılmaz)
+  // 1) İlk boya öncesi hafif hydrate
   useLayoutEffect(() => {
     const cached = readCache();
     if (cached) setUser((u) => ({ ...(u || {}), ...cached }));
   }, []);
 
-  // 2) /api/me → auth kaynağı sadece burasıdır
+  // 2) /api/me : tek otorite
   const fetchMe = useCallback(async () => {
     try {
       const res = await apiFetch("/api/me", { method: "GET", cache: "no-store" });
@@ -117,13 +116,13 @@ export function UserProvider({ children }) {
 
   useEffect(() => { fetchMe(); }, [fetchMe]);
 
-  // 3) user değişince cache senkronu (yalnız server doğrulanmışsa kalıcılaştır)
+  // 3) user değişince cache senkronu (yalnız server doğrulanmışsa)
   useEffect(() => {
     if (serverAuthenticated && user && (user.id || user.userId)) writeCache(user);
     if (user === null) clearCache();
   }, [serverAuthenticated, user]);
 
-  // 4) Sekmeler arası basit senkron
+  // 4) Sekmeler arası senkron
   useEffect(() => {
     function onStorage(e) {
       if (e.key === LS_ID || e.key === LS_NAME || e.key === LS_EMAIL) {
@@ -136,19 +135,21 @@ export function UserProvider({ children }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  // setUser fonksiyonunu stable yap
+  const setUserSafe = useCallback((u) => {
+    setUser(u);
+    if (u && (u.id || u.userId)) writeCache(u);
+    if (u === null) clearCache();
+  }, []);
+
   const value = useMemo(() => ({
     user,
-    setUser: (u) => {
-      setUser(u);
-      // dışarıdan setUser çağrılarında auth state’i değiştirmeyiz
-      if (u && (u.id || u.userId)) writeCache(u);
-      if (u === null) clearCache();
-    },
+    setUser: setUserSafe,              // stable
     ready,
-    isAuthenticated: serverAuthenticated, // 🔒 sadece server-verified
+    isAuthenticated: serverAuthenticated,
     lastError,
     refreshUser: fetchMe,
-  }), [user, ready, serverAuthenticated, lastError, fetchMe]);
+  }), [user, ready, serverAuthenticated, lastError, fetchMe, setUserSafe]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
