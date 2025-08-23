@@ -7,14 +7,14 @@ export const runtime = "nodejs";
  *
  * ── Cabo PROD Security Docblock ──────────────────────────────────────────────
  * - AuthN/Z: NextAuth session zorunlu; requireStatus('active'); requireRole('merchant')
- * - CSRF: POST/PATCH → NextAuth double-submit (header: X-CSRF-Token  + cookie: next-auth.csrf-token)
+ * - CSRF: POST/PATCH → NextAuth double-submit (header: X-CSRF-Token + cookie: next-auth.csrf-token)
  * - Mutations: Origin/Referer host eşleşmesi + X-Requested-With: XMLHttpRequest (SameSite Lax varsayım)
- * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (anahtar: api:merchant_dashboard:{method}:{userId}:{ip})
+ * - Ratelimit: GET 60/dk; POST/PATCH 10/dk  (key: api:merchant_dashboard:{method}:{userId}:{ip})
  *              429 → {error, request_id, retry_after} + Retry-After header
  * - Headers: security defaults + Cache-Control: no-store + X-Request-Id echo
  * - Audit: tüm mutasyonlar transaction + audit({who, what, ip, ua, requestId, result})
- * - Errors: tek tip JSON sözleşmesi {error, request_id, retry_after?}
- * - DB: Sadece Prisma; raw SQL yok. Şema farklarına tolerans (snake/camel fallback).
+ * - Errors: tek tip JSON {error, request_id, retry_after?}
+ * - DB: Sadece Prisma; raw SQL yok. (snake/camel alan fallback’ları)
  */
 
 import { NextResponse } from "next/server";
@@ -39,7 +39,7 @@ const ipUaOf = (req) => {
   return { ip, ua };
 };
 const withSec = (res, rid) => {
-  applyApiSecurityHeaders(res);
+  applyApiSecurityHeaders(res);                 // CSP sadece API tarafında (middleware set etmez)
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("X-Request-Id", rid);
   return res;
@@ -95,7 +95,6 @@ function enforceOrigin(req) {
 
 async function enforceRate(req, rid, userId, limitPerMin) {
   const { ip } = ipUaOf(req);
-  // `makeRateLimitKey` KULLANMIYORUZ → headers.get hatasını kökten engeller.
   const key = `api:merchant_dashboard:${req.method}:${userId || "anon"}:${ip || "0.0.0.0"}`;
   const { allowed, retryAfterSec } = await checkRateLimit(key, limitPerMin, 60);
   if (!allowed) {

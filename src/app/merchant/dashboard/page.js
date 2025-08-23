@@ -5,14 +5,14 @@
  * Purpose: Merchant Dashboard — add/edit/deactivate products with secure mutations
  *
  * Security Docblock (Cabo PROD Standard):
- * - AuthZ: Server tarafı kapılar (requireSession, requireStatus('active'), requireRole('merchant')). Frontend soft-guard: yanlış role → /unauthorized.
- * - CSRF: Mutasyonlarda NextAuth CSRF kullanılır. `/api/auth/csrf` → header `X-CSRF-Token`.
- * - Transport: Tüm istekler merkezi `apiFetch` ile gider (credentials:include, X-Requested-With, X-Request-Id).
- * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (backend). Frontend 429’larda kullanıcıya mesaj verir.
- * - Security headers & logging: backend’de merkezi; burada ek JS yok. XSS: metinler backend’de sanitize edilir; img fallback mevcut.
+ * - AuthZ: Server tarafı kapılar (middleware + API requireRole('merchant')). Frontend sadece soft-guard.
+ * - CSRF: Mutasyonlarda NextAuth CSRF otomatik (apiFetch → /api/auth/csrf + X-CSRF-Token).
+ * - Transport: Tüm istekler merkezi apiFetch ile (credentials:include, X-Requested-With, X-Request-Id).
+ * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (backend). Frontend 429’larda **mesaj göstermez**, sessizce tek ek retry yapar.
+ * - Security headers & logging: backend’de merkezi; burada ek JS yok. Metinler sanitize edilir; img fallback mevcut.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
@@ -43,33 +43,6 @@ export default function MerchantDashboardPage() {
     if (user?.role && user.role !== "merchant") router.replace("/unauthorized");
   }, [ready, user?.role, router]);
 
-  const [csrfToken, setCsrfToken] = useState("");
-  const csrfLoaded = useRef(false);
-
-  // Load NextAuth CSRF once for this page (mutations)
-  useEffect(() => {
-    let alive = true;
-    const controller = new AbortController();
-    const load = async () => {
-      try {
-        const res = await apiFetch("/api/auth/csrf", { method: "GET", signal: controller.signal });
-        if (!alive || !res.ok) return;
-        // NextAuth returns { csrfToken: "..." }
-        const j = await res.json().catch(() => ({}));
-        const token = j?.csrfToken || j?.csrf?.token || "";
-        if (alive && token) {
-          setCsrfToken(token);
-          csrfLoaded.current = true;
-        }
-      } catch {}
-    };
-    load();
-    return () => {
-      alive = false;
-      controller.abort();
-    };
-  }, []);
-
   const [products, setProducts] = useState([]);
   const [formVisible, setFormVisible] = useState(false);
   const [form, setForm] = useState({
@@ -89,10 +62,30 @@ export default function MerchantDashboardPage() {
   const [editValues, setEditValues] = useState({ commissionRate: "", max_sales_limit: "" });
   const [loading, setLoading] = useState(false);
 
+  // Çift çağrı ve yarışları engellemek için
+  const inflight = useRef(false);
+  const abortRef = useRef(null);
+
   // PRODUCTS FETCH (GET)
   const fetchProducts = async () => {
+    if (inflight.current) return;
+    inflight.current = true;
+
+    // Önce önceki isteği iptal et
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const res = await apiFetch("/api/merchant_dashboard", { method: "GET" });
+      let res = await apiFetch("/api/merchant_dashboard", { method: "GET", signal: controller.signal });
+
+      // apiFetch zaten 1 kez retry etti; yine 429 ise arka planda bekleyip 1 kez daha dene
+      if (res.status === 429) {
+        const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        res = await apiFetch("/api/merchant_dashboard", { method: "GET", signal: controller.signal });
+      }
+
       if (res.status === 401) {
         router.replace("/merchant/login");
         return;
@@ -101,28 +94,31 @@ export default function MerchantDashboardPage() {
         router.replace("/unauthorized");
         return;
       }
-      if (res.status === 429) {
-        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
-        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
-        setTimeout(() => setMessage(""), Math.min(retryAfter, 60) * 1000);
-        return;
-      }
+
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setProducts(data.products || []);
         setMinCommission(typeof data.minCommission === "number" ? data.minCommission : 5);
-      } else {
+      } else if (!res.ok) {
+        // Rate-limit vb. dahil tüm hatalarda kullanıcıya debug mesajı göstermeyelim
         setProducts([]);
-        if (data?.error) setMessage(`❌ ${data.error}`);
       }
     } catch {
       setProducts([]);
       setMessage("❌ " + t("serverError"));
+      setTimeout(() => setMessage(""), 3000);
+    } finally {
+      inflight.current = false;
     }
   };
 
   useEffect(() => {
+    let alive = true;
     fetchProducts();
+    return () => {
+      alive = false;
+      if (abortRef.current) abortRef.current.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -132,14 +128,17 @@ export default function MerchantDashboardPage() {
     setLoading(true);
     setMessage("");
     try {
-      const res = await apiFetch("/api/merchant_dashboard", {
+      let res = await apiFetch("/api/merchant_dashboard", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrfToken || "",
-        },
-        body: JSON.stringify(form),
+        body: form, // apiFetch JSON.stringify + CSRF header'ını kendisi ekler
       });
+
+      // apiFetch bir kez retry etti; halen 429 ise sessizce tek ek deneme
+      if (res.status === 429) {
+        const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        res = await apiFetch("/api/merchant_dashboard", { method: "POST", body: form });
+      }
 
       if (res.status === 401) {
         router.replace("/merchant/login");
@@ -147,11 +146,6 @@ export default function MerchantDashboardPage() {
       }
       if (res.status === 403) {
         setMessage("❌ " + t("forbidden"));
-        return;
-      }
-      if (res.status === 429) {
-        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
-        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
         return;
       }
 
@@ -175,14 +169,16 @@ export default function MerchantDashboardPage() {
   // PATCH (activate/deactivate or edits)
   const mutate = async (payload) => {
     try {
-      const res = await apiFetch("/api/merchant_dashboard", {
+      let res = await apiFetch("/api/merchant_dashboard", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrfToken || "",
-        },
-        body: JSON.stringify(payload),
+        body: payload, // apiFetch JSON + CSRF
       });
+
+      if (res.status === 429) {
+        const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        res = await apiFetch("/api/merchant_dashboard", { method: "PATCH", body: payload });
+      }
 
       if (res.status === 401) {
         router.replace("/merchant/login");
@@ -190,11 +186,6 @@ export default function MerchantDashboardPage() {
       }
       if (res.status === 403) {
         setMessage("❌ " + t("forbidden"));
-        return { ok: false };
-      }
-      if (res.status === 429) {
-        const retryAfter = Number(res.headers?.get?.("Retry-After")) || 15;
-        setMessage(`⏳ ${t("rateLimited")} ${retryAfter}s`);
         return { ok: false };
       }
 
