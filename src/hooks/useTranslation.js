@@ -1,35 +1,16 @@
-import { useMemo, useEffect, useState } from "react";
+"use client";
+
+import { useMemo } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { DEFAULT_LOCALE } from "@/locales";
+import messages, { DEFAULT_LOCALE } from "@/locales";
 
-// --- Turbopack uyumlu loader haritası (flat JSON dosyaları)
-const loaders = {
-  en: () => import("@/locales/en.json").then((m) => m.default || m),
-  tr: () => import("@/locales/tr.json").then((m) => m.default || m),
-};
-
-// Sözlük önbelleği
-const dictCache = new Map();
-
-async function loadDict(locale) {
-  if (dictCache.has(locale)) return dictCache.get(locale);
-  const loader = loaders[locale] || loaders.en;
-  const dict = await loader();
-  dictCache.set(locale, dict);
-  return dict;
-}
-
-let enDictPromise = null;
-async function ensureEnDict() {
-  if (!enDictPromise) enDictPromise = loadDict("en");
-  return enDictPromise;
-}
-
+// --- yardımcılar ---
 function getByPath(obj, path) {
   if (!obj || !path) return undefined;
+  const parts = String(path).split(".");
   let cur = obj;
-  for (const seg of String(path).split(".")) {
-    if (cur && Object.prototype.hasOwnProperty.call(cur, seg)) cur = cur[seg];
+  for (const k of parts) {
+    if (cur && Object.prototype.hasOwnProperty.call(cur, k)) cur = cur[k];
     else return undefined;
   }
   return cur;
@@ -45,63 +26,60 @@ function interpolate(str, vars) {
 const warned = new Set();
 function warnMissing(key) {
   if (process.env.NODE_ENV !== "production" && !warned.has(key)) {
-    console.warn(`[i18n] Missing key: ${key}`);
+    // eslint-disable-next-line no-console
+    console.warn("[i18n] Missing key:", key);
     warned.add(key);
   }
 }
 
-// ---- Asıl mantık: objeyi üretir
+// --- asıl hook ---
 export function useI18n(nsPrefix = "") {
-  const { locale: raw } = useLocale();
-  const loc = raw || DEFAULT_LOCALE;
+  const { locale: ctxLocale } = useLocale?.() || {};
+  const loc = (ctxLocale || DEFAULT_LOCALE).toLowerCase().startsWith("tr") ? "tr" : "en";
+  const dict = messages[loc] || messages[DEFAULT_LOCALE];
+  const fallback = messages[DEFAULT_LOCALE];
+
   const prefix = nsPrefix ? (nsPrefix.endsWith(".") ? nsPrefix : nsPrefix + ".") : "";
 
-  // mount'ta sözlükleri yükle
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    let mounted = true;
-    loadDict(loc).then(() => mounted && setTick((x) => x + 1)).catch(() => {});
-    ensureEnDict().then(() => mounted && setTick((x) => x + 1)).catch(() => {});
-    return () => { mounted = false; };
-  }, [loc]);
-
   return useMemo(() => {
-    function _t(key, vars) {
-      const fullKey = prefix + key;
-      const fromLoc = getByPath(dictCache.get(loc), fullKey);
-      if (fromLoc !== undefined) return typeof fromLoc === "string" ? interpolate(fromLoc, vars) : fromLoc;
-      const fromEn = getByPath(dictCache.get("en"), fullKey);
-      if (fromEn !== undefined) return typeof fromEn === "string" ? interpolate(fromEn, vars) : fromEn;
-      warnMissing(fullKey);
-      return fullKey;
+    function t(key, vars) {
+      const full = prefix + key;
+      const v = getByPath(dict, full);
+      if (v !== undefined) return typeof v === "string" ? interpolate(v, vars) : v;
+
+      const vf = getByPath(fallback, full);
+      if (vf !== undefined) return typeof vf === "string" ? interpolate(vf, vars) : vf;
+
+      warnMissing(full);
+      return full; // anahtarı göster
     }
-    function _n(number, options) {
+
+    function n(number, options) {
       try { return new Intl.NumberFormat(loc, options).format(number); }
       catch { return String(number); }
     }
-    function _d(date, options) {
+
+    function d(date, options) {
       try {
         const v = date instanceof Date ? date : new Date(date);
         return new Intl.DateTimeFormat(loc, options).format(v);
       } catch { return String(date); }
     }
-    function _c(amount, currency = "USD", options) {
+
+    function c(amount, currency = "USD", options) {
       try { return new Intl.NumberFormat(loc, { style: "currency", currency, ...options }).format(amount); }
       catch { return String(amount); }
     }
-    return { t: _t, n: _n, d: _d, c: _c, locale: loc };
-  }, [loc, prefix]);
+
+    return { t, n, d, c, locale: loc };
+  }, [dict, fallback, loc, prefix]);
 }
 
-// ---- Geriye dönük uyum: fonksiyon döndür (aynı zamanda property’leri var)
+// Geriye dönük uyumlu kısayol
 export function useTranslation(nsPrefix = "") {
-  const obj = useI18n(nsPrefix);
-  const fn = (key, vars) => obj.t(key, vars);
-  fn.t = obj.t;
-  fn.n = obj.n;
-  fn.d = obj.d;
-  fn.c = obj.c;
-  fn.locale = obj.locale;
+  const api = useI18n(nsPrefix);
+  const fn = (key, vars) => api.t(key, vars);
+  fn.t = api.t; fn.n = api.n; fn.d = api.d; fn.c = api.c; fn.locale = api.locale;
   return fn;
 }
 

@@ -33,7 +33,6 @@ const translations = {
     li2: "Control commissions per product",
     li3: "Webhook integration & analytics",
     li4: "Secure payment reporting",
-    loginQ: "Already have a merchant account?",
     loginBtn: "Login here",
     company: "Company Name",
     fullName: "Full Name (Authorized Person)",
@@ -103,7 +102,6 @@ const translations = {
     li2: "Ürün başına komisyon kontrolü",
     li3: "Webhook entegrasyonu & analiz",
     li4: "Güvenli ödeme raporları",
-    loginQ: "Zaten satıcı hesabın var mı?",
     loginBtn: "Giriş yap",
     company: "Şirket Adı",
     fullName: "Ad Soyad (Yetkili)",
@@ -422,15 +420,7 @@ export default function MerchantRegisterPage() {
               <li>{t("li3")}</li>
               <li>{t("li4")}</li>
             </ul>
-            <div className="text-gray-400 text-sm mb-2">
-              {t("loginQ")}{" "}
-              <Link
-                href="/merchant"
-                className="text-[#81d742] underline hover:text-[#b3ffb3]"
-              >
-                {t("loginBtn")}
-              </Link>
-            </div>
+
             <div className="text-[#81d742] mt-4 text-base font-semibold">
               {t("howWorksQ")}{" "}
               <Link

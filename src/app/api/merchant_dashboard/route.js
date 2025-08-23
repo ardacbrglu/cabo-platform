@@ -1,376 +1,465 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { useUser } from "@/context/UserContext";
-import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
-import MerchantLayout from "@/components/merchant/MerchantLayout";
-import { useTranslation } from "@/hooks/useTranslation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
- * SECURITY NOTES
- * - CSRF: POST/PATCH isteklerinde header "x-csrf-token" zorunlu. Hook'tan { csrfToken } destructure edin.
- * - Rate limit ve RBAC backend’de (api/merchant_dashboard) uygulanır.
- * - XSS: metin girdileri backend’de sanitize ediliyor; img fallback mevcut.
+ * File: src/app/api/merchant_dashboard/route.js
+ * Purpose: Merchant Dashboard API (GET list, POST create, PATCH update/activate)
+ *
+ * ── Cabo PROD Security Docblock ──────────────────────────────────────────────
+ * - AuthN/Z: NextAuth session zorunlu; requireStatus('active'); requireRole('merchant')
+ * - CSRF: POST/PATCH → NextAuth double-submit (header: X-CSRF-Token  + cookie: next-auth.csrf-token)
+ * - Mutations: Origin/Referer host eşleşmesi + X-Requested-With: XMLHttpRequest (SameSite Lax varsayım)
+ * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (anahtar: api:merchant_dashboard:{method}:{userId}:{ip})
+ *              429 → {error, request_id, retry_after} + Retry-After header
+ * - Headers: security defaults + Cache-Control: no-store + X-Request-Id echo
+ * - Audit: tüm mutasyonlar transaction + audit({who, what, ip, ua, requestId, result})
+ * - Errors: tek tip JSON sözleşmesi {error, request_id, retry_after?}
+ * - DB: Sadece Prisma; raw SQL yok. Şema farklarına tolerans (snake/camel fallback).
  */
 
-const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
-function handleImgError(e) {
-  e.target.onerror = null;
-  e.target.src = PLACEHOLDER;
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import prisma from "@/lib/prisma";
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { audit } from "@/lib/logger";
+import { checkRateLimit } from "@/lib/ratelimit";
+import { z } from "zod";
+import crypto from "node:crypto";
+import { sanitize } from "@/lib/validation";
+
+const DEV = process.env.NODE_ENV !== "production";
+
+/* ────────── tiny utils ────────── */
+const ridOf = (req) => req.headers.get("x-request-id")?.slice(0, 128) || crypto.randomUUID();
+const ipUaOf = (req) => {
+  const fwd = req.headers.get("x-forwarded-for") || "";
+  const ip = (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
+  const ua = req.headers.get("user-agent") || "unknown";
+  return { ip, ua };
+};
+const withSec = (res, rid) => {
+  applyApiSecurityHeaders(res);
+  res.headers.set("Cache-Control", "no-store");
+  res.headers.set("X-Request-Id", rid);
+  return res;
+};
+const errorJson = (rid, status, message, extra = {}) =>
+  withSec(NextResponse.json({ error: message, request_id: rid, ...extra }, { status }), rid);
+const okJson = (rid, data, init = {}) => withSec(NextResponse.json(data, init), rid);
+
+async function requireMerchant() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) throw { code: 401, msg: "unauthorized" };
+  if (session.user.status !== "active") throw { code: 403, msg: "forbidden" };
+  if (session.user.role !== "merchant") throw { code: 403, msg: "forbidden" };
+  return { userId: session.user.id };
 }
-function getQuotastatus(product) {
-  if (!product.isActive) return "inactive";
-  if (product.total_purchases >= product.max_sales_limit) return "quota";
+
+/* ────────── security helpers ────────── */
+function validateNextAuthCsrf(req) {
+  const headerToken = req.headers.get("x-csrf-token") || req.headers.get("X-CSRF-Token");
+  if (!headerToken) return false;
+  const cookie = req.headers.get("cookie") || "";
+  const m =
+    cookie.match(/(?:^|;\s*)(?:__Host-)?next-auth\.csrf-token=([^;]+)/i) ||
+    cookie.match(/(?:^|;\s*)next-auth\.csrf-token=([^;]+)/i);
+  if (!m) return false;
+  const cookieToken = decodeURIComponent(m[1]).split("|")[0];
+  return cookieToken && cookieToken === headerToken;
+}
+
+function enforceOrigin(req) {
+  if (req.method === "GET" || req.method === "HEAD") return true;
+  const xrw = (req.headers.get("x-requested-with") || "").toLowerCase();
+  if (xrw !== "xmlhttprequest") return false;
+
+  const host = req.headers.get("host");
+  const origin = req.headers.get("origin");
+  const referer = req.headers.get("referer");
+  const envUrl = process.env.NEXTAUTH_URL || process.env.BASE_URL || "";
+
+  const allowed = new Set(
+    [host, envUrl].filter(Boolean).map((u) => {
+      try { return new URL(u.startsWith("http") ? u : `https://${u}`).host; }
+      catch { return u; }
+    })
+  );
+
+  const ok = (u) => {
+    try { return !u || allowed.has(new URL(u).host); }
+    catch { return false; }
+  };
+  return ok(origin) && ok(referer);
+}
+
+async function enforceRate(req, rid, userId, limitPerMin) {
+  const { ip } = ipUaOf(req);
+  // `makeRateLimitKey` KULLANMIYORUZ → headers.get hatasını kökten engeller.
+  const key = `api:merchant_dashboard:${req.method}:${userId || "anon"}:${ip || "0.0.0.0"}`;
+  const { allowed, retryAfterSec } = await checkRateLimit(key, limitPerMin, 60);
+  if (!allowed) {
+    const res = errorJson(rid, 429, "rate_limited", { retry_after: retryAfterSec || 60 });
+    res.headers.set("Retry-After", String(retryAfterSec || 60));
+    return { blocked: true, res };
+  }
+  return { blocked: false };
+}
+
+/* ────────── prisma helpers (fallback'lı) ────────── */
+function resolveModel(client, candidates, methods = ["findMany"]) {
+  for (const n of candidates) {
+    const m = client?.[n];
+    if (m && methods.every((fn) => typeof m[fn] === "function")) return m;
+  }
   return null;
 }
 
-export default function MerchantDashboardPage() {
-  const { t } = useTranslation();           // ✅ doğru kullanım
-  const { user } = useUser();
-  const { csrfToken } = useCsrfToken();     // ✅ doğru kullanım
+async function findProductsForMerchant(Product, userId) {
+  const whereFields = ["merchant_id", "merchantId", "owner_id", "ownerId"];
+  const orderFields = ["created_at", "createdAt", "id", "product_id", "productId"];
 
-  const [products, setProducts] = useState([]);
-  const [formVisible, setFormVisible] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    description: "",
-    image_url: "",
-    price: "",
-    commissionRate: "",
-    merchant_url: "",
-    max_sales_limit: "",
-  });
-  const [message, setMessage] = useState("");
-  const [minCommission, setMinCommission] = useState(5);
-  const [showCode, setShowCode] = useState({});
-  const [copyMsg, setCopyMsg] = useState({});
-  const [editingProductId, setEditingProductId] = useState(null);
-  const [editValues, setEditValues] = useState({ commissionRate: "", max_sales_limit: "" });
-  const [loading, setLoading] = useState(false);
-
-  // PRODUCTS FETCH
-  const fetchProducts = async () => {
-    try {
-      const res = await fetch("/api/merchant_dashboard", { credentials: "include" });
-      const data = await res.json();
-      if (data.success) {
-        setProducts(data.products);
-        setMinCommission(data.minCommission || 5);
-      } else setProducts([]);
-    } catch {
-      setProducts([]);
+  for (const wf of whereFields) {
+    for (const ofn of orderFields) {
+      try { return await Product.findMany({ where: { [wf]: userId }, orderBy: { [ofn]: "desc" } }); } catch {}
     }
-  };
-  useEffect(() => { fetchProducts(); }, []);
+    try { return await Product.findMany({ where: { [wf]: userId } }); } catch {}
+  }
 
-  // FORM HANDLERS
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage("");
-    try {
-      const res = await fetch("/api/merchant_dashboard", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",   // ✅ string token
-        },
-        credentials: "include",
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setFormVisible(false);
-        setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
-        fetchProducts();
-        setMessage(t("productReviewMsg"));
-        setTimeout(() => setMessage(""), 4000);
-      } else {
-        setMessage(`❌ ${data.error || t("failedAddProduct")}`);
+  try {
+    const rows = await Product.findMany({ take: 500 });
+    return rows.filter((r) => [r.merchant_id, r.merchantId, r.owner_id, r.ownerId].includes(userId));
+  } catch { return []; }
+}
+
+async function countLinksByProduct(prismaClient, ids) {
+  const Link =
+    resolveModel(prismaClient, ["affiliateLink", "affiliateLinks"]) ||
+    resolveModel(prismaClient, ["AffiliateLink", "AffiliateLinks"]);
+  if (!Link || !ids.length) return new Map();
+
+  try {
+    const g1 = await Link.groupBy({ by: ["product_id"], where: { product_id: { in: ids } }, _count: { product_id: true } });
+    return new Map(g1.map((g) => [g.product_id, g._count.product_id]));
+  } catch {}
+  try {
+    const g2 = await Link.groupBy({ by: ["productId"], where: { productId: { in: ids } }, _count: { productId: true } });
+    return new Map(g2.map((g) => [g.productId, g._count.productId]));
+  } catch {}
+  try {
+    const r1 = await Link.findMany({ where: { product_id: { in: ids } }, select: { product_id: true } });
+    const m = new Map();
+    for (const r of r1) m.set(r.product_id, (m.get(r.product_id) || 0) + 1);
+    return m;
+  } catch {}
+  try {
+    const r2 = await Link.findMany({ where: { productId: { in: ids } }, select: { productId: true } });
+    const m = new Map();
+    for (const r of r2) m.set(r.productId, (m.get(r.productId) || 0) + 1);
+    return m;
+  } catch {}
+  return new Map();
+}
+
+async function getMinCommission() {
+  try {
+    const M =
+      resolveModel(prisma, ["platformConfig", "platformConfigs", "platform_config"], ["findUnique", "findFirst"]) ||
+      resolveModel(prisma, ["PlatformConfig"], ["findUnique", "findFirst"]);
+    if (M) {
+      const row =
+        (M.findUnique && (await M.findUnique({ where: { key: "min_commission" } }))) ||
+        (M.findFirst && (await M.findFirst({ where: { key: "min_commission" } })));
+      const n = Number(row?.value);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  } catch {}
+  return 5;
+}
+
+const pidOf = (p) => p.product_id ?? p.id;
+function mapProductRow(p, linkCount) {
+  return {
+    productId: p.product_id ?? p.id,
+    productCode: p.product_code ?? p.productCode,
+    name: p.name,
+    description: p.description || "",
+    image_url: p.image_url ?? p.imageUrl,
+    merchant_url: p.merchant_url ?? p.merchantUrl,
+    price: Number(p.price),
+    commissionRate: Number(p.commission_rate ?? p.commissionRate),
+    isActive: !!(p.is_active ?? p.isActive),
+    activated_by_admin: !!(p.activated_by_admin ?? p.activatedByAdmin),
+    totalClicks: Number(p.total_clicks ?? p.totalClicks ?? 0),
+    total_purchases: Number(p.total_purchases ?? p.totalPurchases ?? 0),
+    max_sales_limit: Number(p.max_sales_limit ?? p.maxSalesLimit ?? 0),
+    link_count: Number(linkCount || 0),
+    created_at: p.created_at ?? p.createdAt,
+  };
+}
+
+/* ────────── validation ────────── */
+const urlStr = z
+  .string().min(6).max(2048)
+  .refine((v) => { try { const u = new URL(v); return ["http:", "https:"].includes(u.protocol); } catch { return false; } }, "invalid_url");
+
+const CreateSchema = z.object({
+  name: z.string().min(3).max(120),
+  description: z.string().max(2000).optional().default(""),
+  image_url: urlStr,
+  merchant_url: urlStr,
+  price: z.union([z.string(), z.number()]),
+  commissionRate: z.union([z.string(), z.number()]),
+  max_sales_limit: z.union([z.string(), z.number()]),
+}).strict();
+
+const PatchSchema = z.object({
+  productId: z.union([z.string(), z.number()]),
+  action: z.enum(["activate", "deactivate"]).optional(),
+  commissionRate: z.union([z.string(), z.number()]).optional(),
+  max_sales_limit: z.union([z.string(), z.number()]).optional(),
+}).strict();
+
+/* ────────── GET ────────── */
+export async function GET(req) {
+  const rid = ridOf(req);
+  try {
+    const { userId } = await requireMerchant();
+
+    const rl = await enforceRate(req, rid, userId, 60);
+    if (rl.blocked) return rl.res;
+
+    const Product =
+      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["MerchantProduct", "Product"]);
+    if (!Product) {
+      const minCommission = await getMinCommission();
+      return okJson(rid, { success: true, products: [], minCommission });
+    }
+
+    const rows = await findProductsForMerchant(Product, userId);
+    const ids = rows.map((r) => pidOf(r)).filter(Boolean);
+    const counts = await countLinksByProduct(prisma, ids);
+
+    const products = rows.map((r) => mapProductRow(r, counts.get(pidOf(r)) || 0));
+    const minCommission = await getMinCommission();
+
+    return okJson(rid, { success: true, products, minCommission });
+  } catch (e) {
+    if (DEV) console.error("[merchant_dashboard][GET]", e);
+    const extras = DEV ? { dev_error: String(e?.message || e) } : {};
+    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+  }
+}
+
+/* ────────── POST (create product) ────────── */
+export async function POST(req) {
+  const rid = ridOf(req);
+  const { ip, ua } = ipUaOf(req);
+  try {
+    const { userId } = await requireMerchant();
+    if (!enforceOrigin(req)) return errorJson(rid, 403, "bad_origin");
+    if (!validateNextAuthCsrf(req)) return errorJson(rid, 403, "csrf_invalid");
+
+    const rl = await enforceRate(req, rid, userId, 10);
+    if (rl.blocked) return rl.res;
+
+    const body = await req.json().catch(() => ({}));
+    const parsed = CreateSchema.safeParse(body);
+    if (!parsed.success) return errorJson(rid, 400, "invalid_payload");
+
+    const Product =
+      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["MerchantProduct", "Product"]);
+    if (!Product) return errorJson(rid, 500, "server_error");
+
+    const minCommission = await getMinCommission();
+
+    const name = sanitize.text(parsed.data.name.trim());
+    const description = sanitize.text((parsed.data.description || "").trim());
+    const image_url = sanitize.text(parsed.data.image_url.trim());
+    const merchant_url = sanitize.text(parsed.data.merchant_url.trim());
+    const price = Number(parsed.data.price);
+    const commissionRate = Number(parsed.data.commissionRate);
+    const max_sales_limit = Math.max(0, Math.floor(Number(parsed.data.max_sales_limit)));
+
+    if (!Number.isFinite(price) || price <= 0) return errorJson(rid, 400, "invalid_price");
+    if (!Number.isFinite(commissionRate) || commissionRate < minCommission || commissionRate > 99.9)
+      return errorJson(rid, 400, "invalid_commission");
+    if (!Number.isInteger(max_sales_limit) || max_sales_limit < 0) return errorJson(rid, 400, "invalid_limit");
+
+    const created = await prisma.$transaction(async (tx) => {
+      const M =
+        resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+        resolveModel(tx, ["MerchantProduct", "Product"]);
+
+      // snake → camel fallback
+      async function createSnake() {
+        return await M.create({
+          data: {
+            merchant_id: userId,
+            name, description,
+            image_url, merchant_url,
+            price,
+            commission_rate: commissionRate,
+            is_active: true,
+            activated_by_admin: false,
+            total_clicks: 0,
+            total_purchases: 0,
+            max_sales_limit,
+            product_code: crypto.randomUUID(),
+          },
+        });
       }
-    } catch {
-      setMessage("❌ " + t("serverError"));
-    }
-    setLoading(false);
-  };
-
-  const handleDeactivate = async (productId, action) => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/merchant_dashboard", {
-        method: "PATCH",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",  // ✅ string token
-        },
-        body: JSON.stringify({ productId, action }),
-      });
-      if (res.ok) fetchProducts();
-      else {
-        const data = await res.json();
-        alert(data.error || t("failedProductUpdate"));
+      async function createCamel() {
+        return await M.create({
+          data: {
+            merchantId: userId,
+            name, description,
+            imageUrl: image_url, merchantUrl: merchant_url,
+            price,
+            commissionRate,
+            isActive: true,
+            activatedByAdmin: false,
+            totalClicks: 0,
+            totalPurchases: 0,
+            maxSalesLimit: max_sales_limit,
+            productCode: crypto.randomUUID(),
+          },
+        });
       }
-    } catch {
-      alert(t("serverError"));
-    }
-    setLoading(false);
-  };
 
-  const remainingQuota = (limit, sold) => Math.max(0, Number(limit) - Number(sold));
-  const toggleShowCode = (productId) => setShowCode((prev) => ({ ...prev, [productId]: !prev[productId] }));
-  const copyProductCode = async (productId, code) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopyMsg((prev) => ({ ...prev, [productId]: t("copied") }));
-      setTimeout(() => setCopyMsg((prev) => ({ ...prev, [productId]: "" })), 1200);
-    } catch {
-      alert(t("failedCopy"));
-    }
-  };
+      let product;
+      try { product = await createSnake(); }
+      catch { product = await createCamel(); }
 
-  const startEditing = (product) => {
-    setEditingProductId(product.productId);
-    setEditValues({
-      commissionRate: product.commissionRate,
-      max_sales_limit: product.max_sales_limit,
+      await audit({ who: userId, what: "merchant_product_create", ip, ua, requestId: rid, result: { product_id: pidOf(product) } });
+      return product;
     });
-  };
-  const handleEditChange = (field, value) => setEditValues((prev) => ({ ...prev, [field]: value }));
-  const saveEdits = async () => {
-    if (Number(editValues.commissionRate) < minCommission) {
-      alert(t("minCommissionWarn").replace("{minCommission}", minCommission));
-      return;
-    }
-    if (!Number.isInteger(Number(editValues.max_sales_limit)) || Number(editValues.max_sales_limit) < 0) {
-      alert(t("maxSalesLimitWarn"));
-      return;
-    }
-    setLoading(true);
+
+    return okJson(rid, { success: true, productId: pidOf(created) });
+  } catch (e) {
+    if (DEV) console.error("[merchant_dashboard][POST]", e);
+    const extras = DEV ? { dev_error: String(e?.message || e) } : {};
+    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+  }
+}
+
+/* ────────── PATCH (edit/activate) ────────── */
+export async function PATCH(req) {
+  const rid = ridOf(req);
+  const { ip, ua } = ipUaOf(req);
+  try {
+    const { userId } = await requireMerchant();
+    if (!enforceOrigin(req)) return errorJson(rid, 403, "bad_origin");
+    if (!validateNextAuthCsrf(req)) return errorJson(rid, 403, "csrf_invalid");
+
+    const rl = await enforceRate(req, rid, userId, 10);
+    if (rl.blocked) return rl.res;
+
+    const body = await req.json().catch(() => ({}));
+    const parsed = PatchSchema.safeParse(body);
+    if (!parsed.success) return errorJson(rid, 400, "invalid_payload");
+
+    const Product =
+      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["MerchantProduct", "Product"]);
+    if (!Product) return errorJson(rid, 500, "server_error");
+
+    const pid = Number(parsed.data.productId);
+    if (!Number.isFinite(pid) || pid <= 0) return errorJson(rid, 400, "invalid_product_id");
+
+    // mevcut kayıt
+    let current = null;
     try {
-      const res = await fetch("/api/merchant_dashboard", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",  // ✅ string token
+      current = await Product.findFirst({
+        where: { AND: [{ product_id: pid }, { merchant_id: userId }] },
+        select: {
+          product_id: true, id: true,
+          is_active: true, isActive: true,
+          total_purchases: true, totalPurchases: true,
+          max_sales_limit: true, maxSalesLimit: true,
+          commission_rate: true, commissionRate: true,
         },
-        body: JSON.stringify({
-          productId: editingProductId,
-          commissionRate: Number(editValues.commissionRate),
-          max_sales_limit: Number(editValues.max_sales_limit),
-        }),
       });
-      if (res.ok) {
-        setEditingProductId(null);
-        fetchProducts();
-      } else {
-        const data = await res.json();
-        alert(data.error || t("failedProductUpdate"));
-      }
     } catch {
-      alert(t("serverError"));
+      current = await Product.findFirst({
+        where: { AND: [{ id: pid }, { merchantId: userId }] },
+        select: {
+          product_id: true, id: true,
+          is_active: true, isActive: true,
+          total_purchases: true, totalPurchases: true,
+          max_sales_limit: true, maxSalesLimit: true,
+          commission_rate: true, commissionRate: true,
+        },
+      });
     }
-    setLoading(false);
-  };
-  const cancelEdits = () => {
-    setEditingProductId(null);
-    setEditValues({ commissionRate: "", max_sales_limit: "" });
-  };
+    if (!current) return errorJson(rid, 404, "not_found");
 
-  const inputClass =
-    "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
+    const sold = current.total_purchases ?? current.totalPurchases ?? 0;
+    let nextCommission = current.commission_rate ?? current.commissionRate;
+    let nextLimit = current.max_sales_limit ?? current.maxSalesLimit;
 
-  return (
-    <MerchantLayout>
-      <section className="flex flex-col md:flex-row md:justify-between md:items-center mb-8 gap-4">
-        <h1 className="text-3xl font-bold text-[#d1ffd0]">{t("manageProducts")}</h1>
-        <button
-          onClick={() => setFormVisible((v) => !v)}
-          className="flex items-center gap-2 bg-[#81d742] text-[#101010] px-5 py-2 rounded hover:bg-[#aaff6c] transition font-semibold text-base shadow"
-        >
-          <PlusCircle size={19} /> {t("addNewProduct")}
-        </button>
-      </section>
+    const minCommission = await getMinCommission();
 
-      {message && (
-        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow">
-          <CheckCircle size={18} className="text-green-400" /> {message}
-        </div>
-      )}
+    // Activate/Deactivate
+    if (parsed.data.action) {
+      const activate = parsed.data.action === "activate";
+      if (activate && sold >= nextLimit) return errorJson(rid, 400, "quota_reached");
 
-      {/* --- ADD PRODUCT FORM --- */}
-      {formVisible && (
-        <form
-          onSubmit={handleSubmit}
-          className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input type="text" className={inputClass} placeholder={t("productTitle")} required onChange={e => setForm({ ...form, name: e.target.value })} />
-            <input type="text" className={inputClass} placeholder={t("productUrl")} required onChange={e => setForm({ ...form, merchant_url: e.target.value })} />
-            <input type="text" className={inputClass} placeholder={t("productImage")} required onChange={e => setForm({ ...form, image_url: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("productPrice")} required step="0.01" onChange={e => setForm({ ...form, price: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("commissionRate")} required step="0.1" min={minCommission} onChange={e => setForm({ ...form, commissionRate: e.target.value })} />
-            <input type="number" className={inputClass} placeholder={t("maxSalesLimit")} required onChange={e => setForm({ ...form, max_sales_limit: e.target.value })} />
-          </div>
-          <textarea className={inputClass + " w-full"} placeholder={t("productDesc")} rows={3} onChange={e => setForm({ ...form, description: e.target.value })}></textarea>
-          <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
-          <button type="submit" disabled={loading} className="bg-[#262f24] text-[#d1ffd0] font-semibold py-2 px-6 rounded hover:bg-[#293f21] mt-3 transition">
-            {loading ? t("adding") : t("submitReview")}
-          </button>
-        </form>
-      )}
+      await prisma.$transaction(async (tx) => {
+        const M =
+          resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+          resolveModel(tx, ["MerchantProduct", "Product"]);
+        try {
+          await M.updateMany({ where: { product_id: pid, merchant_id: userId }, data: { is_active: activate } });
+        } catch {
+          await M.updateMany({ where: { id: pid, merchantId: userId }, data: { isActive: activate } });
+        }
+        await audit({ who: userId, what: `merchant_product_${activate ? "activate" : "deactivate"}`, ip, ua, requestId: rid, result: { product_id: pid } });
+      });
 
-      {/* --- PRODUCT CARDS --- */}
-      <div className="grid gap-x-10 gap-y-14 md:grid-cols-2 xl:grid-cols-3">
-        {products.map((p) => {
-          const status = getQuotastatus(p);
-          return (
-            <div
-              key={p.productId}
-              className={`relative bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col shadow-lg hover:shadow-2xl transition-all duration-300 min-h[490px] max-w-lg mx-auto group
-                ${status ? "opacity-60 grayscale" : ""}`}
-            >
-              {/* status BADGES */}
-              {status === "inactive" && (
-                <span className="absolute left-5 top-5 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
-                  <Ban size={13} /> {t("inactive")}
-                </span>
-              )}
-              {status === "quota" && (
-                <span className="absolute left-5 top-5 bg-yellow-600/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
-                  <Ban size={13} /> {t("quotaReached")}
-                </span>
-              )}
-              {/* Product IMAGE */}
-              <img
-                src={p.image_url || PLACEHOLDER}
-                onError={handleImgError}
-                alt={p.name}
-                className="rounded-xl mb-4 h-44 w-full object-cover border border-[#202720]"
-                style={{ background: "#23262a" }}
-              />
-              <h3 className="text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
-              <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
-              <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
-                <span>
-                  <span className="text-gray-500">{t("price")}</span>: <span className="font-bold">${Number(p.price).toFixed(2)}</span>
-                </span>
-                <span>
-                  <span className="text-gray-500">{t("commission")}</span>: <span className="font-bold text-green-300">{Number(p.commissionRate).toFixed(2)}%</span>
-                </span>
-              </div>
-              <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>{t("clicks")}: <b>{p.totalClicks}</b></span>
-                <span>{t("sales")}: <b>{p.total_purchases}</b></span>
-                <span>{t("quotaLeft")}: <b>{Math.max(0, p.max_sales_limit - p.total_purchases)}</b></span>
-              </div>
-              <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>{t("affiliates")}: <b>{p.link_count}</b></span>
-                <span>Product ID: {p.productId}</span>
-              </div>
-              {/* Product Code */}
-              <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-gray-400">{t("productCode")}:</span>
-                {showCode[p.productId] ? (
-                  <>
-                    <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
-                    <button
-                      type="button"
-                      onClick={() => copyProductCode(p.productId, p.productCode)}
-                      className="ml-1 text-[#81d742] hover:text-green-200 transition"
-                      title={t("copyCode")}
-                    >
-                      <Copy size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleShowCode(p.productId)}
-                      className="text-gray-400 hover:text-gray-200 transition"
-                      title={t("hide")}
-                    >
-                      <EyeOff size={15} />
-                    </button>
-                    {copyMsg[p.productId] && <span className="ml-2 text-green-400 font-mono text-xs">{copyMsg[p.productId]}</span>}
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => toggleShowCode(p.productId)}
-                    className="flex items-center gap-1 text-gray-400 hover:text-[#81d742] font-mono text-xs bg-[#161616] rounded px-2 py-1 ml-1"
-                    title={t("showCode")}
-                  >
-                    <Eye size={14} /> {t("show")}
-                  </button>
-                )}
-              </div>
-              <div className={`mt-4 text-xs font-semibold ${p.activated_by_admin ? "text-green-500" : "text-yellow-400"}`}>
-                {p.activated_by_admin ? t("approvedByAdmin") : t("waitingApproval")}
-              </div>
-              {/* Edit & Activate/Deactivate */}
-              <div className="flex flex-col gap-2 mt-auto pt-4">
-                {editingProductId === p.productId ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="mb-3 bg-yellow-900/70 border border-yellow-600 text-yellow-100 px-3 py-2 rounded text-xs font-mono font-bold">
-                      ⚠️ {t("adminApprovalWarn")}
-                    </div>
-                    <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("commissionShort")}</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min={minCommission}
-                        max={99}
-                        value={editValues.commissionRate}
-                        onChange={e => handleEditChange("commissionRate", e.target.value)}
-                        className={inputClass + " w-24 text-green-300"}
-                        placeholder={t("commissionShort")}
-                      />
-                      <span className="ml-2 text-xs text-gray-400">(min: {minCommission})</span>
-                    </div>
-                    <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("maxSales")}</label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={editValues.max_sales_limit}
-                        onChange={e => handleEditChange("max_sales_limit", e.target.value)}
-                        className={inputClass + " w-28 text-blue-300"}
-                        placeholder={t("maxSales")}
-                      />
-                      <span className="ml-2 text-xs text-gray-400">({t("sold")}: {p.total_purchases})</span>
-                    </div>
-                    <div className="flex gap-2 mt-2">
-                      <button onClick={saveEdits} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">
-                        {t("save")}
-                      </button>
-                      <button onClick={cancelEdits} disabled={loading} className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs">
-                        {t("cancel")}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => startEditing(p)}
-                      className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition"
-                    >
-                      {t("edit")}
-                    </button>
-                    <button
-                      onClick={() => handleDeactivate(p.productId, p.isActive ? "deactivate" : "activate")}
-                      className={`${p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"} text-white py-2 rounded text-sm flex-1`}
-                    >
-                      {p.isActive ? t("deactivate") : t("activate")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </MerchantLayout>
-  );
+      return okJson(rid, { success: true });
+    }
+
+    // Edits
+    if (parsed.data.commissionRate !== undefined) {
+      const v = Number(parsed.data.commissionRate);
+      if (!Number.isFinite(v) || v < minCommission || v > 99.9) return errorJson(rid, 400, "invalid_commission");
+      nextCommission = v;
+    }
+    if (parsed.data.max_sales_limit !== undefined) {
+      const v = Math.floor(Number(parsed.data.max_sales_limit));
+      if (!Number.isInteger(v) || v < 0) return errorJson(rid, 400, "invalid_limit");
+      if (v < sold) return errorJson(rid, 400, "limit_lt_sold");
+      nextLimit = v;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const M =
+        resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+        resolveModel(tx, ["MerchantProduct", "Product"]);
+      try {
+        await M.updateMany({
+          where: { product_id: pid, merchant_id: userId },
+          data: { commission_rate: nextCommission, max_sales_limit: nextLimit },
+        });
+      } catch {
+        await M.updateMany({
+          where: { id: pid, merchantId: userId },
+          data: { commissionRate: nextCommission, maxSalesLimit: nextLimit },
+        });
+      }
+      await audit({
+        who: userId, what: "merchant_product_update", ip, ua, requestId: rid,
+        result: { product_id: pid, commission_rate: nextCommission, max_sales_limit: nextLimit },
+      });
+    });
+
+    return okJson(rid, { success: true });
+  } catch (e) {
+    if (DEV) console.error("[merchant_dashboard][PATCH]", e);
+    const extras = DEV ? { dev_error: String(e?.message || e) } : {};
+    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+  }
 }
