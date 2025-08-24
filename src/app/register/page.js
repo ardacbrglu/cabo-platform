@@ -1,3 +1,4 @@
+// src/app/register/page.js
 "use client";
 
 /**
@@ -171,6 +172,10 @@ export default function RegisterPage() {
   const [termsHintVisible, setTermsHintVisible] = useState(false);
   const firstInvalidRef = useRef(null);
 
+  // 👇 Google akışına özgü CAPTCHA uyarısı için state
+  const [captchaError, setCaptchaError] = useState("");
+  const captchaWrapRef = useRef(null);
+
   useEffect(() => {
     if (!termsHintVisible) return;
     const close = () => setTermsHintVisible(false);
@@ -184,7 +189,7 @@ export default function RegisterPage() {
 
   if (!ready) return null;
 
-  // Validation
+  // Validation (manuel akış için)
   const validate = () => {
     const errs = {};
     if (!name) errs.name = t("req_name");
@@ -215,6 +220,7 @@ export default function RegisterPage() {
     setSubmitted(true);
     setServerError("");
     setSuccess("");
+    setCaptchaError("");
     firstInvalidRef.current = null;
 
     const errs = validate();
@@ -266,11 +272,28 @@ export default function RegisterPage() {
     setServerError("");
     setSuccess("");
 
-    const gErrs = {};
-    if (!terms) gErrs.terms = t("req_terms");
-    if (!captcha) gErrs.captcha = t("req_captcha");
-    setTermsHintVisible(Boolean(gErrs.terms));
-    if (Object.keys(gErrs).length) return;
+    // Sadece terms + captcha kontrol edilecek
+    let hasError = false;
+
+    if (!terms) {
+      setTermsHintVisible(true);
+      hasError = true;
+    } else {
+      setTermsHintVisible(false);
+    }
+
+    if (!captcha) {
+      setCaptchaError(t("req_captcha"));
+      hasError = true;
+      // Kaptcha alanını görünür alana kaydır
+      try {
+        captchaWrapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    } else {
+      setCaptchaError("");
+    }
+
+    if (hasError) return;
 
     setLoading(true);
     try {
@@ -287,6 +310,8 @@ export default function RegisterPage() {
         setLoading(false);
         return;
       }
+
+      // precheck cookie set edildi → Google'a yönlendir
       await signIn("google", { callbackUrl: "/dashboard", redirect: true });
     } catch {
       setServerError(String(locale).toLowerCase().startsWith("tr")
@@ -389,7 +414,7 @@ export default function RegisterPage() {
             />
           </div>
 
-          {/* Terms (tek tooltip burada) */}
+          {/* Terms (tooltip burada) */}
           <div className="relative flex items-center gap-2 w-full">
             <input
               id="terms"
@@ -405,9 +430,25 @@ export default function RegisterPage() {
             <TermsHint show={termsHintVisible} message={errors.terms} />
           </div>
 
-          {/* CAPTCHA */}
-          <div className="w-full">
-            <Captcha onChange={setCaptcha} lang={locale} resetKey={captchaResetKey} />
+          {/* CAPTCHA (Google akışında görsel uyarı destekli) */}
+          <div
+            ref={captchaWrapRef}
+            className={`w-full ${captchaError ? "ring-2 ring-red-400 rounded-md p-2" : ""}`}
+            aria-invalid={captchaError ? "true" : "false"}
+          >
+            <Captcha
+              onChange={(val) => {
+                setCaptcha(val);
+                if (val) setCaptchaError("");
+              }}
+              lang={locale}
+              resetKey={captchaResetKey}
+            />
+            {captchaError && (
+              <p className="mt-2 text-sm text-red-400" role="alert" aria-live="assertive">
+                {captchaError}
+              </p>
+            )}
           </div>
 
           {/* Server messages */}

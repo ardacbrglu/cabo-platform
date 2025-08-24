@@ -1,5 +1,7 @@
+// src/lib/authOptions.js
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -17,14 +19,8 @@ function shapeUser(u) {
     image: u.image || null,
   };
 }
-
 function getUserLocale(u) {
-  const raw =
-    u?.languagePreference ||
-    u?.language ||
-    u?.locale ||
-    u?.preferredLocale ||
-    "";
+  const raw = u?.languagePreference || u?.language || u?.locale || u?.preferredLocale || "";
   const s = String(raw || "").toLowerCase();
   if (s.startsWith("en")) return "en";
   if (s.startsWith("tr")) return "tr";
@@ -36,6 +32,11 @@ function getUserLocale(u) {
 export const authOptions = {
   trustHost: true,
   secret: process.env.NEXTAUTH_SECRET,
+
+  // 👇 EKLENDİ: OAuth hesaplarını DB'ye yazmak için
+  adapter: PrismaAdapter(prisma),
+
+  // JWT stratejisi kalabilir; adapter sadece user/account persist eder
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
 
   providers: [
@@ -58,11 +59,11 @@ export const authOptions = {
           });
           if (!user) return null;
 
-          // Google-only hesaplar burada giremez
+          // Google-only hesap şifreyle giremez
           const isGoogleOnly = !user.passwordHash && (user.accounts || []).some(a => a.provider === "google");
           if (isGoogleOnly) return null;
 
-          // Affiliate/Merchant dışı veya aktif olmayan hesap giremez
+          // RBAC + status
           if (!["affiliate", "merchant"].includes(user.role)) return null;
           if (user.status !== "active") return null;
 
@@ -80,6 +81,7 @@ export const authOptions = {
       ? [GoogleProvider({
           clientId: process.env.GOOGLE_CLIENT_ID,
           clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+          // aynı email ile linking doğal olarak yapılır; farklı email’lere link engelli
           allowDangerousEmailAccountLinking: false,
         })]
       : []),
@@ -94,16 +96,17 @@ export const authOptions = {
       const emailLower = (user?.email || "").toLowerCase();
       if (!emailLower) return false;
 
+      // Mevcut user varsa sadece active olan girsin
       const existing = await prisma.user.findUnique({
         where: { email: emailLower },
         select: { status: true },
       });
       if (existing) return existing.status === "active";
 
-      // Yeni kullanıcı için precheck cookie bekle
+      // Yeni user için precheck cookie zorunlu
       const cookieHeader = req?.headers?.get?.("cookie") || "";
-      const match = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
-      const token = match ? decodeURIComponent(match[1]) : null;
+      const m = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
+      const token = m ? decodeURIComponent(m[1]) : null;
 
       const scheme =
         req?.headers?.get?.("x-forwarded-proto") ||
@@ -129,7 +132,6 @@ export const authOptions = {
         token.email = user.email || token.email;
         return token;
       }
-
       if ((!token.role || !token.status) && token?.email) {
         try {
           const u = await prisma.user.findUnique({
@@ -169,13 +171,7 @@ export const authOptions = {
   },
 
   events: {
-    /**
-     * OAuth (Google) ile İLK kez user oluşturulduğunda tetiklenir.
-     * - Hesabı active/affiliate yap
-     * - Tek seferlik welcome bildirimi gönder (notify.js)
-     * Manuel kayıt + e-posta aktivasyonda bu event çalışmaz; o akışta bildirim
-     * /api/activate içinde tetikleniyor.
-     */
+    // OAuth ile ilk kez user oluştuğunda tetiklenir (Adapter gerekliydi!)
     async createUser({ user }) {
       try {
         const idNum = Number(user.id);
