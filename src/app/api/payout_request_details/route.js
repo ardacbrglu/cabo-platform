@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -36,14 +37,17 @@ const bodySchema = z.object({
 export const POST = withCsrfProtection(async (req) => {
   try {
     const session = await getServerSession(authOptions);
-    const userId = session?.user?.id;
+    const userId = session?.user?.id ?? session?.user?.userId;
     if (!userId) return secureJson({ error: "Unauthorized" }, { status: 401 });
 
     // rate limit
-    const rlKey = makeRateLimitKey(req, { scope: "payout-details", userId });
+    const rlKey = makeRateLimitKey(req, { scope: "payout-details", userId: Number(userId) });
     const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
     if (!ok) {
-      return secureJson({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } });
+      return secureJson(
+        { error: "Too many requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+      );
     }
 
     const raw = await req.json().catch(() => ({}));

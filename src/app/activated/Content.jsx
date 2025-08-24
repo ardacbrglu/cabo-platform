@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
 import { useLocale } from "@/context/LocaleContext";
 
-// Bu sayfada da dinamik i18n kullanmıyoruz (aynı sebep).
+// Bu sayfada da dinamik i18n kullanmıyoruz (aynı sebep). 
 const dict = {
   en: {
     ok: "Your account has been activated! Redirecting to the login page...",
@@ -15,6 +15,7 @@ const dict = {
     fail: "Aktivasyon başarısız veya link geçersiz.",
   },
 };
+  
 
 export default function ActivatedContent() {
   const params = useSearchParams();

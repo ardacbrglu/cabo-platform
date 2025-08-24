@@ -1,3 +1,4 @@
+// src/lib/authz.js
 /**
  * File: src/lib/authz.js
  * Purpose: NextAuth oturum nesnesi üzerinde standart AuthZ kontrolleri (RBAC + status).
@@ -6,7 +7,12 @@
  * - Sadece NextAuth session kullanılır; custom JWT/cookie yoktur.
  * - Hata tipi: AuthzError { status, code, message } — API'ler bunu yakalayıp
  *   {error, request_id} sözleşmesiyle döner.
+ * - Server-only kullanıma yöneliktir.
  */
+
+import "server-only";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 
 export class AuthzError extends Error {
   constructor(message, status = 403, code = "FORBIDDEN") {
@@ -51,6 +57,23 @@ export function ensureActiveRole(session, roles = []) {
 
 export const getUserId = (session) => session?.user?.id ?? null;
 
+/**
+ * Back-compat helper: Eski route’lar `const session = await auth()` bekliyor.
+ * NextAuth getServerSession(authOptions) sarmalayıcısıdır.
+ */
+export async function auth() {
+  return getServerSession(authOptions);
+}
+
+/**
+ * Tek çağrıda session + status:active + RBAC doğrulamak için convenience helper.
+ * Örn: const s = await ensureActiveRoleSession(["affiliate","admin"]);
+ */
+export async function ensureActiveRoleSession(roles = []) {
+  const session = await getServerSession(authOptions);
+  return ensureActiveRole(session, roles);
+}
+
 export default Object.freeze({
   AuthzError,
   requireSession,
@@ -59,4 +82,6 @@ export default Object.freeze({
   requireSelfOrRole,
   ensureActiveRole,
   getUserId,
+  auth, // back-compat
+  ensureActiveRoleSession,
 });

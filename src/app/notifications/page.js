@@ -1,11 +1,10 @@
-// app/notifications/page.js
-'use client';
+// src/app/notifications/page.js
+"use client";
 
-import { useState } from "react";
-import Layout from '@/components/Layout';
-import { useNotifications } from '@/hooks/useNotifications';
-// Doğru kullanım: hook döndürdüğü objeden t çekilir
-import useTranslation from '@/hooks/useTranslation';
+import { useState, useMemo } from "react";
+import Layout from "@/components/Layout";
+import { useNotifications } from "@/hooks/useNotifications";
+import useTranslation from "@/hooks/useTranslation";
 import { Bell, CheckCircle, Trash2 } from "lucide-react";
 
 const NOTIFS_PER_PAGE = 8;
@@ -32,28 +31,35 @@ function NotificationTypeDot({ type }) {
 }
 
 export default function NotificationsPage() {
-  const { notifications, markSelectedAsRead, deletenotifications, unreadCount } = useNotifications();
-  const { t } = useTranslation(); // ← düzeltildi
+  const { t } = useTranslation();
+  const { notifications, markSelectedAsRead, deleteNotifications, unreadCount } = useNotifications(true);
+
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
 
-  const totalPages = Math.max(1, Math.ceil((notifications?.length || 0) / NOTIFS_PER_PAGE));
-  const pageNotifs = Array.isArray(notifications)
-    ? notifications.slice((page - 1) * NOTIFS_PER_PAGE, page * NOTIFS_PER_PAGE)
-    : [];
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((notifications?.length || 0) / NOTIFS_PER_PAGE)),
+    [notifications]
+  );
+  const pageNotifs = useMemo(
+    () =>
+      Array.isArray(notifications)
+        ? notifications.slice((page - 1) * NOTIFS_PER_PAGE, page * NOTIFS_PER_PAGE)
+        : [],
+    [notifications, page]
+  );
 
   const toggleSelect = (id) =>
     setSelected((sel) => (sel.includes(id) ? sel.filter((i) => i !== id) : [...sel, id]));
 
   const allSelected = pageNotifs.length > 0 && pageNotifs.every((n) => selected.includes(n.id));
   const handleSelectAll = () => {
-    if (allSelected)
+    if (!pageNotifs.length) return;
+    if (allSelected) {
       setSelected((sel) => sel.filter((id) => !pageNotifs.map((n) => n.id).includes(id)));
-    else
-      setSelected((sel) => [
-        ...sel,
-        ...pageNotifs.map((n) => n.id).filter((id) => !sel.includes(id)),
-      ]);
+    } else {
+      setSelected((sel) => [...sel, ...pageNotifs.map((n) => n.id).filter((id) => !sel.includes(id))]);
+    }
   };
 
   const handleMarkAsRead = async () => {
@@ -64,7 +70,7 @@ export default function NotificationsPage() {
 
   const handleDeleteSelected = async () => {
     if (!selected.length) return;
-    await deletenotifications(selected); // hook ile uyumluysa kalsın
+    await deleteNotifications(selected);
     setSelected([]);
   };
 
@@ -151,7 +157,7 @@ export default function NotificationsPage() {
                 <span className="mx-1">{renderReadIcon(n.read)}</span>
                 <button
                   className="ml-2 p-1.5 rounded hover:bg-[#ff555520] transition"
-                  onClick={() => deletenotifications([n.id])}
+                  onClick={() => deleteNotifications([n.id])}
                   aria-label={t("delete")}
                 >
                   <Trash2 size={19} className="text-[#ff5555]" />

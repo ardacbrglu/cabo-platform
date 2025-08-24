@@ -1,11 +1,10 @@
-'use client';
+"use client";
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLocale } from "@/context/LocaleContext";
+import apiFetch from "@/lib/apiFetch";
 
-// Bu sayfada dinamik import yapan i18n hook'unu (useTranslation) KULLANMIYORUZ.
-// Minimal yerleşik sözlük (EN/TR)
 const dict = {
   en: {
     loading: "Verifying your account...",
@@ -26,20 +25,17 @@ const dict = {
 };
 
 export default function ActivateContent() {
-  const [status, setStatus] = useState("loading"); // loading | success | error
+  const [status, setStatus] = useState("loading");
   const [errorMsg, setErrorMsg] = useState("");
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
   const urlLang = params.get("lang");
-
   const { locale, setLocale } = useLocale();
 
-  // Aktif dil: URL'deki lang varsa onu kullan; yoksa mevcut LocaleContext
   const lang = (urlLang || (locale === "tr" ? "tr" : "en")).toLowerCase();
   const t = useMemo(() => (k) => (dict[lang]?.[k] ?? dict.en[k] ?? k), [lang]);
 
-  // LocaleContext'i URL paramına eşitle (varsa)
   useEffect(() => {
     if (urlLang) setLocale(urlLang);
   }, [urlLang, setLocale]);
@@ -59,12 +55,14 @@ export default function ActivateContent() {
       return;
     }
 
-    // Aktivasyon: API çağrısı
-    fetch(`/api/activate?token=${encodeURIComponent(token)}`, {
-      headers: { "accept-language": lang || "en" },
-      cache: "no-store",
-    })
-      .then(async (res) => {
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/activate?token=${encodeURIComponent(token)}`, {
+          method: "GET",
+          headers: { "accept-language": lang || "en" },
+          cache: "no-store",
+          noAuthRedirect: true, // 401/403 olursa yönlendirme yapmasın (zaten public endpoint)
+        });
         const data = await res.json().catch(() => ({}));
         if (res.ok && (data.success || data.alreadyActive)) {
           setStatus("success");
@@ -78,19 +76,15 @@ export default function ActivateContent() {
           setErrorMsg(msg);
           setTimeout(() => goActivated({ error: true }), 2000);
         }
-      })
-      .catch(() => {
+      } catch {
         setStatus("error");
         setErrorMsg(t("fail"));
         setTimeout(() => goActivated({ error: true }), 2000);
-      });
+      }
+    })();
   }, [token, router, lang, t]);
 
-  if (status === "loading") {
-    return <div className="text-white text-center py-12">{t("loading")}</div>;
-  }
-  if (status === "success") {
-    return <div className="text-green-400 text-center py-12">{t("ok")}</div>;
-  }
+  if (status === "loading") return <div className="text-white text-center py-12">{t("loading")}</div>;
+  if (status === "success") return <div className="text-green-400 text-center py-12">{t("ok")}</div>;
   return <div className="text-red-400 text-center py-12">{errorMsg}</div>;
 }

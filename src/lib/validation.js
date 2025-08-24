@@ -1,4 +1,4 @@
-// /lib/validation.js
+// src/lib/validation.js
 // Merkezi input doğrulama & sanitize yardımcıları (prod-ready)
 // Bu dosya yalnızca server tarafında kullanılmalıdır.
 import "server-only";
@@ -6,38 +6,39 @@ import { z } from "zod";
 import sanitizeHtmlLib from "sanitize-html";
 
 /**
- * HTML temizleyip düz metin bırakır (XSS'e karşı güvenli).
- * - Tüm tag ve attribute'lar atılır, metin korunur.
+ * HTML'i düz metne indirger + görünmez karakterleri temizler + NFKC normalize eder.
+ * XSS ve homoglyph/zero-width kaçaklarına karşı daha güvenli.
  */
+export function sanitizeText(input) {
+  const raw = String(input ?? "");
+  const stripped = sanitizeHtmlLib(raw, { allowedTags: [], allowedAttributes: {} });
+  // Zero-width ve BOM karakterleri temizle
+  const noInvisible = stripped.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  return noInvisible.normalize("NFKC").trim();
+}
+
+/** Geriye uyum için alias */
 export function sanitizeHtml(input) {
-  return sanitizeHtmlLib(String(input ?? ""), {
-    allowedTags: [],
-    allowedAttributes: {},
-    // disallowedTagsMode: 'discard' default
-  });
+  return sanitizeText(input);
 }
 
 /**
  * TR IBAN doğrulaması (format + MOD97)
  * - TR + 24 rakam (toplam 26)
  * - IBAN checksum: mod97 === 1
- * - Büyük sayıya parse etmeden dijit-dijit mod alır (overflow yok)
  */
 export function isIbanTR(ibanRaw) {
   if (!ibanRaw || typeof ibanRaw !== "string") return false;
   const iban = ibanRaw.replace(/\s+/g, "").toUpperCase();
   if (!/^TR\d{24}$/.test(iban)) return false;
 
-  // 1) İlk 4 karakteri sona al
   const rearranged = iban.slice(4) + iban.slice(0, 4);
-  // 2) Harfleri sayıya çevir (A=10 ... Z=35). TR IBAN'da ek harf yok ama genel IBAN akışı:
   const expanded = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
 
-  // 3) Dijit-dijit mod 97
   let remainder = 0;
   for (let i = 0; i < expanded.length; i++) {
-    const d = expanded.charCodeAt(i) - 48; // '0' -> 0
-    if (d < 0 || d > 9) return false; // güvence
+    const d = expanded.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return false;
     remainder = (remainder * 10 + d) % 97;
   }
   return remainder === 1;
@@ -70,7 +71,7 @@ export const registerSchema = z.object({
   name: usernameSchema,
   email: emailSchema,
   password: strongPasswordSchema,
-  captcha: z.string().min(10), // token uzunluğu için makul alt sınır
+  captcha: z.string().min(10),
 });
 
 /**
@@ -82,7 +83,7 @@ export const userSettingsSchema = z.object({
   displayName: z
     .string()
     .max(80)
-    .transform((s) => sanitizeHtml(s).trim())
+    .transform((s) => sanitizeText(s))
     .refine((s) => s.length >= 2, "Name too short"),
   languagePreference: z.string().min(2).max(5).optional(), // örn: "tr", "en", "en-US"
   currencyCode: z.string().length(3).optional(), // ISO3: TRY, USD, EUR...
@@ -98,13 +99,13 @@ export const bankInfoSchema = z.object({
     .string()
     .min(2)
     .max(120)
-    .transform((s) => sanitizeHtml(s).trim())
+    .transform((s) => sanitizeText(s))
     .refine((s) => s.length >= 2, "Bank name required"),
   realName: z
     .string()
     .min(4)
     .max(120)
-    .transform((s) => sanitizeHtml(s).trim().replace(/\s+/g, " "))
+    .transform((s) => sanitizeText(s).replace(/\s+/g, " "))
     .refine((s) => s.split(/\s+/).length >= 2, "Full legal name required"),
 });
 

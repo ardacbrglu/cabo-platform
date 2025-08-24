@@ -1,68 +1,93 @@
 "use client";
-/**
- * LocaleContext — dil tercih yönetimi (persist + <html lang>)
- * - Browser diline auto-fallback
- * - Cookie + localStorage senkron (SSR root layout ile uyum)
- */
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { SUPPORTED_LOCALES, DEFAULT_LOCALE } from "@/locales";
 
-const LocaleContext = createContext({ locale: DEFAULT_LOCALE, setLocale: () => {}, ready: false });
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/lib/apiFetch";
+
+const DEFAULT_LOCALE = "en";
 
 function readCookie(name) {
   if (typeof document === "undefined") return null;
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return m ? decodeURIComponent(m[1]) : null;
 }
-function writeCookie(name, value, { days = 365 } = {}) {
+function writeCookie(name, value) {
   if (typeof document === "undefined") return;
-  const maxAge = days * 24 * 60 * 60;
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}`;
+  const maxAge = 60 * 60 * 24 * 365; // 1 yıl
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
 }
+
+const Ctx = createContext({
+  locale: DEFAULT_LOCALE,
+  ready: false,
+  setLocale: () => {},
+  persistLocale: async () => {},
+});
 
 export function LocaleProvider({ children }) {
   const [locale, setLocale] = useState(DEFAULT_LOCALE);
   const [ready, setReady] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
 
+  // İlk değer: cookie → en/tr normalizasyonu
   useEffect(() => {
-    let initial = DEFAULT_LOCALE;
-    if (typeof window !== "undefined") {
-      const cookieVal = readCookie("locale");
-      const saved = localStorage.getItem("locale");
-      // Öncelik: cookie (SSR ile uyum) -> localStorage -> browser
-      if (cookieVal && SUPPORTED_LOCALES.includes(cookieVal)) {
-        initial = cookieVal;
-      } else if (saved && SUPPORTED_LOCALES.includes(saved)) {
-        initial = saved;
-      } else {
-        const browserLang = (navigator.language || "").split("-")[0];
-        if (SUPPORTED_LOCALES.includes(browserLang)) initial = browserLang;
-      }
-    }
-    setLocale(initial);
-    setReady(true);
+    try {
+      const c = (readCookie("locale") || DEFAULT_LOCALE).toLowerCase();
+      setLocale(c.startsWith("tr") ? "tr" : "en");
+    } catch {}
   }, []);
 
-  // <html lang="..">
+  // Giriş yapılmışsa DB tercihinden override et
   useEffect(() => {
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("lang", locale || DEFAULT_LOCALE);
-    }
-  }, [locale]);
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/api/me", { method: "GET" });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (aborted) return;
+        setLoggedIn(true);
+        const dbLang = String(data?.languagePreference || data?.language || "")
+          .toLowerCase();
+        if (dbLang === "en" || dbLang === "tr") {
+          setLocale(dbLang);
+          writeCookie("locale", dbLang);
+        }
+      } catch {
+        // sessiz
+      } finally {
+        if (!aborted) setReady(true);
+      }
+    })();
+    return () => { aborted = true; };
+  }, []);
 
-  function handleSetLocale(next) {
-    const clean = SUPPORTED_LOCALES.includes(next) ? next : DEFAULT_LOCALE;
-    setLocale(clean);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("locale", clean);
-      writeCookie("locale", clean);
+  // UI’dan değiştirildiğinde: state + cookie + (login’se) DB
+  const persistLocale = async (lng) => {
+    const norm = String(lng || "").toLowerCase();
+    const v = norm.startsWith("tr") ? "tr" : "en";
+    setLocale(v);
+    writeCookie("locale", v);
+    if (loggedIn) {
+      try {
+        await apiFetch("/api/settings/update", {
+          method: "PATCH",
+          body: { languagePreference: v },
+        });
+      } catch {
+        // DB yazılamasa da UI dili kalır; bir sonraki girişte tekrar dener.
+      }
     }
-  }
+  };
 
-  const value = useMemo(() => ({ locale, setLocale: handleSetLocale, ready }), [locale, ready]);
-  return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
+  const value = useMemo(
+    () => ({ locale, ready, setLocale, persistLocale }),
+    [locale, ready]
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useLocale() {
-  return useContext(LocaleContext);
+  return useContext(Ctx);
 }

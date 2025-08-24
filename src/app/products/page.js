@@ -1,15 +1,31 @@
 "use client";
 
+/**
+ * File: src/app/products/page.js
+ * Purpose: Product Marketplace (affiliate)
+ * Security Notes (frontend):
+ * - Tüm istekler tek apiFetch wrapper’ı ile gider (credentials:'include', X-Requested-With, X-Request-Id).
+ * - Mutasyonlarda CSRF header’ı apiFetch tarafından otomatik eklenir (NextAuth /api/auth/csrf).
+ * - Origin/Host/Referer kontrolü backend’de; burada gereksiz header set edilmez.
+ * - UI/stil, mevcut tasarım birebir korunur.
+ */
+
 import { useEffect, useState, useLayoutEffect, useRef } from "react";
 import Layout from "@/components/Layout";
 import { ShoppingCart, BadgePercent, Link2, Ban, Search } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import { apiFetch } from "@/lib/apiFetch";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
-function handleImgError(e) { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }
-function getCurrencySymbol() { return "₺"; }
+
+function handleImgError(e) {
+  e.currentTarget.onerror = null;
+  e.currentTarget.src = PLACEHOLDER;
+}
+function getCurrencySymbol() {
+  return "₺";
+}
 function calcEarnings(product) {
   const price = Number(product.price) || 20;
   const pct = Number(product.commissionRate) || 0;
@@ -24,7 +40,9 @@ function getExpiresBadge(product, userLinks, t) {
   return (
     <span
       className={`absolute right-4 top-4 px-3 py-1 rounded-full text-xs font-mono border transition ${
-        daysLeft > 0 ? "bg-[#244d24]/80 text-[#d1ffd0] border-[#2c7c2c]" : "bg-[#391818]/80 text-[#ffbbbb] border-[#a03939]"
+        daysLeft > 0
+          ? "bg-[#244d24]/80 text-[#d1ffd0] border-[#2c7c2c]"
+          : "bg-[#391818]/80 text-[#ffbbbb] border-[#a03939]"
       }`}
     >
       {daysLeft > 0 ? `${t("productExpiresIn")} ${daysLeft}d` : t("productExpired")}
@@ -34,7 +52,6 @@ function getExpiresBadge(product, userLinks, t) {
 
 export default function ProductsPage() {
   const { t } = useTranslation();
-  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const [products, setProducts] = useState([]);
   const [userLinks, setUserLinks] = useState([]);
@@ -73,18 +90,26 @@ export default function ProductsPage() {
 
     async function loadData() {
       try {
-        const res = await fetch("/api/products", {
+        const res = await apiFetch("/api/products", {
           method: "GET",
           headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
           cache: "no-store",
         });
         const data = await res.json();
         if (!alive) return;
-        setProducts(data.products || []);
-        setUserLinks(data.userLinks || []);
-        setVisibleLinkIds(
-          new Set((data.visibleLinkIds || (data.userLinks || []).filter(l => l.isVisible).map(l => l.productId)))
+
+        // Backend: { ok, products, userLinks, visibleLinkIds }
+        const p = Array.isArray(data?.products) ? data.products : [];
+        const ul = Array.isArray(data?.userLinks) ? data.userLinks : [];
+        const vset = new Set(
+          Array.isArray(data?.visibleLinkIds)
+            ? data.visibleLinkIds
+            : ul.filter((x) => x.isVisible).map((x) => x.productId)
         );
+
+        setProducts(p);
+        setUserLinks(ul);
+        setVisibleLinkIds(vset);
       } catch {
         if (!alive) return;
         setCardMessages({ global: t("productError") });
@@ -101,19 +126,24 @@ export default function ProductsPage() {
     loadData();
 
     // /api/me → context + localStorage senkronu (navbar stabil)
-    fetch("/api/me").then(r => (r.ok ? r.json() : null)).then((data) => {
-      if (!alive) return;
-      if (data && data.userId) {
-        setUser((u) => ({ ...(u || {}), ...data, role: "affiliate" }));
-        if (typeof window !== "undefined") {
-          if (data.username) localStorage.setItem("cabo_username", data.username);
-          if (data.email) localStorage.setItem("cabo_email", data.email);
-          if (data.userId) localStorage.setItem("cabo_userId", String(data.userId));
+    apiFetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!alive) return;
+        if (data && data.userId) {
+          setUser((u) => ({ ...(u || {}), ...data, role: "affiliate" }));
+          if (typeof window !== "undefined") {
+            if (data.username) localStorage.setItem("cabo_username", data.username);
+            if (data.email) localStorage.setItem("cabo_email", data.email);
+            if (data.userId) localStorage.setItem("cabo_userId", String(data.userId));
+          }
         }
-      }
-    });
+      })
+      .catch(() => {});
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [setUser, t]);
 
   const userHasVisibleLink = (pid) => visibleLinkIds.has(pid);
@@ -123,15 +153,10 @@ export default function ProductsPage() {
     setCardLoading((s) => ({ ...s, [productId]: true }));
     setCardMessages((s) => ({ ...s, [productId]: "" }));
     try {
-      const res = await fetch("/api/products/promote", {
+      const res = await apiFetch("/api/products/promote", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken || "",
-          accept: "application/json",
-        },
-        body: JSON.stringify({ productId }),
+        // CSRF header'ı apiFetch tarafından otomatik eklenecek
+        body: { productId },
       });
 
       const data = await res.json().catch(() => ({}));
@@ -139,8 +164,12 @@ export default function ProductsPage() {
         setCardMessages((s) => ({ ...s, [productId]: t("productSuccess") }));
         setUserLinks((prev) => {
           const ex = prev.find((l) => l.productId === productId);
-          if (ex) return prev.map((l) => (l.productId === productId ? { ...l, isVisible: true, expiresAt: data.expiresAt } : l));
-          return [...prev, { productId, token: data.token, isVisible: true, expiresAt: data.expiresAt }];
+          if (ex) {
+            return prev.map((l) =>
+              l.productId === productId ? { ...l, isVisible: true, expiresAt: data.expiresAt || ex.expiresAt } : l
+            );
+          }
+          return [...prev, { productId, token: data.token, isVisible: true, expiresAt: data.expiresAt || null }];
         });
         setVisibleLinkIds((prev) => {
           const copy = new Set(prev);
@@ -178,7 +207,10 @@ export default function ProductsPage() {
         <div className="flex flex-col items-center mt-12 mb-6 px-2 sm:px-0">
           <div className="flex flex-row items-center gap-3">
             <ShoppingCart size={42} className="text-[#d1ffd0] drop-shadow-xl" />
-            <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight drop-shadow-2xl font-sans" style={{ lineHeight: "1.13" }}>
+            <h1
+              className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight drop-shadow-2xl font-sans"
+              style={{ lineHeight: "1.13" }}
+            >
               {t("productMarketplace")}
             </h1>
           </div>
@@ -215,7 +247,11 @@ export default function ProductsPage() {
           </div>
         </div>
 
-        <div className={`w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1 transition-opacity duration-300 ${loading ? "opacity-60" : "opacity-100"}`}>
+        <div
+          className={`w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1 transition-opacity duration-300 ${
+            loading ? "opacity-60" : "opacity-100"
+          }`}
+        >
           {cardMessages.global && (
             <div className="mb-4 text-center font-mono font-bold text-[#81d742] bg-[#202820] border border-[#263826] rounded-lg px-5 py-3 shadow max-w-lg mx-auto text-base">
               {cardMessages.global}
@@ -228,7 +264,6 @@ export default function ProductsPage() {
                   <div key={i} className="animate-pulse rounded-xl bg-[#191c1a] border border-[#232623] h-[360px]" />
                 ))
               : filteredProducts.map((product) => {
-                  const claimed = userHasVisibleLink(product.productId);
                   const status = isProductInactiveOrQuotaFull(product);
 
                   return (
@@ -311,7 +346,7 @@ export default function ProductsPage() {
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-center gap-6 mb-4 w-full text-sm text-gray-300">
+                      <div className="flex flex-row items-center justify-center gap-6 mb-4 w-full text-sm text-gray-300">
                         <span>{t("totalClicks")}: {product.totalClicks}</span>
                         <span>{t("totalSales")}: {product.totalPurchases}</span>
                       </div>
@@ -335,7 +370,7 @@ export default function ProductsPage() {
                         <button
                           className="w-full bg-[#23262a] text-[#d1ffd0] font-black font-mono py-2.5 rounded-2xl mt-3 mb-1 shadow-lg hover:bg-[#81d742] hover:text-[#181818] hover:scale-[1.01] transition text-base tracking-tight border border-[#282c2f]/50"
                           onClick={() => promoteProduct(product.productId)}
-                          disabled={!!cardLoading[product.productId] || !csrfReady}
+                          disabled={!!cardLoading[product.productId]}
                         >
                           {cardLoading[product.productId] ? <span className="animate-pulse">{t("loading")}</span> : t("productGetLink")}
                         </button>

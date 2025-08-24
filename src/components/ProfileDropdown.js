@@ -16,7 +16,7 @@ import { useUser } from "@/context/UserContext";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { User2, LogOut, Bell, Settings, Headset } from "lucide-react";
-import { useTranslation } from "@/hooks/useTranslation";
+import useTranslation from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
 import { useNotifications } from "@/hooks/useNotifications";
 
@@ -50,7 +50,6 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
     if (typeof window !== "undefined") {
       window.location.assign("/api/logout");
     } else {
-      // SSR durumunda bir fallback; pratikte client'ta çalışır
       router.push("/api/logout");
     }
   }

@@ -1,10 +1,11 @@
-// src/lib/authOptions.js
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { sendWelcomeAffiliateNotification } from "@/lib/notify";
 
+/* --------------------------- helpers --------------------------- */
 function shapeUser(u) {
   if (!u) return null;
   return {
@@ -16,6 +17,21 @@ function shapeUser(u) {
     image: u.image || null,
   };
 }
+
+function getUserLocale(u) {
+  const raw =
+    u?.languagePreference ||
+    u?.language ||
+    u?.locale ||
+    u?.preferredLocale ||
+    "";
+  const s = String(raw || "").toLowerCase();
+  if (s.startsWith("en")) return "en";
+  if (s.startsWith("tr")) return "tr";
+  return "tr";
+}
+
+/* --------------------------------------------------------------- */
 
 export const authOptions = {
   trustHost: true,
@@ -46,7 +62,7 @@ export const authOptions = {
           const isGoogleOnly = !user.passwordHash && (user.accounts || []).some(a => a.provider === "google");
           if (isGoogleOnly) return null;
 
-          // ✅ Hem affiliate hem merchant login olabilir
+          // Affiliate/Merchant dışı veya aktif olmayan hesap giremez
           if (!["affiliate", "merchant"].includes(user.role)) return null;
           if (user.status !== "active") return null;
 
@@ -74,6 +90,7 @@ export const authOptions = {
   callbacks: {
     async signIn({ user, account, req }) {
       if (account?.provider !== "google") return true;
+
       const emailLower = (user?.email || "").toLowerCase();
       if (!emailLower) return false;
 
@@ -110,6 +127,22 @@ export const authOptions = {
         token.status = user.status;
         token.name = user.name || "";
         token.email = user.email || token.email;
+        return token;
+      }
+
+      if ((!token.role || !token.status) && token?.email) {
+        try {
+          const u = await prisma.user.findUnique({
+            where: { email: token.email.toLowerCase() },
+            select: { id: true, role: true, status: true, name: true },
+          });
+          if (u) {
+            token.id = u.id;
+            token.role = u.role || token.role;
+            token.status = u.status || token.status;
+            token.name = u.name || token.name;
+          }
+        } catch {}
       }
       return token;
     },
@@ -136,10 +169,20 @@ export const authOptions = {
   },
 
   events: {
+    /**
+     * OAuth (Google) ile İLK kez user oluşturulduğunda tetiklenir.
+     * - Hesabı active/affiliate yap
+     * - Tek seferlik welcome bildirimi gönder (notify.js)
+     * Manuel kayıt + e-posta aktivasyonda bu event çalışmaz; o akışta bildirim
+     * /api/activate içinde tetikleniyor.
+     */
     async createUser({ user }) {
       try {
+        const idNum = Number(user.id);
+        const whereById = { id: Number.isFinite(idNum) ? idNum : user.id };
+
         await prisma.user.update({
-          where: { id: user.id },
+          where: whereById,
           data: {
             role: "affiliate",
             status: "active",
@@ -151,7 +194,21 @@ export const authOptions = {
             lastActivationRequestAt: null,
           },
         });
-      } catch {}
+
+        const fresh = await prisma.user.findUnique({
+          where: whereById,
+          select: { id: true, name: true, languagePreference: true, language: true, locale: true, preferredLocale: true },
+        });
+
+        const locale = getUserLocale(fresh);
+        await sendWelcomeAffiliateNotification({
+          userId: fresh.id,
+          name: fresh.name,
+          locale,
+        });
+      } catch (e) {
+        console.error("events.createUser welcome notif error:", e);
+      }
     },
   },
 };

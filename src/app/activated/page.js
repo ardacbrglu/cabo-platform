@@ -1,9 +1,10 @@
-// app/activated/page.js
+// app/activated/page.js ... hesabınız etkinleştirildi
 import { Suspense } from "react";
 import PublicLayout from "@/components/PublicLayout";
 import ActivatedContent from "./Content";
 
 export const dynamic = "force-dynamic";
+ 
 
 export default function Page() {
   return (

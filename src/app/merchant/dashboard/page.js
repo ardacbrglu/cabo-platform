@@ -1,23 +1,20 @@
 "use client";
 
 /**
- * File: src/app/merchant/dashboard/page.jsx
- * Purpose: Merchant Dashboard — add/edit/deactivate products with secure mutations
- *
- * Security Docblock (Cabo PROD Standard):
- * - AuthZ: Server tarafı kapılar (middleware + API requireRole('merchant')). Frontend sadece soft-guard.
- * - CSRF: Mutasyonlarda NextAuth CSRF otomatik (apiFetch → /api/auth/csrf + X-CSRF-Token).
- * - Transport: Tüm istekler merkezi apiFetch ile (credentials:include, X-Requested-With, X-Request-Id).
- * - Ratelimit: GET 60/dk; POST/PATCH 10/dk (backend). Frontend 429’larda **mesaj göstermez**, sessizce tek ek retry yapar.
- * - Security headers & logging: backend’de merkezi; burada ek JS yok. Metinler sanitize edilir; img fallback mevcut.
+ * Merchant Dashboard — add/edit/deactivate products with secure mutations
+ * Security Docblock (Cabo PROD):
+ * - Soft-guard sadece UX: gerçek yetki API tarafında (requireMerchant).
+ * - GET 60/dk; POST/PATCH 10/dk (backend). 429'da tek backoff retry.
+ * - Mutasyonlarda CSRF header'ı apiFetch tarafından otomatik eklenir.
+ * - Origin/Host/Referer ve X-Requested-With kontrolü backend’de var.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban } from "lucide-react";
-import MerchantLayout from "@/components/merchant/MerchantLayout";
 import useTranslation from "@/hooks/useTranslation";
+import { PlusCircle, CheckCircle, Eye, EyeOff, Copy, Ban, XCircle } from "lucide-react";
+import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { apiFetch } from "@/lib/apiFetch";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
@@ -31,13 +28,19 @@ function getQuotaStatus(product) {
   if (product.total_purchases >= product.max_sales_limit) return "quota";
   return null;
 }
+function isHttpUrl(v) {
+  try { const u = new URL(v); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; }
+}
 
 export default function MerchantDashboardPage() {
   const router = useRouter();
-  const { t } = useTranslation();
   const { user, ready } = useUser();
 
-  // Frontend soft-guard (UX): Yanlış rol → unauthorized
+  // i18n (merkezi locales + DB preference)
+  const t = useTranslation();
+  const locale = t.locale || "en";
+
+  // UX soft-guard (gerçek RBAC API’da)
   useEffect(() => {
     if (!ready) return;
     if (user?.role && user.role !== "merchant") router.replace("/unauthorized");
@@ -54,7 +57,8 @@ export default function MerchantDashboardPage() {
     merchant_url: "",
     max_sales_limit: "",
   });
-  const [message, setMessage] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [errors, setErrors] = useState({});
   const [minCommission, setMinCommission] = useState(5);
   const [showCode, setShowCode] = useState({});
   const [copyMsg, setCopyMsg] = useState({});
@@ -62,146 +66,193 @@ export default function MerchantDashboardPage() {
   const [editValues, setEditValues] = useState({ commissionRate: "", max_sales_limit: "" });
   const [loading, setLoading] = useState(false);
 
-  // Çift çağrı ve yarışları engellemek için
+  // notice: { type: "success" | "error", text: string }
+  const [notice, setNotice] = useState({ type: null, text: "" });
+  const closeNoticeSoon = () => setTimeout(() => setNotice({ type: null, text: "" }), 3500);
+
   const inflight = useRef(false);
   const abortRef = useRef(null);
 
-  // PRODUCTS FETCH (GET)
+  // ---- Validators ----
+  const validateCreate = useMemo(() => (data) => {
+    const e = {};
+    if (!data.name.trim()) e.name = true;
+    if (!isHttpUrl(data.merchant_url)) e.merchant_url = true;
+    if (!isHttpUrl(data.image_url)) e.image_url = true;
+
+    const price = Number(data.price);
+    if (!Number.isFinite(price) || price <= 0) e.price = true;
+
+    const cr = Number(data.commissionRate);
+    if (!Number.isFinite(cr) || cr < minCommission || cr > 99.9) e.commissionRate = true;
+
+    // REQUIRED & >= 1 (boş string Number("")==0 hilesini engelle)
+    const rawMax = String(data.max_sales_limit ?? "").trim();
+    const maxL = Math.floor(Number(rawMax));
+    if (!rawMax || !Number.isInteger(maxL) || maxL < 1) e.max_sales_limit = true;
+
+    return e;
+  }, [minCommission]);
+
+  const validateEdit = (vals, sold) => {
+    const e = {};
+    if (vals.commissionRate !== "" && (!Number.isFinite(Number(vals.commissionRate)) ||
+        Number(vals.commissionRate) < minCommission || Number(vals.commissionRate) > 99.9)) {
+      e.commissionRate = true;
+    }
+    if (vals.max_sales_limit !== "") {
+      const v = Math.floor(Number(vals.max_sales_limit));
+      if (!Number.isInteger(v) || v < 1 || v < Number(sold)) e.max_sales_limit = true;
+    }
+    return e;
+  };
+
+  // ---- PRODUCTS FETCH (GET) ----
   const fetchProducts = async () => {
     if (inflight.current) return;
     inflight.current = true;
 
-    // Önce önceki isteği iptal et
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      let res = await apiFetch("/api/merchant_dashboard", { method: "GET", signal: controller.signal });
+      let res = await apiFetch("/api/merchant_dashboard", {
+        method: "GET",
+        signal: controller.signal,
+        headers: { "accept-language": locale },
+      });
 
-      // apiFetch zaten 1 kez retry etti; yine 429 ise arka planda bekleyip 1 kez daha dene
+      // 429: tek backoff sonra tekrar dene
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
-        res = await apiFetch("/api/merchant_dashboard", { method: "GET", signal: controller.signal });
+        res = await apiFetch("/api/merchant_dashboard", {
+          method: "GET",
+          signal: controller.signal,
+          headers: { "accept-language": locale },
+        });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return;
-      }
-      if (res.status === 403) {
-        router.replace("/unauthorized");
-        return;
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return; }
+      if (res.status === 403) { router.replace("/unauthorized"); return; }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setProducts(data.products || []);
         setMinCommission(typeof data.minCommission === "number" ? data.minCommission : 5);
-      } else if (!res.ok) {
-        // Rate-limit vb. dahil tüm hatalarda kullanıcıya debug mesajı göstermeyelim
+      } else {
         setProducts([]);
+        setNotice({ type: "error", text: t("serverError") });
+        closeNoticeSoon();
       }
-    } catch {
-      setProducts([]);
-      setMessage("❌ " + t("serverError"));
-      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      // AbortError ise uyarı göstermeyelim (ilk render/route değişimi vs.)
+      if (err?.name !== "AbortError") {
+        setProducts([]);
+        setNotice({ type: "error", text: t("serverError") });
+        closeNoticeSoon();
+      }
     } finally {
       inflight.current = false;
     }
   };
 
   useEffect(() => {
-    let alive = true;
     fetchProducts();
-    return () => {
-      alive = false;
-      if (abortRef.current) abortRef.current.abort();
-    };
+    return () => abortRef.current?.abort?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [locale]); // dil değişince metin + veriyi tazele
 
-  // FORM HANDLERS — POST
+  // ---- FORM SUBMIT (POST) ----
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitted(true);
+
+    const errs = validateCreate(form);
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+
     setLoading(true);
-    setMessage("");
+    setNotice({ type: null, text: "" });
     try {
       let res = await apiFetch("/api/merchant_dashboard", {
         method: "POST",
-        body: form, // apiFetch JSON.stringify + CSRF header'ını kendisi ekler
+        headers: { "accept-language": locale },
+        body: form, // apiFetch → JSON + CSRF ekler
       });
 
-      // apiFetch bir kez retry etti; halen 429 ise sessizce tek ek deneme
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
-        res = await apiFetch("/api/merchant_dashboard", { method: "POST", body: form });
+        res = await apiFetch("/api/merchant_dashboard", {
+          method: "POST",
+          headers: { "accept-language": locale },
+          body: form,
+        });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return;
-      }
-      if (res.status === 403) {
-        setMessage("❌ " + t("forbidden"));
-        return;
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return; }
+      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return; }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setFormVisible(false);
+        setSubmitted(false);
+        setErrors({});
         setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
         await fetchProducts();
-        setMessage(t("productReviewMsg"));
-        setTimeout(() => setMessage(""), 4000);
+        setNotice({ type: "success", text: t("productReviewMsg") });
+        closeNoticeSoon();
       } else {
-        setMessage(`❌ ${data?.error || t("failedAddProduct")}`);
+        setNotice({ type: "error", text: t("failedAddProduct") });
+        closeNoticeSoon();
       }
     } catch {
-      setMessage("❌ " + t("serverError"));
+      setNotice({ type: "error", text: t("serverError") });
+      closeNoticeSoon();
     } finally {
       setLoading(false);
     }
   };
 
-  // PATCH (activate/deactivate or edits)
+  // ---- PATCH (activate/deactivate or edits) ----
   const mutate = async (payload) => {
     try {
       let res = await apiFetch("/api/merchant_dashboard", {
         method: "PATCH",
-        body: payload, // apiFetch JSON + CSRF
+        headers: { "accept-language": locale },
+        body: payload,
       });
 
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
-        res = await apiFetch("/api/merchant_dashboard", { method: "PATCH", body: payload });
+        res = await apiFetch("/api/merchant_dashboard", {
+          method: "PATCH",
+          headers: { "accept-language": locale },
+          body: payload,
+        });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return { ok: false };
-      }
-      if (res.status === 403) {
-        setMessage("❌ " + t("forbidden"));
-        return { ok: false };
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return { ok: false }; }
+      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return { ok: false }; }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessage(`❌ ${data?.error || t("failedProductUpdate")}`);
+        setNotice({ type: "error", text: t("serverError") });
+        closeNoticeSoon();
         return { ok: false };
       }
       return { ok: true, data };
     } catch {
-      setMessage("❌ " + t("serverError"));
+      setNotice({ type: "error", text: t("serverError") });
+      closeNoticeSoon();
       return { ok: false };
     }
   };
 
-  const handleDeactivate = async (productId, action) => {
+  const handleToggleActive = async (productId, action) => {
     setLoading(true);
     const res = await mutate({ productId, action });
     if (res.ok) await fetchProducts();
@@ -216,7 +267,8 @@ export default function MerchantDashboardPage() {
       setCopyMsg((prev) => ({ ...prev, [productId]: t("copied") }));
       setTimeout(() => setCopyMsg((prev) => ({ ...prev, [productId]: "" })), 1200);
     } catch {
-      setMessage(t("failedCopy"));
+      setNotice({ type: "error", text: t("failedCopy") });
+      closeNoticeSoon();
     }
   };
 
@@ -229,20 +281,14 @@ export default function MerchantDashboardPage() {
   };
   const handleEditChange = (field, value) => setEditValues((prev) => ({ ...prev, [field]: value }));
 
-  const saveEdits = async () => {
-    if (Number(editValues.commissionRate) < minCommission) {
-      alert(t("minCommissionWarn").replace("{minCommission}", String(minCommission)));
-      return;
-    }
-    if (!Number.isInteger(Number(editValues.max_sales_limit)) || Number(editValues.max_sales_limit) < 0) {
-      alert(t("maxSalesLimitWarn"));
-      return;
-    }
+  const saveEdits = async (product) => {
+    const errs = validateEdit(editValues, product.total_purchases);
+    if (Object.keys(errs).length) { setNotice({ type: "error", text: t("serverError") }); closeNoticeSoon(); return; }
     setLoading(true);
     const res = await mutate({
       productId: editingProductId,
-      commissionRate: Number(editValues.commissionRate),
-      max_sales_limit: Number(editValues.max_sales_limit),
+      commissionRate: editValues.commissionRate === "" ? undefined : Number(editValues.commissionRate),
+      max_sales_limit: editValues.max_sales_limit === "" ? undefined : Number(editValues.max_sales_limit),
     });
     if (res.ok) {
       setEditingProductId(null);
@@ -256,8 +302,10 @@ export default function MerchantDashboardPage() {
     setEditValues({ commissionRate: "", max_sales_limit: "" });
   };
 
-  const inputClass =
-    "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#81d742] transition placeholder:text-[#3b4a36]";
+  const inputBase =
+    "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 transition placeholder:text-[#3b4a36]";
+  const ringErr = "focus:ring-red-400 border-red-500";
+  const ringOk = "focus:ring-[#81d742]";
 
   return (
     <MerchantLayout>
@@ -271,70 +319,106 @@ export default function MerchantDashboardPage() {
         </button>
       </section>
 
-      {message && (
-        <div className="mb-6 flex items-center gap-2 text-sm font-semibold text-white bg-[#222624] border border-[#303d33] px-4 py-3 rounded-md shadow">
-          <CheckCircle size={18} className="text-green-400" /> {message}
+      {/* notice bar */}
+      {notice.text ? (
+        <div
+          className={`mb-6 flex items-center gap-2 text-sm font-semibold px-4 py-3 rounded-md shadow border ${
+            notice.type === "error"
+              ? "text-white bg-[#2a1f1f] border-[#3a2a2a]"
+              : "text-white bg-[#222624] border-[#303d33]"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {notice.type === "error" ? <XCircle size={18} className="text-red-400" /> : <CheckCircle size={18} className="text-green-400" />}
+          {notice.text}
         </div>
-      )}
+      ) : null}
 
       {/* --- ADD PRODUCT FORM --- */}
       {formVisible && (
-        <form onSubmit={handleSubmit} className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto">
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto"
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input
               type="text"
-              className={inputClass}
+              className={`${inputBase} ${submitted && errors.name ? ringErr : ringOk}`}
               placeholder={t("productTitle")}
-              required
+              value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              aria-invalid={submitted && !!errors.name}
+              autoComplete="off"
             />
             <input
               type="text"
-              className={inputClass}
+              className={`${inputBase} ${submitted && errors.merchant_url ? ringErr : ringOk}`}
               placeholder={t("productUrl")}
-              required
+              value={form.merchant_url}
               onChange={(e) => setForm({ ...form, merchant_url: e.target.value })}
+              aria-invalid={submitted && !!errors.merchant_url}
+              autoComplete="off"
             />
             <input
               type="text"
-              className={inputClass}
+              className={`${inputBase} ${submitted && errors.image_url ? ringErr : ringOk}`}
               placeholder={t("productImage")}
-              required
+              value={form.image_url}
               onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+              aria-invalid={submitted && !!errors.image_url}
+              autoComplete="off"
             />
             <input
               type="number"
-              className={inputClass}
-              placeholder={t("productPrice")}
-              required
               step="0.01"
+              className={`${inputBase} ${submitted && errors.price ? ringErr : ringOk}`}
+              placeholder={t("productPrice")}
+              value={form.price}
               onChange={(e) => setForm({ ...form, price: e.target.value })}
+              aria-invalid={submitted && !!errors.price}
+              autoComplete="off"
             />
             <input
               type="number"
-              className={inputClass}
-              placeholder={t("commissionRate")}
-              required
               step="0.1"
               min={minCommission}
+              max={99.9}
+              className={`${inputBase} ${submitted && errors.commissionRate ? ringErr : ringOk}`}
+              placeholder={t("commissionRate")}
+              value={form.commissionRate}
               onChange={(e) => setForm({ ...form, commissionRate: e.target.value })}
+              aria-invalid={submitted && !!errors.commissionRate}
+              autoComplete="off"
             />
             <input
               type="number"
-              className={inputClass}
+              min={1}
+              step={1}
+              className={`${inputBase} ${submitted && errors.max_sales_limit ? ringErr : ringOk}`}
               placeholder={t("maxSalesLimit")}
-              required
+              value={form.max_sales_limit}
               onChange={(e) => setForm({ ...form, max_sales_limit: e.target.value })}
+              aria-invalid={submitted && !!errors.max_sales_limit}
+              autoComplete="off"
             />
           </div>
+
           <textarea
-            className={inputClass + " w-full"}
+            className={`${inputBase} w-full ${ringOk}`}
             placeholder={t("productDesc")}
             rows={3}
+            value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
-          ></textarea>
+          />
+
           <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
-          <button type="submit" disabled={loading} className="bg-[#262f24] text-[#d1ffd0] font-semibold py-2 px-6 rounded hover:bg-[#293f21] mt-3 transition">
+          <button
+            type="submit"
+            disabled={loading}
+            className="bg-[#262f24] text-[#d1ffd0] font-semibold py-2 px-6 rounded hover:bg-[#293f21] mt-3 transition disabled:opacity-60"
+          >
             {loading ? t("adding") : t("submitReview")}
           </button>
         </form>
@@ -362,6 +446,7 @@ export default function MerchantDashboardPage() {
                   <Ban size={13} /> {t("quotaReached")}
                 </span>
               )}
+
               {/* Product IMAGE */}
               <img
                 src={p.image_url || PLACEHOLDER}
@@ -370,8 +455,10 @@ export default function MerchantDashboardPage() {
                 className="rounded-xl mb-4 h-44 w-full object-cover border border-[#202720]"
                 style={{ background: "#23262a" }}
               />
+
               <h3 className="text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
               <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
+
               <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
                 <span>
                   <span className="text-gray-500">{t("price")}</span>: <span className="font-bold">${Number(p.price).toFixed(2)}</span>
@@ -381,43 +468,28 @@ export default function MerchantDashboardPage() {
                   <span className="font-bold text-green-300">{Number(p.commissionRate).toFixed(2)}%</span>
                 </span>
               </div>
+
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>
-                  {t("clicks")}: <b>{p.totalClicks}</b>
-                </span>
-                <span>
-                  {t("sales")}: <b>{p.total_purchases}</b>
-                </span>
-                <span>
-                  {t("quotaLeft")}: <b>{remainingQuota(p.max_sales_limit, p.total_purchases)}</b>
-                </span>
+                <span>{t("clicks")}: <b>{p.totalClicks}</b></span>
+                <span>{t("sales")}: <b>{p.total_purchases}</b></span>
+                <span>{t("quotaLeft")}: <b>{remainingQuota(p.max_sales_limit, p.total_purchases)}</b></span>
               </div>
+
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>
-                  {t("affiliates")}: <b>{p.link_count}</b>
-                </span>
+                <span>{t("affiliates")}: <b>{p.link_count}</b></span>
                 <span>Product ID: {p.productId}</span>
               </div>
+
               {/* Product Code */}
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-xs text-gray-400">{t("productCode")}:</span>
                 {showCode[p.productId] ? (
                   <>
                     <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
-                    <button
-                      type="button"
-                      onClick={() => copyProductCode(p.productId, p.productCode)}
-                      className="ml-1 text-[#81d742] hover:text-green-200 transition"
-                      title={t("copyCode")}
-                    >
+                    <button type="button" onClick={() => copyProductCode(p.productId, p.productCode)} className="ml-1 text-[#81d742] hover:text-green-200 transition" title={t("copyCode")}>
                       <Copy size={15} />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleShowCode(p.productId)}
-                      className="text-gray-400 hover:text-gray-200 transition"
-                      title={t("hide")}
-                    >
+                    <button type="button" onClick={() => toggleShowCode(p.productId)} className="text-gray-400 hover:text-gray-200 transition" title={t("hide")}>
                       <EyeOff size={15} />
                     </button>
                     {copyMsg[p.productId] && <span className="ml-2 text-green-400 font-mono text-xs">{copyMsg[p.productId]}</span>}
@@ -433,9 +505,11 @@ export default function MerchantDashboardPage() {
                   </button>
                 )}
               </div>
+
               <div className={`mt-4 text-xs font-semibold ${p.activated_by_admin ? "text-green-500" : "text-yellow-400"}`}>
                 {p.activated_by_admin ? t("approvedByAdmin") : t("waitingApproval")}
               </div>
+
               {/* Edit & Activate/Deactivate */}
               <div className="flex flex-col gap-2 mt-auto pt-4">
                 {editingProductId === p.productId ? (
@@ -452,7 +526,7 @@ export default function MerchantDashboardPage() {
                         max={99}
                         value={editValues.commissionRate}
                         onChange={(e) => handleEditChange("commissionRate", e.target.value)}
-                        className={inputClass + " w-24 text-green-300"}
+                        className={`${inputBase} w-24 ${ringOk} ${editValues.commissionRate !== "" && Number(editValues.commissionRate) < minCommission ? ringErr : ""} text-green-300`}
                         placeholder={t("commissionShort")}
                       />
                       <span className="ml-2 text-xs text-gray-400">(min: {minCommission})</span>
@@ -461,19 +535,17 @@ export default function MerchantDashboardPage() {
                       <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("maxSales")}</label>
                       <input
                         type="number"
-                        min={0}
+                        min={Math.max(1, Number(p.total_purchases))}
                         step={1}
                         value={editValues.max_sales_limit}
                         onChange={(e) => handleEditChange("max_sales_limit", e.target.value)}
-                        className={inputClass + " w-28 text-blue-300"}
+                        className={`${inputBase} w-28 ${ringOk} ${submitted && errors.max_sales_limit ? ringErr : ""} text-blue-300`}
                         placeholder={t("maxSales")}
                       />
-                      <span className="ml-2 text-xs text-gray-400">
-                        ({t("sold")}: {p.total_purchases})
-                      </span>
+                      <span className="ml-2 text-xs text-gray-400">({t("sold")}: {p.total_purchases})</span>
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <button onClick={saveEdits} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">
+                      <button onClick={() => saveEdits(p)} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">
                         {t("save")}
                       </button>
                       <button onClick={cancelEdits} disabled={loading} className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs">
@@ -487,7 +559,7 @@ export default function MerchantDashboardPage() {
                       {t("edit")}
                     </button>
                     <button
-                      onClick={() => handleDeactivate(p.productId, p.isActive ? "deactivate" : "activate")}
+                      onClick={() => handleToggleActive(p.productId, p.isActive ? "deactivate" : "activate")}
                       className={`${p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"} text-white py-2 rounded text-sm flex-1`}
                     >
                       {p.isActive ? t("deactivate") : t("activate")}
@@ -502,3 +574,6 @@ export default function MerchantDashboardPage() {
     </MerchantLayout>
   );
 }
+
+// build çakışmalarını önlemek için burada "dynamic" export YOK.
+export const runtime = "nodejs";

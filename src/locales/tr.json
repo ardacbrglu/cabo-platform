@@ -327,5 +327,80 @@
   "api.performance.invalidStartDate": "Geçersiz startDate",
   "api.performance.invalidEndDate": "Geçersiz endDate",
   "api.performance.invalidProductIds": "Geçersiz productIds",
-  "api.performance.serverError": "Performans verisi alınırken hata oluştu"
+  "api.performance.serverError": "Performans verisi alınırken hata oluştu",
+
+  
+  "nav.manageProducts": "Ürünleri Yönet",
+  "nav.payments": "Ödemeler",
+  "nav.howToIntegrate": "Nasıl Entegre Edilir",
+  "nav.support": "Destek",
+  "nav.settings": "Ayarlar",
+  "nav.logout": "Çıkış",
+
+  "howto.title": "Cabo Affiliate Entegrasyonu",
+  "howto.subtitle": "Ürün sayfalarınızı bağlamak ve tamamlanan satışları webhook ile doğrulamak için aşağıdaki adımları izleyin.",
+  "howto.downloadKit": "Entegrasyon Kitini İndir",
+  "howto.downloadDisabledNote": "Henüz hazır değil — yakında.",
+
+  "howto.section.overview.title": "Genel Bakış",
+  "howto.section.overview.p1": "Entegrasyon iki kısımdır: (1) ürün kodunuzla client tarafında tık/yonlendirme, (2) satışları güvenli şekilde doğrulamak için sunucu tarafında webhook.",
+
+  "howto.section.client.title": "İstemci Tarafı (Ürün Sayfası)",
+  "howto.section.client.step1": "Kod parçacığını ürün sayfanıza ekleyin ve productCode değerini ayarlayın.",
+  "howto.section.client.step2": "Satın al butonunda yönlendirme fonksiyonunu tetikleyin (ürün kodunu ekler).",
+  "howto.section.client.step3": "Gerekirse UTM/oturum bilgisini koruyun — yalnızca gerekli olanları iletin.",
+
+  "howto.section.server.title": "Sunucu Tarafı (Webhook)",
+  "howto.section.server.webhookIntro": "Satış tamamlandığında Cabo, sipariş verisiyle webhook'unuzu çağırır.",
+  "howto.section.server.endpoint": "JSON kabul eden /api/cabo/webhook gibi bir POST uç noktası yayınlayın.",
+  "howto.section.server.verifySig": "Yükü güvenilir saymadan önce X-Cabo-Signature HMAC imzasını gizlinizle doğrulayın.",
+
+  "howto.section.test.title": "Test ve İpuçları",
+  "howto.section.test.p1": "Önce staging ortamında test edin. Yükleri loglayın, imzaları doğrulayın ve webhook gizlinizi periyodik olarak değiştirin.",
+
+  "howto.code.clientSnippetLabel": "İstemci kodu (HTML/JS)",
+  "howto.code.serverSnippetLabel": "Sunucu kodu (Node/Express)",
+  "howto.copy": "Kopyala",
+  "howto.copied": "Kopyalandı!",
+
+
+  
+  "nav.postLogs": "POST Logları",
+
+  "postlogs.title": "Satış Webhook Logları",
+  "postlogs.subtitle": "Mağazanızdan gelen tüm webhook POST isteklerini görün. Satır detaylarını, adet × birim fiyat ve kabul edilen komisyonlarla görmek için Detaylar'a tıklayın.",
+  "postlogs.refresh": "Yenile",
+  "postlogs.sentAt": "Gönderim",
+  "postlogs.receivedAt": "Alım",
+  "postlogs.status": "Durum",
+  "postlogs.orderTotalAccepted": "Sipariş Toplamı (kabul edilen)",
+  "postlogs.totalCommission": "Toplam Komisyon",
+  "postlogs.noLogs": "Log bulunamadı.",
+  "postlogs.failedList": "Loglar yüklenemedi.",
+  "postlogs.failedDetail": "Detay yüklenemedi.",
+  "postlogs.modalTitle": "Webhook İstek Detayı",
+  "postlogs.requestId": "İstek ID",
+  "postlogs.nonce": "Nonce",
+  "postlogs.sent": "Gönderim",
+  "postlogs.received": "Alım",
+  "postlogs.code": "Kod",
+  "postlogs.unit": "Birim",
+  "postlogs.lineTotal": "Satır Toplamı",
+  "postlogs.accepted": "Kabul",
+  "postlogs.noItems": "Kalem yok.",
+  "postlogs.yes": "Evet",
+  "postlogs.no": "Hayır",
+  "postlogs.acceptedTotal": "Kabul Edilen Toplam",
+  "postlogs.acceptedCommission": "Toplam Komisyon",
+
+
+
+  "performance.range_label": "Tarih Aralığı",
+  "performance.range_all_time": "Tümü",
+  "performance.range_7d": "Son 7 gün",
+  "performance.range_30d": "Son 30 gün",
+  "performance.range_90d": "Son 90 gün",
+  "performance.select_product": "Ürün Seç"
 }
+
+

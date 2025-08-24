@@ -1,4 +1,5 @@
-'use client';
+// src/app/settings/page.jsx
+"use client";
 
 import { useState, useEffect, useRef } from "react";
 import Layout from "@/components/Layout";
@@ -6,7 +7,7 @@ import CustomSelect from "@/components/CustomSelect";
 import { useLocale } from "@/context/LocaleContext";
 import useTranslation from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import apiFetch from "@/lib/apiFetch"; // tek wrapper
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -20,28 +21,45 @@ export default function SettingsPage() {
     currencyCode: "TRY",
     current_password: "",
     new_password: "",
-    new_password_repeat: ""
+    new_password_repeat: "",
   });
   const [message, setMessage] = useState("");
   const msgRef = useRef(null);
 
   const { setLocale } = useLocale();
-  const { t } = useTranslation();   // ✅
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
-  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅
+
+  // --- küçük yardımcı: API errorKey -> t(key) map
+  const mapErrorKey = (key) => {
+    switch (key) {
+      case "too_many": return t("tooManyRequests") || "Too many requests";
+      case "unauthorized": return t("notLoggedIn") || "Unauthorized";
+      case "csrf": return t("errorGeneric") || "Invalid CSRF token";
+      case "invalid_payload": return t("errorGeneric") || "Invalid payload";
+      case "unsupported_media": return t("errorGeneric") || "Unsupported Media Type";
+      case "invalid_input": return t("errorGeneric") || "Invalid input";
+      case "server": return t("serverError") || "Server error";
+
+      // password spesifik
+      case "weak": return t("passwordTooShort") || "Password too weak";
+      case "must_different": return t("errorGeneric") || "New password must be different";
+      case "no_password_nowarn": return t("hybridPasswordHint") || "No current password needed";
+      case "current_required": return t("allFieldsRequired") || "Current password required";
+      case "current_wrong": return t("errorGeneric") || "Current password is incorrect";
+
+      default: return t("errorGeneric") || "Error";
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
-    async function fetchAll() {
+    (async () => {
       try {
+        // currencies
         let cur = [{ value: "TRY", label: "₺ Türk Lirası" }];
         try {
-          const res = await fetch("/api/currencies", {
-            method: "GET",
-            headers: { accept: "application/json", "cache-control": "no-cache" },
-            cache: "no-store",
-            credentials: "include",
-          });
+          const res = await apiFetch("/api/currencies", { method: "GET" });
           if (res.ok) {
             const data = await res.json();
             if (Array.isArray(data.currencies) && data.currencies.length > 0) cur = data.currencies;
@@ -50,17 +68,13 @@ export default function SettingsPage() {
         if (!mounted) return;
         setCurrencies(cur);
 
+        // languages
         let langs = [
           { value: "tr", label: "Türkçe" },
           { value: "en", label: "English" },
         ];
         try {
-          const res = await fetch("/api/languages", {
-            method: "GET",
-            headers: { accept: "application/json", "cache-control": "no-cache" },
-            cache: "no-store",
-            credentials: "include",
-          });
+          const res = await apiFetch("/api/languages", { method: "GET" });
           if (res.ok) {
             const data = await res.json();
             if (Array.isArray(data.languages) && data.languages.length > 0) langs = data.languages;
@@ -69,12 +83,8 @@ export default function SettingsPage() {
         if (!mounted) return;
         setLanguages(langs);
 
-        const resp = await fetch("/api/me", {
-          method: "GET",
-          headers: { accept: "application/json", "cache-control": "no-cache" },
-          cache: "no-store",
-          credentials: "include",
-        });
+        // me
+        const resp = await apiFetch("/api/me", { method: "GET" });
         if (!resp.ok) {
           setMessage(t("unauthorized") || "Unauthorized");
           setLoading(false);
@@ -97,8 +107,7 @@ export default function SettingsPage() {
         setMessage(t("errorGeneric") || "An error occurred");
         setLoading(false);
       }
-    }
-    fetchAll();
+    })();
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -118,40 +127,30 @@ export default function SettingsPage() {
 
   async function handleSave(e) {
     if (e) e.preventDefault();
-    setMessage("");
-
-    if (!csrfReady || !csrfToken) {
-      setMessage(t("pleaseWait") || "Please wait…");
-      return;
-    }
     if (submitting) return;
     setSubmitting(true);
+    setMessage("");
 
     try {
-      const profileRes = await fetch("/api/settings/update", {
+      // --- profile update
+      const profileRes = await apiFetch("/api/settings/update", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json",
-          "x-csrf-token": csrfToken,
-        },
-        credentials: "include",
-        cache: "no-store",
-        body: JSON.stringify({
+        body: {
           name: profile.name,
           languagePreference: profile.languagePreference,
           currencyCode: profile.currencyCode,
-        }),
+        },
       });
       const profileData = await profileRes.json().catch(() => ({}));
 
+      // --- password (opsiyonel)
       let passwordMsg = "";
       const wantsPasswordChange =
         profile.new_password || profile.new_password_repeat || profile.current_password;
 
       if (wantsPasswordChange) {
         if (!profile.new_password || !profile.new_password_repeat) {
-          setMessage(t("passwordMissing") || "Please fill both new password fields");
+          setMessage(t("allFieldsRequired") || "All fields are required.");
           setSubmitting(false);
           return;
         }
@@ -160,20 +159,18 @@ export default function SettingsPage() {
           setSubmitting(false);
           return;
         }
+        if ((profile.new_password || "").length < 8) {
+          setMessage(t("passwordTooShort") || "Password must be at least 8 characters.");
+          setSubmitting(false);
+          return;
+        }
 
-        const passwordRes = await fetch("/api/settings/change_password", {
+        const passwordRes = await apiFetch("/api/settings/change_password", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-            "x-csrf-token": csrfToken,
-          },
-          credentials: "include",
-          cache: "no-store",
-          body: JSON.stringify({
+          body: {
             current_password: profile.current_password,
             new_password: profile.new_password,
-          }),
+          },
         });
         const passwordData = await passwordRes.json().catch(() => ({}));
 
@@ -181,20 +178,27 @@ export default function SettingsPage() {
           passwordMsg = t("tooManyRequests") || "Too many attempts";
         } else if (passwordData.firstTimeSet) {
           passwordMsg = t("passwordSetSuccess") || "Password set!";
+        } else if (passwordData.success) {
+          passwordMsg = t("passwordChanged") || "Password changed";
         } else {
-          passwordMsg = passwordData.success
-            ? (t("passwordChanged") || "Password changed")
-            : (passwordData.error || t("errorGeneric") || "Error");
+          // errorKey varsa çevir, yoksa generic
+          passwordMsg = passwordData.errorKey
+            ? mapErrorKey(passwordData.errorKey)
+            : (t("errorGeneric") || "Error");
         }
       }
 
+      // --- sonuç mesajı (profil + şifre)
       if (profileRes.status === 429) {
         setMessage(t("tooManyRequests") || "Too many requests");
       } else if (!profileRes.ok) {
-        setMessage(profileData.error || t("errorGeneric") || "Error");
+        const errMsg = profileData.errorKey
+          ? mapErrorKey(profileData.errorKey)
+          : (t("errorGeneric") || "Error");
+        setMessage(errMsg + (passwordMsg ? " • " + passwordMsg : ""));
       } else {
         setMessage(
-          (profileData.success ? (t("profileUpdated") || "Profile updated") : (profileData.error || t("errorGeneric") || "Error")) +
+          (profileData.success ? (t("profileUpdated") || "Profile updated") : (t("errorGeneric") || "Error")) +
           (passwordMsg ? " • " + passwordMsg : "")
         );
       }
@@ -311,7 +315,7 @@ export default function SettingsPage() {
 
             <div className="text-xs text-gray-400 mt-1 mb-2">
               {t("hybridPasswordHint") ||
-                "If you registered with Google, you can set your password for classic login. Leave current password empty for the first time."}
+                "If you signed up with Google, you can now set a classic password. Leave current password empty if setting for the first time."}
             </div>
           </div>
         </form>
@@ -319,7 +323,7 @@ export default function SettingsPage() {
         <button
           type="submit"
           onClick={handleSave}
-          disabled={!csrfReady || !csrfToken || submitting}
+          disabled={submitting}
           className="w-full max-w-xs py-3 font-bold text-lg bg-[#81d742] text-[#181818] rounded-lg shadow hover:bg-[#a9ff72] transition mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ marginBottom: "8px" }}
         >

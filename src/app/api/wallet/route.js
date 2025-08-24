@@ -1,3 +1,4 @@
+// src/app/api/wallet/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -5,19 +6,18 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
-import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { z } from "zod";
+import { cookies } from "next/headers";
 
 // ✅ merkezi doğrulamalar
 import {
   isIbanTR,
   bankInfoSchema,
   payoutRequestIdSchema,
-  safeParse,
 } from "@/lib/validation";
 
-const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24s
+const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 saat
 
 function secureJson(data, init = {}) {
   const res = NextResponse.json(data, init);
@@ -28,11 +28,34 @@ function secureJson(data, init = {}) {
   return res;
 }
 
-// Basit temizleme
+/* -------------------- CSRF (NextAuth) -------------------- */
+function readCsrfCookieValue() {
+  const store = cookies();
+  const raw =
+    store.get("__Host-next-auth.csrf-token")?.value ||
+    store.get("next-auth.csrf-token")?.value ||
+    "";
+  return String(raw).split("|")[0] || "";
+}
+function validateCsrfOrDeny(req) {
+  const method = req?.method?.toUpperCase?.() || "GET";
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+  const headerToken =
+    req.headers.get("X-CSRF-Token") ||
+    req.headers.get("x-csrf-token") ||
+    "";
+  const cookieToken = readCsrfCookieValue();
+  if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+    return secureJson({ error: "Invalid CSRF token" }, { status: 403 });
+  }
+  return null;
+}
+
+/* -------------------- helpers -------------------- */
 function cleanBankName(s) { return String(s || "").trim().slice(0, 120); }
 function cleanRealName(s) { return String(s || "").trim().replace(/\s+/g, " ").slice(0, 120); }
+const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 
-// min payout: min_payout || min_payout_try
 async function getMinPayout() {
   for (const key of ["min_payout", "min_payout_try"]) {
     const cfg = await prisma.platformConfig.findUnique({ where: { keyName: key } });
@@ -41,8 +64,6 @@ async function getMinPayout() {
   }
   return 100;
 }
-
-// pending → 24h dolanları approved yap (lazy cron)
 async function finalizeExpiredPayouts(userId) {
   const threshold = new Date(Date.now() - CANCELLATION_WINDOW_MS);
   await prisma.payoutRequest.updateMany({
@@ -50,18 +71,14 @@ async function finalizeExpiredPayouts(userId) {
     data: { status: "approved", updatedAt: new Date() },
   });
 }
-
-// 🔧 Dayanıklı oturum okuyucu (id yoksa e-posta ile id bulur)
 async function getAuthedUser(req) {
   const session = await getServerSession(authOptions);
   const role = session?.user?.role || null;
   const email = session?.user?.email?.toLowerCase?.() || null;
 
-  // id sayısal ise direkt kullan
   const raw = session?.user?.id ?? session?.user?.userId ?? null;
   let userId = Number.isFinite(Number(raw)) ? Number(raw) : null;
 
-  // değilse e-posta ile bul
   if (!userId && email) {
     const u = await prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (u?.id) userId = u.id;
@@ -70,18 +87,6 @@ async function getAuthedUser(req) {
   if (!userId) return null;
   return { userId, role, rlKey: makeRateLimitKey(req, { scope: "wallet", userId }) };
 }
-
-/* ======================== Zod şemaları ======================== */
-const PayoutCreateSchema = z.object({ requestPayout: z.literal(true) });
-const PayoutCancelSchema = payoutRequestIdSchema.extend({ cancelRequest: z.literal(true) });
-const PayoutUpdateBankSchema = payoutRequestIdSchema.extend({
-  updateRequestBank: z.literal(true),
-  iban: bankInfoSchema.shape.iban,
-  bankName: bankInfoSchema.shape.bankName,
-  realName: bankInfoSchema.shape.realName,
-});
-const BankInfoPostSchema = bankInfoSchema;
-const PostBodySchema = z.union([PayoutCreateSchema, PayoutCancelSchema, PayoutUpdateBankSchema, BankInfoPostSchema]);
 
 /* ======================== GET ======================== */
 export async function GET(req) {
@@ -192,7 +197,9 @@ export async function GET(req) {
 /* ======================== POST ======================== */
 export async function POST(req) {
   try {
-    await validateCsrfToken(req);
+    // CSRF
+    const csrfErr = validateCsrfOrDeny(req);
+    if (csrfErr) return csrfErr;
 
     const info = await getAuthedUser(req);
     if (!info) return secureJson({ error: "Unauthorized" }, { status: 401 });
@@ -209,33 +216,49 @@ export async function POST(req) {
     }
 
     const raw = await req.json().catch(() => ({}));
-    const parsed = PostBodySchema.safeParse(raw);
-    if (!parsed.success) return secureJson({ error: "Invalid request" }, { status: 400 });
-    const body = parsed.data;
+    if (!isObj(raw)) return secureJson({ error: "Invalid request body" }, { status: 400 });
+
     const minPayout = await getMinPayout();
 
-    // 1) Profil banka kaydet
-    if ("iban" in body && "bankName" in body && "realName" in body && !("updateRequestBank" in body)) {
-      const { iban, bankName, realName } = safeParse(bankInfoSchema, body);
+    /* --------- 1) Profil banka kaydet --------- */
+    if (
+      "iban" in raw && "bankName" in raw && "realName" in raw &&
+      !("updateRequestBank" in raw) &&
+      !("requestPayout" in raw) &&
+      !("cancelRequest" in raw)
+    ) {
+      // Şemayı burada, dal bazında valide et → net hata ver
+      const parsed = bankInfoSchema.safeParse(raw);
+      if (!parsed.success) {
+        // mümkün olduğunca anlamlı mesaj
+        const issues = parsed.error.issues?.map(i => i.path.join(".") + ": " + i.message).join("; ");
+        return secureJson({ error: issues || "Invalid bank info" }, { status: 400 });
+      }
+      const { iban, bankName, realName } = parsed.data;
       await prisma.user.update({ where: { id: userId }, data: { iban, bankName, realUserFullname: realName } });
       return secureJson({ ok: true, message: "Bank info saved" });
     }
 
-    // 2) Payout talebi oluştur
-    if ("requestPayout" in body && body.requestPayout === true) {
-      const idemKey = req.headers.get("idempotency-key") || req.headers.get("x-idempotency-key") || null;
+    /* --------- 2) Payout talebi oluştur --------- */
+    if (raw.requestPayout === true) {
+      const idemKey =
+        req.headers.get("X-Idempotency-Key") ||
+        req.headers.get("x-idempotency-key") ||
+        req.headers.get("idempotency-key") ||
+        null;
+
       if (idemKey) {
         const dup = await prisma.payoutRequest.findFirst({ where: { userId, idempotencyKey: idemKey }, select: { requestId: true } });
         if (dup) return secureJson({ ok: true, message: "Payout request already created", requestId: dup.requestId });
       }
 
-      const user = await prisma.user.findUnique({
+      const u = await prisma.user.findUnique({
         where: { id: userId },
         select: { iban: true, bankName: true, realUserFullname: true, status: true },
       });
-      if (!user || user.status !== "active") return secureJson({ error: "Account is not active." }, { status: 403 });
+      if (!u || u.status !== "active") return secureJson({ error: "Account is not active." }, { status: 403 });
 
-      const iban = user.iban || "", bankName = user.bankName || "", realName = user.realUserFullname || "";
+      const iban = u.iban || "", bankName = u.bankName || "", realName = u.realUserFullname || "";
       if (!isIbanTR(iban)) return secureJson({ error: "Please save a valid IBAN first." }, { status: 400 });
       if (!cleanBankName(bankName)) return secureJson({ error: "Please save your bank name first." }, { status: 400 });
       if (cleanRealName(realName).split(" ").length < 2) return secureJson({ error: "Please save your full real name first." }, { status: 400 });
@@ -317,9 +340,11 @@ export async function POST(req) {
       }
     }
 
-    // 3) Payout iptal
-    if ("cancelRequest" in body && body.cancelRequest === true) {
-      const { requestId } = safeParse(PayoutCancelSchema, body);
+    /* --------- 3) Payout iptal --------- */
+    if (raw.cancelRequest === true) {
+      const parsed = payoutRequestIdSchema.extend({ cancelRequest: z.literal(true) }).safeParse(raw);
+      if (!parsed.success) return secureJson({ error: "Invalid requestId" }, { status: 400 });
+      const { requestId } = parsed.data;
 
       try {
         const result = await prisma.$transaction(async (tx) => {
@@ -367,9 +392,20 @@ export async function POST(req) {
       }
     }
 
-    // 4) Talep banka güncelle
-    if ("updateRequestBank" in body && body.updateRequestBank === true) {
-      const { requestId, iban, bankName, realName } = safeParse(PayoutUpdateBankSchema, body);
+    /* --------- 4) Talep banka güncelle --------- */
+    if (raw.updateRequestBank === true) {
+      const parsed = payoutRequestIdSchema.extend({
+        updateRequestBank: z.literal(true),
+        iban: bankInfoSchema.shape.iban,
+        bankName: bankInfoSchema.shape.bankName,
+        realName: bankInfoSchema.shape.realName,
+      }).safeParse(raw);
+
+      if (!parsed.success) {
+        return secureJson({ error: "Invalid bank info for update" }, { status: 400 });
+      }
+
+      const { requestId, iban, bankName, realName } = parsed.data;
 
       const reqItem = await prisma.payoutRequest.findUnique({
         where: { requestId },
@@ -400,6 +436,7 @@ export async function POST(req) {
       return secureJson({ ok: true, message: "Payout request bank info updated" });
     }
 
+    // hiçbir dal tutmadı
     return secureJson({ error: "Invalid request" }, { status: 400 });
   } catch (err) {
     console.error("Wallet API POST error:", err);

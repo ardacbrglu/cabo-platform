@@ -3,8 +3,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/notifications
- * Hata üretmesin diye güvenli, toleranslı bir uç.
- * Oturum varsa kullanıcıya özel bildirimi döner; yoksa boş dizi döner.
+ * JSON: { notifications: Array<{id, message, type, link, createdAt, read}> }
  */
 
 import { NextResponse } from "next/server";
@@ -22,7 +21,6 @@ function json(data, init = {}) {
 
 export async function GET(req) {
   try {
-    // Hafif rate-limit
     const { ok, resetMs } = await checkRateLimit({
       key: makeRateLimitKey(req, { scope: "notifications:ip" }),
       limit: 60,
@@ -30,42 +28,47 @@ export async function GET(req) {
     });
     if (!ok) {
       return json(
-        { error: "too_many_requests", items: [] },
+        { notifications: [] },
         { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
       );
     }
 
     const session = await getServerSession(authOptions);
-    const userId = session?.user?.id ? Number(session.user.id) : null;
+    const userIdRaw = session?.user?.id ?? session?.user?.userId ?? null;
+    const userId = userIdRaw ? Number(userIdRaw) : null;
+    if (!userId) return json({ notifications: [] });
 
-    // Oturum yoksa boş dön (giriş sayfası bu uçtan istek atabiliyor)
-    if (!userId) return json({ items: [] });
-
-    // Tablo yok ya da boş olabilir; hata kaçırma
     let rows = [];
     try {
       rows = await prisma.notification.findMany({
-        where: { userId },
+        where: { userId, isDeleted: false },
         orderBy: { createdAt: "desc" },
         take: 10,
-        select: { id: true, title: true, body: true, createdAt: true, read: true },
+        select: {
+          id: true,
+          message: true,
+          type: true,
+          link: true,
+          createdAt: true,
+          read: true,
+        },
       });
     } catch {
-      // tablo yoksa sessizce boş dön
       rows = [];
     }
 
     return json({
-      items: rows.map((n) => ({
+      notifications: rows.map((n) => ({
         id: n.id,
-        title: n.title,
-        body: n.body,
+        message: n.message,
+        type: n.type,
+        link: n.link || null,
         createdAt: n.createdAt,
         read: !!n.read,
       })),
     });
   } catch (e) {
     console.error("GET /api/notifications error:", e);
-    return json({ items: [] }); // 200 + boş
+    return json({ notifications: [] });
   }
 }

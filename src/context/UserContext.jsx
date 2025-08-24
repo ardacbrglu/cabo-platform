@@ -6,13 +6,13 @@
  *
  * Security Docblock (Cabo PROD):
  * - Kimlik durumu yalnızca /api/me yanıtıyla "server-verified" kabul edilir.
- * - localStorage sadece görsel sarsıntıyı azaltır; auth kaynağı değildir.
+ * - localStorage yalnızca UI sarsıntısını azaltır; auth kaynağı değildir.
  * - /api/me 200 + {authenticated:false} → user=null + cache temizliği.
+ * - 401/403 çağrılarında login’e otomatik yönlendirme yapılmaz (noAuthRedirect: true).
  */
 
 import React, {
-  createContext, useContext, useEffect, useMemo, useState,
-  useCallback, useLayoutEffect,
+  createContext, useContext, useEffect, useMemo, useState, useCallback,
 } from "react";
 import { apiFetch } from "@/lib/apiFetch";
 
@@ -29,7 +29,7 @@ const LS_NAME = "cabo_username";
 const LS_EMAIL = "cabo_email";
 const LS_ID = "cabo_userId";
 
-/* Hafif UI cache */
+/* ------ Hafif UI cache ------ */
 function readCache() {
   if (typeof window === "undefined") return null;
   try {
@@ -67,16 +67,16 @@ export function UserProvider({ children }) {
   const [ready, setReady] = useState(false);
   const [serverAuthenticated, setServerAuthenticated] = useState(false);
 
-  // 1) İlk boya öncesi hafif hydrate
-  useLayoutEffect(() => {
+  // 1) İlk boya öncesi hafif hydrate (yalnız client)
+  useEffect(() => {
     const cached = readCache();
     if (cached) setUser((u) => ({ ...(u || {}), ...cached }));
   }, []);
 
-  // 2) /api/me : tek otorite
-  const fetchMe = useCallback(async () => {
+  // 2) /api/me : tek otorite — manual olarak da çağrılabilsin diye ayrı fonksiyon
+  const refreshUser = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/me", { method: "GET", cache: "no-store" });
+      const res = await apiFetch("/api/me", { method: "GET", cache: "no-store", noAuthRedirect: true });
       if (!res.ok) {
         setUser(null);
         setServerAuthenticated(false);
@@ -109,20 +109,26 @@ export function UserProvider({ children }) {
       setUser(null);
       setServerAuthenticated(false);
       setLastError("network_error");
-    } finally {
-      setReady(true);
     }
   }, []);
 
-  useEffect(() => { fetchMe(); }, [fetchMe]);
+  // 3) İlk yüklemede çağır ve güvenli cleanup uygula
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      await refreshUser();
+      if (alive) setReady(true);
+    })();
+    return () => { alive = false; };
+  }, [refreshUser]);
 
-  // 3) user değişince cache senkronu (yalnız server doğrulanmışsa)
+  // 4) user değişince cache senkronu (yalnız server doğrulanmışsa)
   useEffect(() => {
     if (serverAuthenticated && user && (user.id || user.userId)) writeCache(user);
     if (user === null) clearCache();
   }, [serverAuthenticated, user]);
 
-  // 4) Sekmeler arası senkron
+  // 5) Sekmeler arası senkron
   useEffect(() => {
     function onStorage(e) {
       if (e.key === LS_ID || e.key === LS_NAME || e.key === LS_EMAIL) {
@@ -131,8 +137,10 @@ export function UserProvider({ children }) {
         else setUser(null);
       }
     }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", onStorage);
+      return () => window.removeEventListener("storage", onStorage);
+    }
   }, []);
 
   // setUser fonksiyonunu stable yap
@@ -148,8 +156,8 @@ export function UserProvider({ children }) {
     ready,
     isAuthenticated: serverAuthenticated,
     lastError,
-    refreshUser: fetchMe,
-  }), [user, ready, serverAuthenticated, lastError, fetchMe, setUserSafe]);
+    refreshUser,
+  }), [user, ready, serverAuthenticated, lastError, refreshUser, setUserSafe]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

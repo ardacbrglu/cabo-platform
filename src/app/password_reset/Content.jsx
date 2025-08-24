@@ -1,182 +1,275 @@
+// src/app/password_reset/Content.jsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import PublicLayout from "@/components/PublicLayout";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
-import { useCsrfToken } from "@/hooks/useCsrfToken"; // ✅ named import
 
-const t = {
+// Yerel sözlük (public sayfa, merkezi i18n kullanılmıyor)
+const translations = {
   en: {
-    forgot: "Forgot your password?",
-    enterEmail: "Enter your email",
-    send: "Send Reset Email",
+    // REQUEST (email)
+    requestTitle: "Reset your password",
+    emailPlaceholder: "Email",
+    sendBtn: "Send",
     sending: "Sending...",
-    emailSent: "If user exists, password reset email sent.",
-    setNew: "Set a new password",
-    newPw: "New password",
-    repeatPw: "Repeat new password",
-    save: "Set Password",
-    saving: "Saving...",
-    required: "Please fill all fields.",
-    mismatch: "Passwords do not match.",
-    weak: "Password must be at least 8 chars, with letters and numbers.",
-    invalid: "Token invalid or expired.",
+    sentMsg: "If an account exists, we've emailed a reset link.",
+    invalidEmail: "Please enter a valid email address.",
+    requiredEmail: "Please fill out all fields.",
+    rate: "Too many attempts. Please try again.",
+
+    // CONFIRM (new password)
+    confirmTitle: "Set a new password",
+    newPw: "New Password",
+    newPwPh: "New password (min 8 characters)",
+    newPwRpt: "Repeat New Password",
+    newPwRptPh: "Repeat new password",
+    saveBtn: "Set Password",
+    processing: "Processing...",
+    short: "Password must be at least 8 characters.",
+    mismatch: "Passwords do not match!",
+    ok: "Password set!",
     server: "Server error. Please try again.",
-    success: "Password successfully changed. Redirecting...",
+    loginLink: "Go to login page",
   },
   tr: {
-    forgot: "Şifreni mi unuttun?",
-    enterEmail: "E-postanı gir",
-    send: "Sıfırlama maili gönder",
+    // REQUEST (email)
+    requestTitle: "Şifreni sıfırla",
+    emailPlaceholder: "E-posta",
+    sendBtn: "Gönder",
     sending: "Gönderiliyor...",
-    emailSent: "Kullanıcı varsa şifre sıfırlama e-postası gönderildi.",
-    setNew: "Yeni şifre belirle",
-    newPw: "Yeni şifre",
-    repeatPw: "Yeni şifre (tekrar)",
-    save: "Şifreyi Kaydet",
-    saving: "Kaydediliyor...",
-    required: "Lütfen tüm alanları doldurun.",
-    mismatch: "Şifreler uyuşmuyor.",
-    weak: "Şifre en az 8 karakter ve harf/rakam içermeli.",
-    invalid: "Token geçersiz veya süresi dolmuş.",
+    sentMsg: "Hesap varsa şifre sıfırlama bağlantısı e-posta ile gönderildi.",
+    invalidEmail: "Lütfen geçerli bir e-posta adresi girin.",
+    requiredEmail: "Lütfen tüm alanları doldurun.",
+    rate: "Çok fazla deneme. Lütfen tekrar deneyin.",
+
+    // CONFIRM (new password)
+    confirmTitle: "Yeni şifre belirle",
+    newPw: "Yeni Şifre",
+    newPwPh: "Yeni şifre (min 8 karakter)",
+    newPwRpt: "Yeni Şifre (tekrar)",
+    newPwRptPh: "Yeni şifreyi tekrar girin",
+    saveBtn: "Şifreyi Güncelle",
+    processing: "İşleniyor...",
+    short: "Şifre en az 8 karakter olmalıdır.",
+    mismatch: "Şifreler eşleşmiyor!",
+    ok: "Şifreniz güncellendi!",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
-    success: "Şifre başarıyla değiştirildi. Yönlendiriliyorsunuz...",
+    loginLink: "Giriş sayfasına git",
   },
 };
 
-export default function PasswordResetContent() {
-  const [step, setStep] = useState("request"); // "request" | "confirm"
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [pw2, setPw2] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [loading, setLoading] = useState(false);
+export default function PasswordResetContent({ token, initialLang }) {
+  // Dil tespiti: ?lang=tr|en > navigator.language (tr başlıyorsa tr) > en
+  const guessed =
+    (initialLang && initialLang.toLowerCase().startsWith("tr")) ||
+    (typeof navigator !== "undefined" &&
+      String(navigator.language || "").toLowerCase().startsWith("tr"))
+      ? "tr"
+      : "en";
+  const [lang] = useState(guessed);
+  const dict = translations[lang] || translations.en;
+  const t = (k) => (dict && k in dict ? dict[k] : k);
 
-  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅
-  const router = useRouter();
-  const params = useSearchParams();
-  const token = params.get("token");
-  const langParam = params.get("lang");
-  const locale = (langParam && ["en", "tr"].includes(langParam))
-    ? langParam
-    : (typeof window !== "undefined" && (navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en");
-  const trans = t[locale];
-
+  // CSRF cookie preload (apiFetch header’ı ekler ama cookie hazır olsun)
+  const [csrfReady, setCsrfReady] = useState(false);
   useEffect(() => {
-    if (token) setStep("confirm");
-  }, [token]);
+    let alive = true;
+    (async () => {
+      try {
+        await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
+      } finally {
+        if (alive) setCsrfReady(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
-  const handleRequest = async (e) => {
-    e.preventDefault();
-    setError(""); setSuccess(""); setLoading(true);
+  // Hangi form?
+  const mode = token ? "confirm" : "request";
+
+  /* =========================
+     REQUEST: email formu
+  ==========================*/
+  const [email, setEmail] = useState("");
+  const [reqLoading, setReqLoading] = useState(false);
+  const [reqMsg, setReqMsg] = useState("");
+  const [reqOk, setReqOk] = useState(false);
+
+  async function onRequest(e) {
+    e?.preventDefault?.();
+    if (reqLoading) return;
+    setReqMsg(""); setReqOk(false);
+
+    const value = email.trim().toLowerCase();
+    if (!value) { setReqMsg(t("requiredEmail")); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) { setReqMsg(t("invalidEmail")); return; }
+
+    setReqLoading(true);
     try {
       const res = await apiFetch("/api/password_reset/request", {
         method: "POST",
-        headers: { "accept-language": locale, ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) },
-        body: { email },
+        headers: { "accept-language": lang },
+        body: { email: value },
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) setSuccess(trans.emailSent);
-      else setError(data.message || trans.server);
+      // Enumeration-safe: API her durumda success döner
+      if (res.status === 429) setReqMsg(t("rate"));
+      else { setReqOk(true); setReqMsg(t("sentMsg")); }
     } catch {
-      setError(trans.server);
+      setReqOk(true); setReqMsg(t("sentMsg")); // enumeration-safe
     } finally {
-      setLoading(false);
+      setReqLoading(false);
     }
-  };
+  }
 
-  const handleConfirm = async (e) => {
-    e.preventDefault();
-    setError(""); setSuccess("");
+  /* =========================
+     CONFIRM: yeni şifre formu
+  ==========================*/
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [confLoading, setConfLoading] = useState(false);
+  const [confMsg, setConfMsg] = useState("");
+  const [confOk, setConfOk] = useState(false);
 
-    if (!pw || !pw2) return setError(trans.required);
-    if (pw !== pw2) return setError(trans.mismatch);
-    if (pw.length < 8 || !/\d/.test(pw) || !/[a-zA-Z]/.test(pw)) return setError(trans.weak);
+  async function onConfirm(e) {
+    e?.preventDefault?.();
+    if (confLoading) return;
 
-    setLoading(true);
+    setConfMsg(""); setConfOk(false);
+
+    if (!token) { setConfMsg(t("server")); return; }
+    if (pw1.length < 8) { setConfMsg(t("short")); return; }
+    if (pw1 !== pw2) { setConfMsg(t("mismatch")); return; }
+
+    setConfLoading(true);
     try {
       const res = await apiFetch("/api/password_reset/confirm", {
         method: "POST",
-        headers: { "accept-language": locale, ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) },
-        body: { token, password: pw },
+        body: { token, password: pw1 },
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        setSuccess(trans.success);
-        setTimeout(() => router.replace("/login"), 1800);
-      } else {
-        setError(data.message || trans.server);
-      }
+      if (res.status === 429) setConfMsg(t("rate"));
+      else if (res.ok && data?.success) { setConfOk(true); setConfMsg(t("ok")); }
+      else setConfMsg((typeof data?.error === "string" && data.error) || t("server"));
     } catch {
-      setError(trans.server);
+      setConfMsg(t("server"));
     } finally {
-      setLoading(false);
+      setConfLoading(false);
+      setPw1(""); setPw2("");
     }
-  };
+  }
 
-  return (
-    <PublicLayout>
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <div className="w-full max-w-md bg-[#161a16] border border-[#252925] rounded-2xl shadow-xl p-10">
-          {step === "request" ? (
-            <>
-              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.forgot}</h2>
-              <form onSubmit={handleRequest} className="flex flex-col gap-4" noValidate>
-                <input
-                  type="email"
-                  placeholder={trans.enterEmail}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-                />
-                {error && <div className="text-red-500 text-center">{error}</div>}
-                {success && <div className="text-green-400 text-center">{success}</div>}
-                <button
-                  type="submit"
-                  disabled={loading || !csrfReady}
-                  className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
-                >
-                  {loading ? trans.sending : trans.send}
-                </button>
-              </form>
-            </>
-          ) : (
-            <>
-              <h2 className="text-2xl font-bold mb-4 text-[#d1ffd0]">{trans.setNew}</h2>
-              <form onSubmit={handleConfirm} className="flex flex-col gap-4" noValidate>
-                <input
-                  type="password"
-                  placeholder={trans.newPw}
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  required
-                  className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-                />
-                <input
-                  type="password"
-                  placeholder={trans.repeatPw}
-                  value={pw2}
-                  onChange={(e) => setPw2(e.target.value)}
-                  required
-                  className="w-full rounded-lg bg-white text-black border border-[#232323] px-4 py-3 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[#81d742]"
-                />
-                {error && <div className="text-red-500 text-center">{error}</div>}
-                {success && <div className="text-green-400 text-center">{success}</div>}
-                <button
-                  type="submit"
-                  disabled={loading || !csrfReady}
-                  className="w-full py-3 text-lg font-semibold bg-[#81d742] text-[#111] rounded-lg hover:bg-[#b3ffb3] transition"
-                >
-                  {loading ? trans.saving : trans.save}
-                </button>
-              </form>
-            </>
+  /* ---------- RENDER ---------- */
+  if (mode === "request") {
+    return (
+      <main className="min-h-[70vh] flex items-center justify-center px-4">
+        <form onSubmit={onRequest} className="bg-[#111] border border-[#232323] rounded-2xl p-8 w-full max-w-sm" noValidate>
+          <h1 className="text-2xl font-extrabold text-[#d1ffd0] mb-6">{t("requestTitle")}</h1>
+
+          {!csrfReady && (
+            <div className="text-sm text-gray-400 mb-3" role="status" aria-live="polite">
+              {t("processing")}
+            </div>
           )}
+
+          <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
+          <input
+            id="email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder={t("emailPlaceholder")}
+            className="w-full px-4 py-3 rounded-lg bg-white text-black border border-[#232323] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={reqLoading}
+            required
+          />
+
+          {reqMsg && (
+            <div className={`mt-3 text-sm ${reqOk ? "text-green-400" : "text-red-400"}`} role={reqOk ? "status" : "alert"} aria-live="assertive">
+              {reqMsg}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={reqLoading || !csrfReady}
+            className="w-full mt-4 bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
+          >
+            {reqLoading ? t("sending") : t("sendBtn")}
+          </button>
+
+          <div className="text-center mt-4">
+            <Link href="/login" className="text-[#81d742] underline">
+              {t("loginLink")}
+            </Link>
+          </div>
+        </form>
+      </main>
+    );
+  }
+
+  // mode === "confirm"
+  return (
+    <main className="min-h-[70vh] flex items-center justify-center px-4">
+      <form onSubmit={onConfirm} className="bg-[#111] border border-[#232323] rounded-2xl p-8 w-full max-w-sm" noValidate>
+        <h1 className="text-2xl font-extrabold text-[#d1ffd0] mb-6">{t("confirmTitle")}</h1>
+
+        {!csrfReady && (
+          <div className="text-sm text-gray-400 mb-3" role="status" aria-live="polite">
+            {t("processing")}
+          </div>
+        )}
+
+        <div className="mb-4">
+          <label className="sr-only" htmlFor="new_password">{t("newPw")}</label>
+          <input
+            id="new_password"
+            type="password"
+            placeholder={t("newPwPh")}
+            autoComplete="new-password"
+            className="w-full px-4 py-3 rounded-lg bg-white text-black border border-[#232323] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            value={pw1}
+            onChange={(e) => setPw1(e.target.value)}
+            disabled={confLoading}
+            required
+          />
         </div>
-      </div>
-    </PublicLayout>
+
+        <div className="mb-2">
+          <label className="sr-only" htmlFor="new_password_repeat">{t("newPwRpt")}</label>
+          <input
+            id="new_password_repeat"
+            type="password"
+            placeholder={t("newPwRptPh")}
+            autoComplete="new-password"
+            className="w-full px-4 py-3 rounded-lg bg-white text-black border border-[#232323] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            disabled={confLoading}
+            required
+          />
+        </div>
+
+        {confMsg && (
+          <div className={`mt-2 text-sm ${confOk ? "text-green-400" : "text-red-400"}`} role={confOk ? "status" : "alert"} aria-live="assertive">
+            {confMsg}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={confLoading || !csrfReady}
+          className="w-full mt-4 bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
+        >
+          {confLoading ? t("processing") : t("saveBtn")}
+        </button>
+
+        <div className="text-center mt-4">
+          <Link href="/login" className="text-[#81d742] underline">{t("loginLink")}</Link>
+        </div>
+      </form>
+    </main>
   );
 }

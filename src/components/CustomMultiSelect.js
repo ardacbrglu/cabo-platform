@@ -1,59 +1,91 @@
-import { useRef } from 'react';
+"use client";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-export default function CustomMultiSelect({ options, selected, setSelected, label }) {
-  const listRef = useRef();
+/**
+ * CustomMultiSelect (tek seçimli görünür ama API tek elemanlı dizi isterse setSelected([id]) şeklinde)
+ * - Klavye: ↑ ↓ Enter Escape
+ * - 400+ öge için sanal liste gerekmiyorsa yeterli
+ */
+export default function CustomMultiSelect({ options = [], selected = [], setSelected, label }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const boxRef = useRef(null);
+  const listRef = useRef(null);
 
-  function handleSelect(id) {
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  function choose(id) {
     setSelected([id]);
+    setOpen(false);
   }
 
+  const filtered = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    if (!k) return options;
+    return options.filter((o) => String(o.label || "").toLowerCase().includes(k));
+  }, [q, options]);
+
+  const current = options.find((o) => o.value === selected[0]);
+
   return (
-    <div className="relative w-full">
-      {label && (
-        <span className="block mb-1 font-bold text-[#81d742]">{label}</span>
-      )}
-      <div className="bg-[#222] border border-[#444] rounded p-2">
-        <div
-          className="cursor-pointer select-none text-white bg-[#333] rounded px-2 py-1"
-          tabIndex={0}
-          onClick={() => listRef.current?.focus()}
-        >
-          {options.find(o => o.value === selected[0])?.label || "Select Product"}
-        </div>
-        <ul
-          ref={listRef}
-          tabIndex={-1}
-          className="mt-2 rounded bg-[#222] shadow-lg border border-[#444] overflow-y-auto"
-          style={{
-            maxHeight: "420px", // 10 ürün satırı (10 x 42px)
-            minHeight: "42px",  // En az bir ürün için
-            width: "100%",
-            paddingRight: 2,
-          }}
-        >
-          {options.map(option => (
-            <li
-              key={option.value}
-              onClick={() => handleSelect(option.value)}
-              className={`px-2 py-2 cursor-pointer rounded mb-1
-                ${selected[0] === option.value
-                  ? "bg-[#333] text-[#d1ffd0] font-semibold"
-                  : "hover:bg-[#252525] text-white"
+    <div className="relative w-full" ref={boxRef}>
+      {label ? <span className="block mb-1 font-bold text-[#81d742]">{label}</span> : null}
+
+      <button
+        type="button"
+        className="w-full bg-[#222] border border-[#444] rounded px-3 py-2 text-left text-white flex items-center justify-between"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{current?.label || <span className="text-gray-400">—</span>}</span>
+        <svg className={`w-4 h-4 ml-2 ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-30 mt-2 bg-[#191919] border border-[#333] rounded-xl shadow-xl overflow-hidden">
+          <input
+            autoFocus
+            placeholder="Search…"
+            className="w-full px-3 py-2 bg-[#161616] text-white border-b border-[#2a2a2a] outline-none"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpen(false);
+              if (e.key === "Enter" && filtered.length) choose(filtered[0].value);
+            }}
+          />
+          <ul
+            ref={listRef}
+            className="max-h-80 overflow-y-auto p-1"
+            style={{ scrollBehavior: "smooth" }}
+          >
+            {filtered.map((opt) => (
+              <li
+                key={opt.value}
+                onClick={() => choose(opt.value)}
+                className={`px-3 py-2 rounded cursor-pointer text-white mb-0.5 ${
+                  selected[0] === opt.value
+                    ? "bg-[#2c2c2c] text-[#d1ffd0] font-semibold"
+                    : "hover:bg-[#232323]"
                 }`}
-              style={{
-                userSelect: 'none',
-                outline: 'none',
-                minHeight: 38, // Her ürün satırı (mobilde de güzel durur)
-                display: 'flex',
-                alignItems: 'center',
-                fontSize: 16,
-              }}
-            >
-              {option.label}
-            </li>
-          ))}
-        </ul>
-      </div>
+              >
+                {opt.label}
+              </li>
+            ))}
+            {filtered.length === 0 && (
+              <li className="px-3 py-3 text-gray-400">No results</li>
+            )}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

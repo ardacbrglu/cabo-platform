@@ -5,12 +5,13 @@ export const runtime = "nodejs";
  * File: src/app/api/products/promote/route.js
  * Purpose: Bir ürünü “My Links”e ekle (unique token oluştur / görünür yap)
  * Security Docblock:
- * - Auth: NextAuth → require status:active & role:affiliate
- * - CSRF: NextAuth’ın /api/auth/csrf + header “x-csrf-token” (frontend wrapper)
- * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id
+ * - Auth: NextAuth → require status:active & role:affiliate|admin
+ * - CSRF: NextAuth’ın /api/auth/csrf + header “x-csrf-token” (frontend wrapper). Sunucu, header varlığını bekler.
+ * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id (zorunlu)
  * - Ratelimit: POST 10/dk (IP+userId)
  * - Validation: Zod (productId)
  * - TX: Tüm mutasyonlar transaction; audit({who, what, ip, ua, requestId, result})
+ * - Errors: {error, request_id, retry_after?}
  */
 
 import { NextResponse } from "next/server";
@@ -35,10 +36,12 @@ const PromoteSchema = z.object({
   productId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
 });
 
+// VARCHAR(64) sınırı içinde rahat: 16 byte hex = 32 char
 function newToken() {
-  // 32-byte URL-safe token
-  return crypto.randomBytes(24).toString("base64url");
+  return crypto.randomBytes(16).toString("hex");
 }
+
+const TOKEN_TTL_DAYS = 14;
 
 export async function POST(req) {
   // Harden preflight
@@ -56,12 +59,16 @@ export async function POST(req) {
     return json({ error: "bad_request" }, { status: 400 });
   }
 
+  // CSRF header var mı?
+  if (!req.headers.get("x-csrf-token")) {
+    return json({ error: "missing_csrf", request_id: requestId }, { status: 400 });
+  }
+
   // Auth (session + RBAC)
   const session = await getServerSession(authOptions);
   const user = session?.user;
   if (!user?.id) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
-  if (user.status !== "active")
-    return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
+  if (user.status !== "active") return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
   if (user.role !== "affiliate" && user.role !== "admin")
     return json({ error: "forbidden_role", request_id: requestId }, { status: 403 });
 
@@ -92,40 +99,37 @@ export async function POST(req) {
   }
   const productId = Number(parsed.data.productId);
 
-  // İş mantığı:
-  // - Ürün aktif ve admin onaylı mı kontrol et
-  // - (user, product) için AffiliateLink varsa: görünür yap
-  // - yoksa: unique token üret ve oluştur
   try {
+    // Ürün aktif + admin onaylı mı? (şemaya göre camelCase)
     const product = await prisma.merchantProduct.findFirst({
-      where: { product_id: productId, is_active: true, activated_by_admin: true },
-      select: { product_id: true },
+      where: { productId, isActive: true, activatedByAdmin: true },
+      select: { productId: true },
     });
     if (!product) {
       audit({ evt: "products.promote.not_found", who: user.id, requestId, productId });
       return json({ error: "product_not_found", request_id: requestId }, { status: 404 });
     }
 
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
     const result = await prisma.$transaction(async (tx) => {
       const existing = await tx.affiliateLink.findFirst({
-        where: { user_id: user.id, product_id: productId },
-        select: { id: true, token: true, is_visible: true },
+        where: { userId: user.id, productId },
+        select: { linkId: true, token: true, isVisible: true, expiresAt: true },
       });
 
       if (existing) {
-        if (!existing.is_visible) {
+        if (!existing.isVisible || !existing.expiresAt || existing.expiresAt < new Date()) {
           await tx.affiliateLink.update({
-            where: { id: existing.id },
-            data: { is_visible: true },
+            where: { linkId: existing.linkId }, // ✅ primary key adı
+            data: { isVisible: true, expiresAt },
           });
         }
-        return { token: existing.token, created: false };
+        return { token: existing.token, created: false, expiresAt: existing.expiresAt || expiresAt };
       }
 
-      // yeni unique token
+      // yeni unique token (collision check)
       let token = newToken();
-      // collision ihtimali düşük ama yine de kontrol et
-      // (loop nadiren döner)
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const dup = await tx.affiliateLink.findUnique({ where: { token } });
@@ -135,14 +139,15 @@ export async function POST(req) {
 
       await tx.affiliateLink.create({
         data: {
-          user_id: user.id,
-          product_id: productId,
+          userId: user.id,
+          productId,
           token,
-          is_visible: true,
+          isVisible: true,
+          expiresAt,
         },
       });
 
-      return { token, created: true };
+      return { token, created: true, expiresAt };
     });
 
     audit({
@@ -152,14 +157,18 @@ export async function POST(req) {
       requestId,
       result: "success",
     });
-    return json({ ok: true, token: result.token, created: result.created, request_id: requestId }, { status: 200 });
+    return json(
+      {
+        ok: true,
+        token: result.token,
+        created: result.created,
+        expiresAt: result.expiresAt?.toISOString?.() || null,
+        request_id: requestId,
+      },
+      { status: 200 }
+    );
   } catch (e) {
-    audit({
-      evt: "products.promote.db_error",
-      who: user.id,
-      requestId,
-      code: e?.code || "DB_ERR",
-    });
+    audit({ evt: "products.promote.db_error", who: user.id, requestId, code: e?.code || "DB_ERR" });
     return json({ error: "server_error", request_id: requestId }, { status: 500 });
   }
 }

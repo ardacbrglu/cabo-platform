@@ -18,9 +18,36 @@ function isLocalhostHost(host = "") {
   );
 }
 
+function getEnvBase() {
+  const base = process.env.NEXTAUTH_URL || process.env.BASE_URL || "";
+  try {
+    const u = new URL(base);
+    return { scheme: u.protocol.replace(":", ""), host: u.host };
+  } catch {
+    return { scheme: null, host: null };
+  }
+}
+
+function getSchemeHostFromReq(req) {
+  try {
+    const scheme =
+      req?.headers?.get?.("x-forwarded-proto") ||
+      (req?.url ? new URL(req.url).protocol.replace(":", "") : null);
+
+    const host =
+      req?.headers?.get?.("x-forwarded-host") ||
+      req?.headers?.get?.("host") ||
+      null;
+
+    return { scheme, host };
+  } catch {
+    return { scheme: null, host: null };
+  }
+}
+
 export function applyApiSecurityHeaders(res, req /* optional */) {
   try {
-    // Common
+    // ---- Common hardening ----
     res.headers.set("X-Content-Type-Options", "nosniff");
     res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
     res.headers.set("X-Frame-Options", "DENY");
@@ -51,17 +78,15 @@ export function applyApiSecurityHeaders(res, req /* optional */) {
       res.headers.set("Content-Security-Policy", csp);
     }
 
-    // ---- HSTS only for real HTTPS prod ----
+    // ---- HSTS (prod + https + non-localhost) ----
     const isProd = process.env.NODE_ENV === "production";
-    let scheme = "http";
-    let host = "";
 
-    if (req) {
-      scheme =
-        req.headers?.get?.("x-forwarded-proto") ||
-        (req.url ? new URL(req.url).protocol.replace(":", "") : "http");
-      host = req.headers?.get?.("x-forwarded-host") || req.headers?.get?.("host") || "";
-    }
+    // Önce req'den dene, yoksa env'den çıkar
+    const fromReq = req ? getSchemeHostFromReq(req) : { scheme: null, host: null };
+    const fromEnv = getEnvBase();
+
+    const scheme = (fromReq.scheme || fromEnv.scheme || "http").toLowerCase();
+    const host = (fromReq.host || fromEnv.host || "").toLowerCase();
 
     const onHttps = scheme === "https";
     const localhostLike = isLocalhostHost(host);
@@ -69,6 +94,7 @@ export function applyApiSecurityHeaders(res, req /* optional */) {
     if (isProd && onHttps && !localhostLike) {
       res.headers.set("Strict-Transport-Security", `max-age=${ONE_YEAR}; includeSubDomains; preload`);
     } else {
+      // dev veya http ya da localhost gibi durumlarda HSTS set etme
       res.headers.delete?.("Strict-Transport-Security");
     }
   } catch {

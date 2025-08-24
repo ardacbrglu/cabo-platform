@@ -3,16 +3,12 @@
 
 import { useEffect, useState } from "react";
 import Layout from "@/components/Layout";
-import { Link2, ShoppingCart, BarChart2, Copy, X } from "lucide-react";
+import { Link2, ShoppingCart, BarChart2, Copy, X, RotateCcw } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
-import useCsrfToken from "@/hooks/useCsrfToken";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
-function handleImgError(e) {
-  e.target.onerror = null;
-  e.target.src = PLACEHOLDER;
-}
+function handleImgError(e) { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }
 
 function getCurrencySymbol(currency = "TRY") {
   if (currency === "USD") return "$";
@@ -44,14 +40,16 @@ export default function MyLinksPage() {
   const [links, setLinks] = useState([]);
   const [copiedToken, setCopiedToken] = useState(null);
   const [removingTokens, setRemovingTokens] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
   const { user, setUser } = useUser();
   const { t } = useTranslation();
-  const csrfToken = useCsrfToken(); // ← CSRF header için
 
-  // Kullanıcı yükle
+  // Kullanıcı bilgisi
   useEffect(() => {
     if (!user?.name) {
-      fetch("/api/me", { cache: "no-store" })
+      fetch("/api/me", { cache: "no-store", credentials: "include" })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data && data.name) {
@@ -69,17 +67,33 @@ export default function MyLinksPage() {
     }
   }, [user, setUser]);
 
-  // Bağlı ürünleri yükle
+  // Linkler
   useEffect(() => {
-    fetch("/api/mylinks", { cache: "no-store" })
+    let alive = true;
+    setLoading(true);
+    fetch("/api/mylinks", { cache: "no-store", credentials: "include" })
       .then((res) => (res.ok ? res.json() : { links: [] }))
-      .then((data) => setLinks(Array.isArray(data.links) ? data.links : []))
-      .catch(() => setLinks([]));
-  }, []);
+      .then((data) => { if (alive) setLinks(Array.isArray(data.links) ? data.links : []); })
+      .catch(() => { if (alive) setLinks([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [reloadKey]);
+
+  const doRefresh = () => setReloadKey((k) => k + 1);
 
   const copyLink = (token) => {
     const full = `${window.location.origin}/ref/${token}`;
-    navigator.clipboard.writeText(full);
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(full).catch(() => {});
+    } else {
+      // Fallback
+      const ta = document.createElement("textarea");
+      ta.value = full;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      document.body.removeChild(ta);
+    }
     setCopiedToken(token);
     setTimeout(() => setCopiedToken(null), 2000);
   };
@@ -88,10 +102,10 @@ export default function MyLinksPage() {
     try {
       const res = await fetch("/api/mylinks", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          // CSRF header (cookie’deki csrf_token ile eşleşmeli)
-          ...(csrfToken ? { "x-csrf-token": csrfToken } : {}),
+          "X-Requested-With": "XMLHttpRequest", // same-origin AJAX şartı
         },
         body: JSON.stringify({ token }),
       });
@@ -103,7 +117,6 @@ export default function MyLinksPage() {
           setRemovingTokens((prev) => prev.filter((t) => t !== token));
         }, 300);
       } else {
-        // 401/403 vb.
         console.warn("Failed to hide link:", await res.text());
       }
     } catch (err) {
@@ -114,7 +127,7 @@ export default function MyLinksPage() {
   return (
     <Layout>
       <div className="flex flex-col items-center mt-12 mb-6 px-2 sm:px-0">
-        <div className="flex flex-row items-center gap-3">
+        <div className="flex items-center gap-3">
           <Link2 size={44} className="text-[#d1ffd0] drop-shadow-xl" />
           <h1
             className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight drop-shadow-2xl font-sans"
@@ -126,10 +139,22 @@ export default function MyLinksPage() {
         <p className="mt-4 text-base md:text-lg text-gray-200 font-mono font-medium opacity-90 text-center max-w-2xl">
           {t("myLinksSubtitle") || "Here are your claimed affiliate links with real-time stats."}
         </p>
+
+        {/* Refresh */}
+        <button
+          onClick={doRefresh}
+          className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] text-[#caffb6] hover:bg-[#222] transition disabled:opacity-60"
+          title="Refresh"
+          type="button"
+          disabled={loading}
+        >
+          <RotateCcw size={18} className={loading ? "animate-spin" : ""} />
+          <span className="text-sm">{loading ? (t("processing") || "Processing...") : "Refresh"}</span>
+        </button>
       </div>
 
       <div className="w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1">
-        {links.length === 0 ? (
+        {(!links || links.length === 0) && !loading ? (
           <div className="text-center text-gray-400 font-mono text-lg py-24">
             {t("myLinksEmpty") || "You haven't claimed any links yet."}
           </div>
@@ -160,7 +185,7 @@ export default function MyLinksPage() {
                 );
               }
 
-              // Ürün aktif değilse veya kotası dolmuşsa
+              // Ürün aktif değilse / kota doluysa
               if (link.product.isActive === false) {
                 return (
                   <div
@@ -236,7 +261,6 @@ export default function MyLinksPage() {
                   <div className="text-xs font-mono text-gray-500 mb-2">
                     {t("productYourTotalEarnings") || "Your earnings:"}{" "}
                     <b>
-                      {" "}
                       {getCurrencySymbol(user?.currencyCode || "TRY")}
                       {link.user_earnings.toFixed(2)}
                     </b>
@@ -256,7 +280,8 @@ export default function MyLinksPage() {
                     )}
                   </div>
 
-                  <div className="bg-[#232323] px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-200 text-sm border border-[#2c2c2c]">
+                  {/* Kopyalanabilir link */}
+                  <div className="bg-[#232323] px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-2 00 text-sm border border-[#2c2c2c]">
                     <span className="truncate">
                       {typeof window !== "undefined" ? window.location.origin : ""}/ref/{link.token}
                     </span>

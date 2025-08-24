@@ -1,9 +1,273 @@
-'use client';
+// src/app/privacy/page.js
+import PublicLayout from "@/components/PublicLayout";
+import Link from "next/link";
+import { headers } from "next/headers";
 
-export default function Page() {
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export const metadata = {
+  title: "Privacy Policy | Cabo",
+  description:
+    "Privacy Policy compliant with Turkish KVKK for the Cabo affiliate platform. (TR/EN)",
+};
+
+const BRAND = "Cabo";
+const COMPANY = "[Şirket Adı – Ticaret Unvanı]";           // TODO
+const COMPANY_ADDR = "[Şirket Adresi, İl/İlçe, Türkiye]";  // TODO
+const COMPANY_EMAIL = "kvkk@yourcompany.com";              // TODO
+const DPO_EMAIL = "dpo@yourcompany.com";                   // TODO
+
+function pickLang(searchParams) {
+  const qp = String(searchParams?.lang || "").toLowerCase();
+  if (qp.startsWith("tr") || qp === "tr") return "tr";
+  const h = headers();
+  const al = (h.get("accept-language") || "").toLowerCase();
+  return al.startsWith("tr") ? "tr" : "en";
+}
+
+const DICT = {
+  en: {
+    lastUpdated: "Last updated",
+    title: "Privacy Policy",
+    intro:
+      `${COMPANY} (“we”) operates the ${BRAND} platform. This policy explains how we process personal data as data controller under Turkish Law No. 6698 (KVKK) and applicable laws.`,
+    controllerTitle: "Data Controller & Contact",
+    controller:
+      `${COMPANY}, ${COMPANY_ADDR}. For privacy requests: ${COMPANY_EMAIL}. For DPO/representative: ${DPO_EMAIL}.`,
+    whatTitle: "Data We Process",
+    whatList: [
+      "Identity & contact: name, email, phone (if shared), IBAN & bank for payouts.",
+      "Account data: username, password hash, language, currency.",
+      "Affiliate workflow: claimed links, clicks, sales & payouts (including amounts, product, merchant).",
+      "Logs & security: IP address, timestamps, user-agent, request IDs.",
+      "Support messages you send to us.",
+    ],
+    basisTitle: "Purposes & Legal Bases",
+    basisList: [
+      "Provide the platform and your account – performance of a contract (KVKK Art. 5/2-c).",
+      "Fraud prevention, security, analytics – legitimate interests (5/2-f).",
+      "Legal obligations: accounting, tax, responding to authorities (5/2-ç).",
+      "Marketing communications (if any) – based on your explicit consent (5/1).",
+    ],
+    cookiesTitle: "Cookies",
+    cookies:
+      "We use strictly necessary cookies (session/CSRF). Analytics/marketing cookies are used only with your consent where applicable.",
+    shareTitle: "Sharing & Processors",
+    shareList: [
+      "Hosting and infrastructure providers (cloud, CDN).",
+      "Email & notification providers for transactional emails.",
+      "Payment/banking partners to execute payouts.",
+      "Service providers for fraud prevention and logging.",
+      "Authorities/courts when legally required.",
+    ],
+    xferTitle: "International Transfers",
+    xfer:
+      "If data is transferred abroad, we rely on KVKK mechanisms (adequacy, undertakings or explicit consent) and apply appropriate safeguards.",
+    retainTitle: "Retention",
+    retain:
+      "We keep data as long as necessary: account data while active; logs typically 6–24 months; financial records per tax laws (usually 5–10 years).",
+    securityTitle: "Security",
+    security:
+      "We apply reasonable technical and organizational measures (encryption in transit, access controls, least-privilege, monitoring).",
+    rightsTitle: "Your Rights (KVKK Art. 11)",
+    rightsList: [
+      "Learn whether your data is processed; request information.",
+      "Learn the purpose and whether used properly.",
+      "Know third parties to whom data is transferred.",
+      "Request correction/erasure and notification to third parties.",
+      "Object to results against you arising from automated processing.",
+      "Request compensation for damages due to unlawful processing.",
+    ],
+    applyTitle: "How to Apply",
+    apply:
+      `Send a signed request to our address or email us at ${COMPANY_EMAIL}. We respond as soon as possible and within legal time limits.`,
+    childrenTitle: "Children",
+    children:
+      "The Services are not directed to persons under 18. We do not knowingly process children’s data.",
+    changesTitle: "Changes",
+    changes:
+      "We may update this policy. Material changes will be announced on the Platform.",
+    contactTitle: "Contact",
+    contact:
+      `Questions? Contact ${COMPANY_EMAIL}.`,
+    back: "Back",
+    toTerms: "Read Terms of Service",
+  },
+  tr: {
+    lastUpdated: "Son güncelleme",
+    title: "Gizlilik Politikası",
+    intro:
+      `${COMPANY} (“biz”), ${BRAND} platformunu işletmektedir. Bu politika, veri sorumlusu sıfatıyla 6698 sayılı KVKK ve ilgili mevzuat kapsamında kişisel verileri nasıl işlediğimizi açıklar.`,
+    controllerTitle: "Veri Sorumlusu ve İletişim",
+    controller:
+      `${COMPANY}, ${COMPANY_ADDR}. KVKK başvuruları: ${COMPANY_EMAIL}. İrtibat kişisi/DPO: ${DPO_EMAIL}.`,
+    whatTitle: "İşlediğimiz Veriler",
+    whatList: [
+      "Kimlik & iletişim: ad, e-posta, telefon (paylaşıldıysa), ödeme için IBAN ve banka bilgisi.",
+      "Hesap verileri: kullanıcı adı, parola özeti, dil ve para birimi tercihleri.",
+      "Affiliate akışı: sahiplendiğin linkler, tıklamalar, satışlar ve ödeme kayıtları (tutar, ürün, satıcı).",
+      "Kayıtlar & güvenlik: IP adresi, zaman damgaları, kullanıcı aracı, istek/oturum kimlikleri.",
+      "Bize ilettiğin destek mesajları.",
+    ],
+    basisTitle: "Amaçlar ve Hukuki Sebepler",
+    basisList: [
+      "Platformun sunulması ve hesabının işletilmesi – sözleşmenin kurulması/ifası (KVKK 5/2-c).",
+      "Dolandırıcılık önleme, güvenlik ve analiz – meşru menfaat (5/2-f).",
+      "Hukuki yükümlülükler: muhasebe, vergi, resmi makamlara yanıt (5/2-ç).",
+      "Pazarlama iletileri (varsa) – açık rıza (5/1) ile.",
+    ],
+    cookiesTitle: "Çerezler",
+    cookies:
+      "Zorunlu çerezler (oturum/CSRF) kullanılır. Analitik/pazarlama çerezleri (varsa) yalnızca rızanla kullanılır.",
+    shareTitle: "Aktarımlar ve Veri İşleyenler",
+    shareList: [
+      "Barındırma ve altyapı hizmet sağlayıcıları (bulut, CDN).",
+      "E-posta ve bildirim servisleri (işlemsel e-postalar için).",
+      "Ödemelerin gerçekleştirilmesi için bankacılık/ödeme ortakları.",
+      "Kayıt/güvenlik ve dolandırıcılık önleme hizmetleri.",
+      "Kanuni zorunluluk halinde resmi makamlar ve mahkemeler.",
+    ],
+    xferTitle: "Yurtdışı Aktarımlar",
+    xfer:
+      "Yurtdışına aktarım gerekirse KVKK’daki aktarım mekanizmalarından yararlanır ve uygun güvenceleri uygularız (uygunluk, taahhüt, açık rıza vb.).",
+    retainTitle: "Saklama Süreleri",
+    retain:
+      "Veriler, amacın gerektirdiği süre boyunca saklanır: hesap verileri aktif oldukça; loglar tipik olarak 6–24 ay; mali kayıtlar vergi mevzuatı uyarınca (genellikle 5–10 yıl).",
+    securityTitle: "Güvenlik",
+    security:
+      "Uygun teknik ve idari tedbirler uygularız (iletişimde şifreleme, erişim kontrolleri, asgari yetki, izleme vb.).",
+    rightsTitle: "Hakların (KVKK md. 11)",
+    rightsList: [
+      "Kişisel verilerinin işlenip işlenmediğini öğrenme, bilgi talep etme.",
+      "Amacını ve amaca uygun kullanılıp kullanılmadığını öğrenme.",
+      "Yurt içinde/yurt dışında aktarıldığı üçüncü kişileri bilme.",
+      "Eksik/yanlış işlenmişse düzeltilmesini ve üçüncü kişilere bildirilmesini isteme.",
+      "KVKK’ya aykırı işleme sebebiyle zararın giderilmesini talep etme.",
+      "Otomatik işlemeden doğan aleyhe sonuçlara itiraz.",
+    ],
+    applyTitle: "Başvuru Usulü",
+    apply:
+      `Islak imzalı başvurunu adresimize iletebilir veya ${COMPANY_EMAIL} üzerinden e-posta gönderebilirsin. Yasal sürelerde yanıtlarız.`,
+    childrenTitle: "Çocukların Verileri",
+    children:
+      "Hizmetler 18 yaş altına yönelik değildir; çocukların verilerini bilerek işlemeyiz.",
+    changesTitle: "Değişiklikler",
+    changes:
+      "Bu politika güncellenebilir. Önemli değişiklikler Platform üzerinden duyurulur.",
+    contactTitle: "İletişim",
+    contact:
+      `Soruların için: ${COMPANY_EMAIL}.`,
+    back: "Geri",
+    toTerms: "Şartlar ve Koşullar’ı oku",
+  },
+};
+
+export default function PrivacyPage({ searchParams }) {
+  const lang = pickLang(searchParams);
+  const t = (k) => (DICT[lang] || DICT.en)[k] || k;
+  const L = (DICT[lang] || DICT.en);
+
   return (
-    <div>
-      Coming soon.
-    </div>
+    <PublicLayout>
+      <main className="max-w-3xl mx-auto px-4 py-10 text-gray-300">
+        <div className="mb-6">
+          <h1 className="text-3xl font-extrabold text-[#d1ffd0]">
+            {t("title")}
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            {t("lastUpdated")}: 24 Aug 2025 ·{" "}
+            <Link
+              href={`/terms?lang=${lang}`}
+              className="text-[#81d742] underline"
+            >
+              {t("toTerms")}
+            </Link>
+          </p>
+        </div>
+
+        <Section>
+          <p>{t("intro")}</p>
+        </Section>
+
+        <Section title={t("controllerTitle")}>
+          <p>{t("controller")}</p>
+        </Section>
+
+        <Section title={t("whatTitle")}>
+          <Ul items={L.whatList} />
+        </Section>
+
+        <Section title={t("basisTitle")}>
+          <Ul items={L.basisList} />
+        </Section>
+
+        <Section title={t("cookiesTitle")}>
+          <p>{t("cookies")}</p>
+        </Section>
+
+        <Section title={t("shareTitle")}>
+          <Ul items={L.shareList} />
+        </Section>
+
+        <Section title={t("xferTitle")}>
+          <p>{t("xfer")}</p>
+        </Section>
+
+        <Section title={t("retainTitle")}>
+          <p>{t("retain")}</p>
+        </Section>
+
+        <Section title={t("securityTitle")}>
+          <p>{t("security")}</p>
+        </Section>
+
+        <Section title={t("rightsTitle")}>
+          <Ul items={L.rightsList} />
+        </Section>
+
+        <Section title={t("applyTitle")}>
+          <p>{t("apply")}</p>
+        </Section>
+
+        <Section title={t("childrenTitle")}>
+          <p>{t("children")}</p>
+        </Section>
+
+        <Section title={t("changesTitle")}>
+          <p>{t("changes")}</p>
+        </Section>
+
+        <Section title={t("contactTitle")}>
+          <p>{t("contact")}</p>
+        </Section>
+
+        <div className="mt-10">
+          <Link href="/" className="text-[#81d742] underline">
+            ← {t("back")}
+          </Link>
+        </div>
+      </main>
+    </PublicLayout>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <section className="mt-8">
+      {title ? (
+        <h2 className="text-xl font-bold text-[#d1ffd0] mb-2">{title}</h2>
+      ) : null}
+      <div className="space-y-3 leading-relaxed">{children}</div>
+    </section>
+  );
+}
+function Ul({ items = [] }) {
+  return (
+    <ul className="list-disc pl-6 space-y-2">
+      {items.map((x, i) => (
+        <li key={i}>{x}</li>
+      ))}
+    </ul>
   );
 }

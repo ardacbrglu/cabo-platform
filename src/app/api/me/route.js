@@ -3,10 +3,10 @@ export const runtime = "nodejs";
 
 /**
  * File: src/app/api/me/route.js
- * Purpose: Oturum bilgisini minimal ve DÜZ döndür (status/role dahil).
+ * Purpose: Oturum bilgisini minimal ve düz döndür (status/role dahil).
  *
  * Security Docblock:
- * - 200 OK + { authenticated:false } → anon (401 döndürmeyiz; UI akışını sadeleştirir).
+ * - 200 OK + { authenticated:false } → anon (401 dönmeyiz; UI akışı sade).
  * - Vary: Cookie + no-store (proxy/edge cache kirlenmez).
  * - Rate limit: 60/dk (IP).
  */
@@ -18,11 +18,13 @@ import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 
-function json(payload, init = {}) {
-  const res = NextResponse.json(payload, init);
+function withHeaders(res) {
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
+}
+function json(payload, init = {}) {
+  return withHeaders(NextResponse.json(payload, init));
 }
 
 export async function GET(req) {
@@ -43,7 +45,15 @@ export async function GET(req) {
 
     const u = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, name: true, role: true, status: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        languagePreference: true,
+        currencyCode: true,
+      },
     });
     if (!u) return json({ authenticated: false });
 
@@ -54,6 +64,8 @@ export async function GET(req) {
       name: u.name || "",
       role: u.role || "affiliate",
       status: u.status || "active",
+      languagePreference: u.languagePreference || "en",
+      currencyCode: u.currencyCode || "TRY",
     });
   } catch {
     return json({ authenticated: false });

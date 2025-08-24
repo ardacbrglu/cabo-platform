@@ -3,11 +3,7 @@ export const runtime = "nodejs";
 
 /**
  * File: src/app/api/activate/route.js
- * Purpose: E-posta aktivasyon linki doğrulama.
- * Security Docblock:
- * - GET idempotent; CSRF gerektirmez. Rate-limit: 10/dk (IP+UserAgent).
- * - Token imzası ve süresi `NEXTAUTH_SECRET` ile doğrulanır.
- * - Yanıtlar no-store + güvenlik header’ları ile döner.
+ * Purpose: E-posta aktivasyon linki doğrulama (+ tek-seferlik welcome bildirimi).
  */
 
 import { NextResponse } from "next/server";
@@ -16,6 +12,7 @@ import jwt from "jsonwebtoken";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
+import { sendWelcomeAffiliateNotification } from "@/lib/notify";
 
 const ACTIVATION_JWT_SECRET = process.env.NEXTAUTH_SECRET;
 if (!ACTIVATION_JWT_SECRET) throw new Error("NEXTAUTH_SECRET is not defined.");
@@ -77,14 +74,14 @@ export async function GET(req) {
     return withHeaders(NextResponse.json({ success: false, error: "jwt", message: t("jwt") }, { status: 400 }));
   }
 
-  // Token + pending kullanıcıyı bul
+  // pending + token eşleşmesi
   const user = await prisma.user.findFirst({
     where: { activationToken: token, status: "pending", email: emailFromJwt || undefined },
-    select: { id: true, email: true },
+    select: { id: true, email: true, name: true, languagePreference: true },
   });
 
   if (!user) {
-    // Aynı email aktifse alreadyActive kabul et
+    // aynı email aktifse: alreadyActive
     const already = await prisma.user.findFirst({
       where: { email: emailFromJwt || undefined, status: "active", activationToken: null },
       select: { id: true },
@@ -102,6 +99,18 @@ export async function GET(req) {
     where: { id: user.id },
     data: { status: "active", emailVerified: new Date(), activationToken: null },
   });
+
+  // Aktivasyon SONRASI tek-seferlik welcome bildirimi
+  try {
+    await sendWelcomeAffiliateNotification({
+      userId: user.id,
+      name: user.name,
+      locale: user.languagePreference || locale,
+    });
+  } catch (e) {
+    // Bildirim hatası aktivasyonu bozmasın
+    audit({ evt: "activate.notify_error", error: (e?.message || `${e}`).slice(0, 200) });
+  }
 
   audit({ evt: "activate.ok", email: user.email });
   return withHeaders(NextResponse.json({ success: true }, { status: 200 }));

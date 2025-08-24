@@ -51,6 +51,7 @@ model User {
   webhookLogsAsAffiliate WebhookRequestLog[]   @relation("WebhookLogAffiliate")
   MerchantIntegration    MerchantIntegration[]
 
+  @@index([activationToken, status])
   @@index([role, companyName]) // admin panelde arama/filtre kolaylığı (opsiyonel)
   @@map("users")
 }
@@ -237,6 +238,8 @@ model Notification {
   isDeleted Boolean          @default(false)
   user      User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
 
+  @@unique([userId, link], map: "uniq_user_link")
+  
   @@index([userId])
   @@map("notifications")
 }

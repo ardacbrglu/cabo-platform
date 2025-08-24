@@ -1,4 +1,4 @@
-// app/api/currencies/route.js
+// app/api/currencies/route.js dosyasi
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

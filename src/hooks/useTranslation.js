@@ -1,20 +1,15 @@
 "use client";
 
+/**
+ * Flat i18n hook
+ * - JSON anahtarları düz (flat) kabul edilir: "performance.title"
+ * - Önce aktif dilde tam anahtar, sonra fallback dilde tam anahtar aranır
+ * - nsPrefix destekli: useTranslation("performance") => t("title") -> "performance.title"
+ */
+
 import { useMemo } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import messages, { DEFAULT_LOCALE } from "@/locales";
-
-// --- yardımcılar ---
-function getByPath(obj, path) {
-  if (!obj || !path) return undefined;
-  const parts = String(path).split(".");
-  let cur = obj;
-  for (const k of parts) {
-    if (cur && Object.prototype.hasOwnProperty.call(cur, k)) cur = cur[k];
-    else return undefined;
-  }
-  return cur;
-}
 
 function interpolate(str, vars) {
   if (!vars || typeof str !== "string") return str;
@@ -32,26 +27,37 @@ function warnMissing(key) {
   }
 }
 
-// --- asıl hook ---
+// ---- FLAT LOOKUP ----
+function getFlat(dict, key) {
+  if (!dict || !key) return undefined;
+  return Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined;
+}
+
 export function useI18n(nsPrefix = "") {
   const { locale: ctxLocale } = useLocale?.() || {};
-  const loc = (ctxLocale || DEFAULT_LOCALE).toLowerCase().startsWith("tr") ? "tr" : "en";
-  const dict = messages[loc] || messages[DEFAULT_LOCALE];
-  const fallback = messages[DEFAULT_LOCALE];
+  const loc = (ctxLocale || DEFAULT_LOCALE || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
 
+  const dict = messages[loc] || messages[DEFAULT_LOCALE] || {};
+  const fallback = messages[DEFAULT_LOCALE] || {};
+
+  // "performance" -> "performance."  /  "" -> ""
   const prefix = nsPrefix ? (nsPrefix.endsWith(".") ? nsPrefix : nsPrefix + ".") : "";
 
   return useMemo(() => {
     function t(key, vars) {
       const full = prefix + key;
-      const v = getByPath(dict, full);
+
+      // 1) aktif dilde düz anahtar
+      const v = getFlat(dict, full);
       if (v !== undefined) return typeof v === "string" ? interpolate(v, vars) : v;
 
-      const vf = getByPath(fallback, full);
+      // 2) fallback dilde düz anahtar
+      const vf = getFlat(fallback, full);
       if (vf !== undefined) return typeof vf === "string" ? interpolate(vf, vars) : vf;
 
+      // 3) bulunamazsa anahtarı göster + dev’de uyar
       warnMissing(full);
-      return full; // anahtarı göster
+      return full;
     }
 
     function n(number, options) {
@@ -75,7 +81,7 @@ export function useI18n(nsPrefix = "") {
   }, [dict, fallback, loc, prefix]);
 }
 
-// Geriye dönük uyumlu kısayol
+// Geriye dönük kısa kullanım
 export function useTranslation(nsPrefix = "") {
   const api = useI18n(nsPrefix);
   const fn = (key, vars) => api.t(key, vars);

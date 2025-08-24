@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Layout from "@/components/Layout";
 import CustomMultiSelect from "@/components/CustomMultiSelect";
-import dynamic from "next/dynamic";
-import { BarChart2, ShoppingCart, Download, ChevronLeft, ChevronRight } from "lucide-react";
-import { useUser } from "@/context/UserContext";
-import useTranslation from "@/hooks/useTranslation"; // ⬅️ default import + aşağıda destructure
+import { BarChart2, ShoppingCart, Download, CalendarRange } from "lucide-react";
+import useTranslation from "@/hooks/useTranslation";
 
 import {
   Chart as ChartJS,
@@ -17,421 +16,305 @@ import {
   Tooltip,
   Legend,
   Filler,
-  Title,
 } from "chart.js";
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler, Title);
-const Line = dynamic(() => import("react-chartjs-2").then((mod) => mod.Line), { ssr: false });
-
+// colors
 const COLOR_GREEN = "#81d742";
-const COLOR_CABO = "#d1ffd0";
-const SALES_PER_PAGE = 7;
-const PLACEHOLDER_IMG = "https://placehold.co/80x80?text=IMG";
+const COLOR_ACCENT = "#d1ffd0";
+
+// secure fetch (headers + dedup)
+function uuid() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+async function apiFetch(url, init = {}) {
+  const headers = new Headers(init.headers || {});
+  headers.set("X-Requested-With", "XMLHttpRequest");
+  headers.set("X-Request-Id", uuid());
+  return fetch(url, { credentials: "include", ...init, headers });
+}
+
+const RANGES = [
+  { k: "7d", days: 7, key: "performance.range_7d" },
+  { k: "30d", days: 30, key: "performance.range_30d" },
+  { k: "90d", days: 90, key: "performance.range_90d" },
+  { k: "all", days: null, key: "performance.range_all_time" },
+];
+
+function ymd(d) { return d.toISOString().slice(0, 10); }
+function subDays(n) { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d; }
 
 export default function PerformancePage() {
-  const [stats, setStats] = useState({ totalClicks: 0, totalSales: 0, totalEarnings: 0 });
-  const [filters, setFilters] = useState({ startDate: "", endDate: "", productIds: [0] });
+  const { t } = useTranslation();
+
+  // filters
+  const [range, setRange] = useState("7d");
+  const [startDate, setStartDate] = useState(ymd(subDays(6)));
+  const [endDate, setEndDate] = useState(ymd(new Date()));
+  const [productIds, setProductIds] = useState([0]); // 0 → All
+
+  // data
   const [products, setProducts] = useState([]);
+  const [totals, setTotals] = useState({ clicks: 0, sales: 0, earnings: 0 });
   const [clickRecords, setClickRecords] = useState([]);
   const [saleRecords, setSaleRecords] = useState([]);
-  const [confirmedSales, setConfirmedSales] = useState([]);
-  const [allConfirmedSales, setAllConfirmedSales] = useState([]);
-  const [csvData, setCsvData] = useState("");
-  const [selectedChart, setSelectedChart] = useState("clicks");
-  const [salesPage, setSalesPage] = useState(1);
+  const [confirmed, setConfirmed] = useState([]);
 
-  const { user, setUser } = useUser();
-  const { t } = useTranslation(); // ⬅️ doğru kullanım
+  const lastKey = useRef("");      // dedup
+  const abortRef = useRef(null);   // abort inflight
 
-  // User fetch (for locale)
+  // quick range buttons control dates
   useEffect(() => {
-    if (!user?.userId || !user?.name) {
-      fetch("/api/me")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data && data.userId) {
-            setUser((u) => ({
-              ...u,
-              name: data.name,
-              email: data.email,
-              userId: data.userId,
-              role: data.role,
-            }));
-          }
-        });
-    }
-  }, [user, setUser]);
+    const r = RANGES.find((x) => x.k === range);
+    if (!r) return;
+    if (r.k === "all") { setStartDate(""); setEndDate(""); }
+    else { setStartDate(ymd(subDays(r.days - 1))); setEndDate(ymd(new Date())); }
+  }, [range]);
 
-  // Performance data
+  // fetch performance (debounced)
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const params = new URLSearchParams();
-        if (filters.startDate) params.append("startDate", filters.startDate);
-        if (filters.endDate) params.append("endDate", filters.endDate);
-        if (filters.productIds.length > 0) params.append("productIds", filters.productIds.join(","));
+    const params = new URLSearchParams();
+    if (startDate) params.set("startDate", startDate);
+    if (endDate) params.set("endDate", endDate);
+    if (productIds?.length) params.set("productIds", productIds.join(","));
+    const key = params.toString();
+    if (key === lastKey.current) return;
 
-        const res = await fetch(`/api/performance?${params.toString()}`);
-        if (!res.ok) throw new Error("API error");
-        const data = await res.json();
+    const timer = setTimeout(async () => {
+      if (abortRef.current) abortRef.current.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
 
-        setProducts(
-          Array.isArray(data.products)
-            ? data.products.map((p) => ({ value: p.productId, label: p.name }))
-            : []
-        );
-        setStats({
-          totalClicks: data.totalClicks || 0,
-          totalSales: data.totalSales || 0,
-          totalEarnings: data.totalEarnings || 0,
-        });
-        setClickRecords(data.clickRecords || []);
-        setSaleRecords(data.saleRecords || []);
-        setConfirmedSales(data.confirmedSales || []);
-        setAllConfirmedSales(data.allConfirmedSales || data.confirmedSales || []);
-        generateCsv(data.allConfirmedSales || data.confirmedSales || []);
-        setSalesPage(1);
-      } catch {
-        setProducts([]);
-        setStats({ totalClicks: 0, totalSales: 0, totalEarnings: 0 });
-        setClickRecords([]);
-        setSaleRecords([]);
-        setConfirmedSales([]);
-        setAllConfirmedSales([]);
-        generateCsv([]);
-        setSalesPage(1);
-      }
-    };
-    fetchData();
-  }, [filters]);
+      lastKey.current = key;
+      const res = await apiFetch(`/api/performance?${key}`, { signal: ac.signal });
+      if (!res.ok) { lastKey.current = ""; return; }
+      const data = await res.json();
 
-  const chartData = useMemo(() => {
-    const selectedIds = filters.productIds.includes(0) || filters.productIds.length === 0 ? null : filters.productIds;
-    const productFilter = (item) => !selectedIds || selectedIds.includes(item.productId);
+      const opts = [{ value: 0, label: t("performance.all_products") }].concat(
+        (data.products || []).map((p) => ({ value: p.productId, label: p.name }))
+      );
+      setProducts(opts);
+      setTotals({
+        clicks: data.totals?.clicks || 0,
+        sales: data.totals?.sales || 0,
+        earnings: Number(data.totals?.earnings || 0),
+      });
+      setClickRecords(data.clickRecords || []);
+      setSaleRecords(data.saleRecords || []);
+      setConfirmed(data.confirmedSales || []);
+    }, 180);
 
-    const dailyMap = {};
-    saleRecords.filter(productFilter).forEach(({ date, quantity }) => {
-      if (!dailyMap[date]) dailyMap[date] = { clicks: 0, sales: 0 };
-      dailyMap[date].sales += Number(quantity || 1);
-    });
-    clickRecords.filter(productFilter).forEach(({ date }) => {
-      if (!dailyMap[date]) dailyMap[date] = { clicks: 0, sales: 0 };
-      dailyMap[date].clicks++;
-    });
+    return () => clearTimeout(timer);
+  }, [startDate, endDate, productIds, t]);
 
-    const labels = Object.keys(dailyMap).sort();
-    const dataPoints =
-      selectedChart === "clicks"
-        ? labels.map((d) => dailyMap[d]?.clicks || 0)
-        : labels.map((d) => dailyMap[d]?.sales || 0);
-
-    return {
-      labels,
-      datasets: [
-        {
-          label: selectedChart === "clicks" ? t("performance.chart_clicks") : t("performance.chart_sales"),
-          data: dataPoints,
-          borderColor: selectedChart === "clicks" ? COLOR_GREEN : COLOR_CABO,
-          backgroundColor: selectedChart === "clicks" ? "rgba(129, 215, 66, 0.13)" : "rgba(209, 255, 208, 0.09)",
-          borderWidth: 3,
-          tension: 0.36,
-          fill: true,
-          pointRadius: 5,
-          pointHoverRadius: 10,
-          pointBackgroundColor: "#232323",
-          pointBorderColor: selectedChart === "clicks" ? COLOR_GREEN : COLOR_CABO,
-          pointBorderWidth: 2.3,
-        },
-      ],
-    };
-  }, [clickRecords, saleRecords, selectedChart, filters.productIds, t]);
-
-  const pagedSales = useMemo(() => {
-    const startIdx = (salesPage - 1) * SALES_PER_PAGE;
-    return allConfirmedSales.slice(startIdx, startIdx + SALES_PER_PAGE);
-  }, [allConfirmedSales, salesPage]);
-  const totalPages = Math.max(1, Math.ceil(allConfirmedSales.length / SALES_PER_PAGE));
-
-  const selectedProductName = useMemo(() => {
-    if (filters.productIds.length === 0 || filters.productIds.includes(0)) return t("performance.all_products");
-    if (filters.productIds.length === 1) {
-      return products.find((p) => p.value === filters.productIds[0])?.label || t("performance.selected_product");
+  // aggregate to chart series
+  const series = useMemo(() => {
+    const selected = productIds.includes(0) ? null : new Set(productIds);
+    const map = new Map(); // date -> {clicks, sales}
+    for (const c of clickRecords) {
+      if (selected && !selected.has(c.productId)) continue;
+      const d = c.date; const o = map.get(d) || { clicks: 0, sales: 0 }; o.clicks += 1; map.set(d, o);
     }
-    return t("performance.multiple_products");
-  }, [filters.productIds, products, t]);
+    for (const s of saleRecords) {
+      if (selected && !selected.has(s.productId)) continue;
+      const d = s.date; const o = map.get(d) || { clicks: 0, sales: 0 }; o.sales += (s.quantity || 1); map.set(d, o);
+    }
+    const labels = Array.from(map.keys()).sort();
+    return { labels, clicks: labels.map((d) => map.get(d).clicks), sales: labels.map((d) => map.get(d).sales) };
+  }, [clickRecords, saleRecords, productIds]);
+
+  const chartData = useMemo(() => ({
+    labels: series.labels,
+    datasets: [
+      { label: t("performance.chart_clicks"), data: series.clicks, borderColor: COLOR_GREEN, backgroundColor: "rgba(129,215,66,.12)", tension: .34, borderWidth: 2.5, fill: true, pointRadius: 3.5 },
+      { label: t("performance.chart_sales"),  data: series.sales,  borderColor: COLOR_ACCENT, backgroundColor: "rgba(209,255,208,.10)", tension: .34, borderWidth: 2.5, fill: true, pointRadius: 3.5 },
+    ],
+  }), [series, t]);
 
   const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
+    responsive: true, maintainAspectRatio: false,
     plugins: {
-      legend: { display: false },
-      title: { display: false },
-      tooltip: {
-        enabled: true,
-        backgroundColor: "#232823",
-        borderColor: COLOR_GREEN,
-        borderWidth: 1.3,
-        titleColor: COLOR_GREEN,
-        bodyColor: "#fff",
-        padding: 12,
-        caretSize: 7,
-        displayColors: false,
-        callbacks: {
-          title: (tt) => tt[0]?.label,
-          label: (tt) => `${tt.dataset.label}: ${tt.formattedValue}`,
-        },
-      },
+      legend: { labels: { color: "#c9eac7" } },
+      tooltip: { backgroundColor: "#1b1f1b", borderColor: COLOR_GREEN, borderWidth: 1, titleColor: COLOR_GREEN, bodyColor: "#fff", displayColors: false, padding: 10 }
     },
-    layout: { padding: { left: 0, right: 0, top: 10, bottom: 10 } },
     scales: {
-      x: {
-        ticks: { display: false },
-        grid: { color: "#262b26", borderDash: [2, 7], drawTicks: false },
-      },
-      y: {
-        ticks: { color: COLOR_CABO, font: { size: 13, weight: 600 }, padding: 4 },
-        grid: { color: "#262b26", borderDash: [2, 7], drawTicks: false },
-        beginAtZero: true,
-      },
-    },
-    animation: { duration: 900, easing: "easeOutCubic" },
+      x: { ticks: { color: "#a8b3a8" }, grid: { color: "#262b26", borderDash: [2,8] } },
+      y: { ticks: { color: "#a8b3a8" }, grid: { color: "#262b26", borderDash: [2,8] }, beginAtZero: true },
+    }
   };
 
-  function generateCsv(data) {
-    const header = [
-      t("performance.date"),
-      t("performance.product"),
-      t("performance.amount"),
-      t("performance.commission"),
-      t("performance.status"),
+  // CSV (BOM ile Excel uyumlu)
+  const csv = useMemo(() => {
+    const rows = [
+      [t("performance.date"), t("product"), t("amount"), t("commission"), t("quantity"), t("performance.status")],
+      ...confirmed.map((s) => [
+        s.date,
+        (products.find((p) => p.value === s.productId)?.label || s.productName || "").replaceAll(",", " "),
+        (s.amount ?? 0).toFixed(2),
+        (s.commission ?? 0).toFixed(2),
+        String(s.quantity ?? 1),
+        s.status,
+      ]),
     ];
-    const rows = data.map((r) => [
-      r.date ?? "",
-      r.productName ?? "",
-      typeof r.amount === "number" ? r.amount.toFixed(2) : "0.00",
-      typeof r.commission === "number" ? r.commission.toFixed(2) : "0.00",
-      r.status ?? "",
-    ]);
-    setCsvData([header, ...rows].map((r) => r.join(",")).join("\n"));
-  }
+    return rows.map((r) => r.join(",")).join("\n");
+  }, [confirmed, products, t]);
+
   function downloadCsv() {
-    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `performance_${user?.userId || "user"}_${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `performance_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
   }
 
-  const KPI_ICON_SIZE = 28;
-  const SALES_ROW_HEIGHT = 54;
-  const SALES_PANEL_BODY = SALES_ROW_HEIGHT * SALES_PER_PAGE + 12;
+  const selectedName = useMemo(() => {
+    if (productIds.includes(0) || productIds.length === 0) return t("performance.all_products");
+    return products.find((p) => p.value === productIds[0])?.label || t("performance.selected_product");
+  }, [productIds, products, t]);
 
   return (
     <Layout>
-      <main className="flex flex-col lg:flex-row gap-7 w-full max-w-7xl mx-auto py-7 px-2 md:px-5 font-mono min-h-[650px]">
-        {/* SOL: ÜRÜN + TARİH FİLTRELERİ */}
-        <aside className="w-full sm:w-[250px] flex-shrink-0 mb-6 lg:mb-0">
-          <div className="bg-[#181818] rounded-2xl shadow-lg px-5 py-6 flex flex-col gap-7 h-full min-h-[265px]">
-            <div>
-              <label className="block mb-2 font-bold text-[17px] text-[#81d742]">{t("performance.product")}</label>
+      {/* ÜSTTEN biraz daha aşağı – ortalanmış genişlik */}
+      <main className="mx-auto w-full max-w-7xl px-4 md:px-8 pt-10 md:pt-12 pb-12">
+        {/* Title + quick ranges */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-7">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-[#d1ffd0] tracking-wide">
+            {t("performance.title")}
+          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {RANGES.map((r) => (
+              <button
+                key={r.k}
+                onClick={() => setRange(r.k)}
+                className={`px-3 py-1.5 rounded-full border text-sm font-semibold transition ${
+                  range === r.k
+                    ? "bg-[#81d742] text-black border-[#81d742]"
+                    : "bg-[#1d1d1d] text-[#d8d8d8] border-[#2a2a2a] hover:bg-[#232323]"
+                }`}
+              >
+                {t(r.key)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* GRID */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-7">
+          {/* LEFT FILTERS */}
+          <aside className="lg:col-span-3">
+            <div className="bg-[#151515] border border-[#252525] rounded-2xl p-4 space-y-5">
               <CustomMultiSelect
+                label={t("performance.product")}
                 options={products}
-                selected={filters.productIds}
-                setSelected={(arr) => {
-                  if (arr.includes(0) && arr.length > 1) setFilters((f) => ({ ...f, productIds: [0] }));
-                  else if (arr.length === 0) setFilters((f) => ({ ...f, productIds: [0] }));
-                  else setFilters((f) => ({ ...f, productIds: arr }));
-                }}
-                label=""
+                selected={productIds}
+                setSelected={(arr) => setProductIds(arr?.length ? arr : [0])}
               />
-            </div>
-            <div className="flex flex-col gap-4">
-              <div>
-                <label className="block mb-1 font-bold text-[15px] text-[#81d742]">{t("performance.start_date")}</label>
-                <input
-                  type="date"
-                  value={filters.startDate}
-                  onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
-                  className="p-2 rounded bg-[#222] border border-[#444] text-white outline-none focus:border-[#81d742] w-full text-sm"
-                />
-              </div>
-              <div>
-                <label className="block mb-1 font-bold text-[15px] text-[#81d742]">{t("performance.end_date")}</label>
-                <input
-                  type="date"
-                  value={filters.endDate}
-                  onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
-                  className="p-2 rounded bg-[#222] border border-[#444] text-white outline-none focus:border-[#81d742] w-full text-sm"
-                />
-              </div>
-            </div>
-          </div>
-        </aside>
 
-        {/* ORTA: KPI + GRAFİK */}
-        <section className="flex-1 min-w-[320px] flex flex-col gap-5">
-          <div className="flex flex-row gap-3 justify-start mb-2 flex-wrap">
-            <div className="bg-[#222] rounded-xl shadow flex flex-row items-center gap-3 px-6 py-3 min-w-[145px]">
-              <BarChart2 size={KPI_ICON_SIZE} color={COLOR_GREEN} />
-              <div>
-                <div className="text-[#81d742] font-extrabold text-xl">{stats.totalClicks}</div>
-                <div className="text-gray-400 uppercase text-xs tracking-wide">{t("performance.totalClicks")}</div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[#81d742] font-bold">
+                  <CalendarRange size={18} /> <span>{t("performance.range_label")}</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <label className="block text-xs text-[#8aa88a] mb-1">{t("performance.start_date")}</label>
+                    <input
+                      type="date"
+                      className="w-full bg-[#202020] border border-[#333] rounded px-3 py-2 text-white outline-none focus:border-[#81d742]"
+                      value={startDate}
+                      onChange={(e) => { setRange("custom"); setStartDate(e.target.value); }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#8aa88a] mb-1">{t("performance.end_date")}</label>
+                    <input
+                      type="date"
+                      className="w-full bg-[#202020] border border-[#333] rounded px-3 py-2 text-white outline-none focus:border-[#81d742]"
+                      value={endDate}
+                      onChange={(e) => { setRange("custom"); setEndDate(e.target.value); }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="bg-[#222] rounded-xl shadow flex flex-row items-center gap-3 px-6 py-3 min-w-[145px]">
-              <ShoppingCart size={KPI_ICON_SIZE} color={COLOR_GREEN} />
-              <div>
-                <div className="text-[#81d742] font-extrabold text-xl">{stats.totalSales}</div>
-                <div className="text-gray-400 uppercase text-xs tracking-wide">{t("performance.total_sales")}</div>
-              </div>
-            </div>
-            <div className="bg-[#222] rounded-xl shadow flex flex-row items-center gap-3 px-6 py-3 min-w-[145px]">
-              <BarChart2 size={KPI_ICON_SIZE} color={COLOR_CABO} />
-              <div>
-                <div className="text-[#d1ffd0] font-extrabold text-xl">₺{stats.totalEarnings.toFixed(2)}</div>
-                <div className="text-gray-400 uppercase text-xs tracking-wide">{t("performance.total_earnings")}</div>
-              </div>
-            </div>
-          </div>
+          </aside>
 
-          <div className="bg-[#181818] rounded-2xl shadow-lg p-5 flex-1 flex flex-col h-full justify-between relative min-h-[320px]">
-            <div className="flex flex-row items-center mb-4 gap-3">
-              <div className="text-lg font-extrabold text-[#d1ffd0] tracking-wide flex-shrink-0">{selectedProductName}</div>
-              <div className="flex flex-row gap-2 ml-auto">
+          {/* MIDDLE: KPIs + CHART */}
+          <section className="lg:col-span-6 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-[#1b1b1b] rounded-xl border border-[#262626] p-4 flex items-center gap-3">
+                <BarChart2 color={COLOR_GREEN} />
+                <div>
+                  <div className="text-[#81d742] text-xl font-extrabold">{totals.clicks}</div>
+                  <div className="text-xs text-gray-400">{t("performance.totalClicks")}</div>
+                </div>
+              </div>
+              <div className="bg-[#1b1b1b] rounded-xl border border-[#262626] p-4 flex items-center gap-3">
+                <ShoppingCart color={COLOR_GREEN} />
+                <div>
+                  <div className="text-[#81d742] text-xl font-extrabold">{totals.sales}</div>
+                  <div className="text-xs text-gray-400">{t("performance.total_sales")}</div>
+                </div>
+              </div>
+              <div className="bg-[#1b1b1b] rounded-xl border border-[#262626] p-4 flex items-center gap-3">
+                <BarChart2 color={COLOR_ACCENT} />
+                <div>
+                  <div className="text-[#d1ffd0] text-xl font-extrabold">₺{Number(totals.earnings || 0).toFixed(2)}</div>
+                  <div className="text-xs text-gray-400">{t("performance.total_earnings")}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#151515] border border-[#252525] rounded-2xl p-4 h-[380px]">
+              <div className="text-[#d1ffd0] font-bold mb-2">{selectedName}</div>
+              {series.labels.length === 0 ? (
+                <div className="h-[330px] flex items-center justify-center text-gray-400">{t("performance.no_data")}</div>
+              ) : (
+                <div className="h-[330px]"><Line data={chartData} options={chartOptions} /></div>
+              )}
+            </div>
+          </section>
+
+          {/* RIGHT: CONFIRMED SALES */}
+          <aside className="lg:col-span-3">
+            <div className="bg-[#151515] border border-[#252525] rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#252525]">
+                <div className="text-[#d1ffd0] font-bold">{t("performance.confirmed_sales")}</div>
                 <button
-                  onClick={() => setSelectedChart("clicks")}
-                  className={`px-5 py-2 text-base rounded-full font-bold border transition ${
-                    selectedChart === "clicks"
-                      ? "bg-[#81d742] text-black border-[#81d742]"
-                      : "bg-[#252625] text-[#ccc] border-[#2b2c2b] hover:bg-[#232723]"
-                  }`}
+                  onClick={downloadCsv}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#81d742] text-black font-semibold hover:bg-[#a7ff72]"
+                  title={t("performance.export_csv")}
                 >
-                  {t("performance.clicks")}
-                </button>
-                <button
-                  onClick={() => setSelectedChart("sales")}
-                  className={`px-5 py-2 text-base rounded-full font-bold border transition ${
-                    selectedChart === "sales"
-                      ? "bg-[#81d742] text-black border-[#81d742]"
-                      : "bg-[#252625] text-[#ccc] border-[#2b2c2b] hover:bg-[#232723]"
-                  }`}
-                >
-                  {t("performance.sales")}
+                  <Download size={18} /> {t("performance.export_csv")}
                 </button>
               </div>
-            </div>
-            <div className="w-full flex-1 flex items-end pb-1 min-h-[220px] relative">
-              <Line data={chartData} options={chartOptions} height={280} />
-              <style jsx global>{`
-                .chartjs-render-monitor {
-                  background: repeating-linear-gradient(
-                      to right,
-                      #1d201c 0,
-                      #1d201c 1px,
-                      transparent 1px,
-                      transparent 42px
-                    ),
-                    repeating-linear-gradient(to bottom, #1d201c 0, #1d201c 1px, transparent 1px, transparent 38px);
-                  border-radius: 18px;
-                }
-              `}</style>
-            </div>
-          </div>
-        </section>
-
-        {/* SAĞ: ONAYLI SATIŞLAR */}
-        <aside className="w-full lg:w-[370px] flex flex-col">
-          <div
-            className="bg-[#181818] rounded-2xl shadow-lg flex-1 flex flex-col"
-            style={{ border: "2px solid #232323", boxShadow: "0 0 6px #132e1248", overflow: "hidden", minHeight: 330 }}
-          >
-            <div className="text-2xl md:text-3xl font-bold text-[#d1ffd0] mb-2 mt-7 text-center font-sans">
-              {t("performance.confirmed_sales")}
-            </div>
-
-            {allConfirmedSales.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-gray-400 text-lg">{t("performance.no_sales")}</div>
-            ) : (
-              <ul className="flex-1 px-3 pt-3 overflow-y-auto" style={{ maxHeight: SALES_PANEL_BODY, minHeight: SALES_PANEL_BODY }}>
-                {pagedSales.map((s, i) => {
-                  const rowNum = allConfirmedSales.length - (salesPage - 1) * SALES_PER_PAGE - i;
-                  return (
-                    <li
-                      key={s.saleId || s.date + "-" + i}
-                      className="flex items-center gap-3 py-2 px-2 my-0.5 rounded-xl bg-[#222] hover:bg-[#232423] transition"
-                      style={{ minHeight: 49, height: 49, maxHeight: 49 }}
-                    >
-                      <div className="text-[#81d742] font-bold text-base w-6 text-right flex-shrink-0">{rowNum}</div>
+              {confirmed.length === 0 ? (
+                <div className="h-[420px] flex items-center justify-center text-gray-400">{t("performance.no_sales")}</div>
+              ) : (
+                <ul className="max-h-[420px] overflow-y-auto divide-y divide-[#232323]">
+                  {confirmed.map((s) => (
+                    <li key={s.saleId} className="px-4 py-3 flex items-center gap-3">
                       <img
-                        src={s.productImage || PLACEHOLDER_IMG}
-                        className="w-9 h-9 rounded bg-[#232323] border border-[#232c23] shadow flex-shrink-0 object-contain"
-                        alt="Product"
-                        onError={(e) => {
-                          e.currentTarget.src = PLACEHOLDER_IMG;
-                        }}
+                        src={s.productImage || "https://placehold.co/48x48?text=IMG"}
+                        alt=""
+                        className="w-10 h-10 rounded bg-[#222] object-contain border border-[#2b2b2b]"
+                        onError={(e) => (e.currentTarget.src = "https://placehold.co/48x48?text=IMG")}
                       />
-                      <div className="flex-1 min-w-0 flex flex-col justify-center">
-                        <div className="text-[15px] font-bold text-white truncate">{s.productName}</div>
-                        <div className="text-xs text-gray-400">{s.date}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-white font-semibold text-sm">{s.productName}</div>
+                        <div className="text-xs text-gray-400">{s.date} • {t("quantity")}: {s.quantity}</div>
                       </div>
-                      <div className="flex flex-col items-end min-w-[64px] ml-1">
-                        <span
-                          className="rounded-[8px] font-bold"
-                          style={{
-                            color: "#97ffb1",
-                            background: "#161e17",
-                            border: "1.5px solid #18371e",
-                            padding: "2.5px 14px 2.5px 12px",
-                            fontFamily: "Fira Mono, monospace",
-                            fontSize: 16,
-                            minWidth: 52,
-                            textAlign: "right",
-                            boxShadow: "0 1px 8px #15291813",
-                            letterSpacing: 1,
-                          }}
-                        >
-                          ₺{s.commission.toFixed(2)}
-                        </span>
+                      <div className="text-right">
+                        <div className="text-[#97ffb1] font-extrabold">₺{Number(s.commission || 0).toFixed(2)}</div>
+                        <div className="text-[10px] text-gray-400 uppercase">{s.status}</div>
                       </div>
                     </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 pb-6 bg-[#181818] mt-auto">
-              <div className="flex items-center gap-2">
-                <button
-                  className="p-1 rounded-full hover:bg-[#222] transition disabled:opacity-30"
-                  disabled={salesPage === 1}
-                  onClick={() => setSalesPage((p) => Math.max(1, p - 1))}
-                  aria-label={t("performance.prev")}
-                >
-                  <ChevronLeft size={22} />
-                </button>
-                <span className="text-[#d1ffd0] font-bold text-lg tracking-wide select-none" style={{ minWidth: 48 }}>
-                  {salesPage} / {totalPages}
-                </span>
-                <button
-                  className="p-1 rounded-full hover:bg-[#222] transition disabled:opacity-30"
-                  disabled={salesPage === totalPages}
-                  onClick={() => setSalesPage((p) => Math.min(totalPages, p + 1))}
-                  aria-label={t("performance.next")}
-                >
-                  <ChevronRight size={22} />
-                </button>
-              </div>
-              <button
-                onClick={downloadCsv}
-                className="flex items-center justify-center gap-2 rounded bg-[#81d742] px-4 py-2 font-bold text-black text-base hover:bg-[#a9ff72] transition mt-2 sm:mt-0"
-                title={t("performance.export_csv")}
-                style={{ minWidth: 130 }}
-              >
-                <Download size={20} /> {t("performance.export_csv")}
-              </button>
+                  ))}
+                </ul>
+              )}
             </div>
-          </div>
-        </aside>
+          </aside>
+        </div>
       </main>
     </Layout>
   );

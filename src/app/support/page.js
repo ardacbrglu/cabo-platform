@@ -6,13 +6,12 @@ import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from "lucide-react
 import { useUser } from "@/context/UserContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useState, useRef } from "react";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
 import Captcha from "@/components/Captcha";
+import apiFetch from "@/lib/apiFetch";
 
 export default function SupportPage() {
   const { user } = useUser();
-  const { t } = useTranslation();                 // ✅ doğru kullanım (destructure)
-  const { csrfToken, ready: csrfReady } = useCsrfToken(); // ✅ doğru kullanım
+  const { t } = useTranslation();
 
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
@@ -27,10 +26,6 @@ export default function SupportPage() {
     setError("");
 
     if (!message.trim()) return;
-    if (!csrfReady || !csrfToken) {
-      setError(t("errorGeneric"));
-      return;
-    }
     if (!captchaToken) {
       setError(t("captchaRequired") || "Please complete the captcha.");
       return;
@@ -38,16 +33,13 @@ export default function SupportPage() {
 
     setSending(true);
     try {
-      const res = await fetch("/api/support", {
+      const res = await apiFetch("/api/support", {
         method: "POST",
-        credentials: "include",
         headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
+          // CSRF header'ını apiFetch otomatik ekler; reCAPTCHA token'ını biz ekliyoruz
           "x-recaptcha-token": captchaToken,
-          accept: "application/json",
         },
-        body: JSON.stringify({ message }),
+        body: { message },
       });
 
       const data = await res.json().catch(() => ({}));
@@ -56,7 +48,7 @@ export default function SupportPage() {
         setSent(true);
         setMessage("");
         setCaptchaToken(null);
-        setCaptchaKey((k) => k + 1); // captcha'yı sıfırla
+        setCaptchaKey((k) => k + 1); // captcha reset
         setTimeout(() => setSent(false), 3500);
       } else {
         setError(data.error || t("errorGeneric"));
@@ -67,11 +59,11 @@ export default function SupportPage() {
       setError(t("errorGeneric"));
       setCaptchaToken(null);
       setCaptchaKey((k) => k + 1);
-    }
-
-    setSending(false);
-    if (msgRef.current) {
-      msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    } finally {
+      setSending(false);
+      if (msgRef.current) {
+        msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }
   };
 
@@ -124,7 +116,7 @@ export default function SupportPage() {
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                disabled={sending || !csrfReady || !csrfToken}
+                disabled={sending}
                 required
                 maxLength={900}
                 autoComplete="off"
@@ -141,13 +133,7 @@ export default function SupportPage() {
               <button
                 type="submit"
                 className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={
-                  sending ||
-                  !message.trim() ||
-                  !csrfReady ||
-                  !csrfToken ||
-                  !captchaToken
-                }
+                disabled={sending || !message.trim() || !captchaToken}
               >
                 {sending ? t("sending") : t("send")}
               </button>
@@ -162,11 +148,11 @@ export default function SupportPage() {
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-2 text-[#d1ffd0]">
                 <Mail size={17} className="text-[#81d742]" />
-                <span className="font-mono text-xs">support@cabo.com</span>
+                <span className="font-mono text-xs">caboaffiliates@gmail.com</span>
               </div>
               <div className="flex items-center gap-2 text-[#d1ffd0]">
                 <Phone size={17} className="text-[#81d742]" />
-                <span className="font-mono text-xs">{t("supportLine")}: +90 555 123 4567</span>
+                <span className="font-mono text-xs">{t("supportLine")}: +90 --- --- -- --</span>
               </div>
               <div className="flex items-center gap-2 text-[#d1ffd0]">
                 <Instagram size={17} className="text-[#81d742]" />

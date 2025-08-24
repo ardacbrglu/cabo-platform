@@ -1,16 +1,7 @@
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
 /**
  * Affiliate register:
- * - flow=manual  → kullanıcı oluştur + aktivasyon e-postası
- * - flow=google  → precheck (terms+captcha), 10 dk imzalı cookie → NextAuth Google
- *
- * Security:
- * - Origin/Referer + X-Requested-With + X-Request-Id
- * - RL 8/dk (IP)
- * - Zod validation + sanitize
- * - ReCAPTCHA doğrulaması
+ * - flow=manual  → kullanıcı oluştur + aktivasyon e-postası (token 1g).
+ * - flow=google  → precheck (terms+captcha), 10 dk imzalı cookie → NextAuth Google.
  */
 
 import { NextResponse } from "next/server";
@@ -24,6 +15,8 @@ import { audit } from "@/lib/logger";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { sendActivationEmail } from "@/lib/mailer";
 import { verifyRecaptcha } from "@/lib/captcha";
+
+export const runtime = "nodejs";
 
 const ACTIVATION_JWT_SECRET = process.env.NEXTAUTH_SECRET;
 
@@ -83,25 +76,46 @@ const messages = {
 };
 
 export async function POST(req) {
-  const requestId = requireRequestId(req);
-  requireOrigin(req);
-  requireAjax(req);
+  // --- Preflight
+  let requestId = "unknown";
+  try {
+    requestId = requireRequestId(req);
+    requireOrigin(req);
+    requireAjax(req);
+  } catch {
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "bad_request", message: "bad_request", request_id: requestId },
+        { status: 400 }
+      )
+    );
+  }
 
-  const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
+  const locale = (req.headers.get("accept-language") || "")
+    .toLowerCase()
+    .startsWith("tr")
+    ? "tr"
+    : "en";
   const t = (k) => messages[locale][k] ?? k;
 
-  // RL 8/dk (IP)
+  // RL 8/dk (IP+UA)
   const rlKey = makeRateLimitKey(req, { scope: "register" });
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 8, windowMs: 60_000 });
   if (!ok) {
-    const res = NextResponse.json(
-      { success: false, error: "too_many_requests", message: t("ratelimit"), request_id: requestId },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } },
+    return withHeaders(
+      NextResponse.json(
+        {
+          success: false,
+          error: "too_many_requests",
+          message: t("ratelimit"),
+          request_id: requestId,
+        },
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
+      )
     );
-    return withHeaders(res);
   }
 
-  // Body
+  // Body parse
   let bodyRaw;
   try {
     bodyRaw = await req.json();
@@ -109,12 +123,12 @@ export async function POST(req) {
     return withHeaders(
       NextResponse.json(
         { success: false, error: "bad_request", message: t("required"), request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
-  // GOOGLE PRECHECK
+  // ---- Google precheck
   if (bodyRaw?.flow === "google") {
     let data;
     try {
@@ -123,8 +137,8 @@ export async function POST(req) {
       return withHeaders(
         NextResponse.json(
           { success: false, error: "invalid_payload", message: t("required"), request_id: requestId },
-          { status: 400 },
-        ),
+          { status: 400 }
+        )
       );
     }
 
@@ -133,14 +147,23 @@ export async function POST(req) {
       return withHeaders(
         NextResponse.json(
           { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
-          { status: 400 },
-        ),
+          { status: 400 }
+        )
       );
     }
 
-    // 10 dakikalık imzalı precheck cookie
-    const preToken = jwt.sign({ scope: "google_registration_precheck" }, process.env.NEXTAUTH_SECRET, { expiresIn: "10m" });
-    const res = NextResponse.json({ success: true, precheck: true, message: t("ok"), request_id: requestId });
+    // 10 dk imzalı precheck cookie
+    const preToken = jwt.sign(
+      { scope: "google_registration_precheck" },
+      process.env.NEXTAUTH_SECRET,
+      { expiresIn: "10m" }
+    );
+    const res = NextResponse.json({
+      success: true,
+      precheck: true,
+      message: t("ok"),
+      request_id: requestId,
+    });
     res.cookies.set("google_reg_precheck", preToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -152,21 +175,25 @@ export async function POST(req) {
     return withHeaders(res);
   }
 
-  // MANUEL
+  // ---- Manual
   let data;
   try {
     data = ManualSchema.parse(bodyRaw);
   } catch (e) {
+    const field = e?.errors?.[0]?.path?.[0];
     const msg =
-      e?.errors?.[0]?.path?.[0] === "email" ? t("email") :
-      e?.errors?.[0]?.path?.[0] === "name" ? t("username") :
-      e?.errors?.[0]?.path?.[0] === "password" ? t("password") :
-      t("required");
+      field === "email"
+        ? t("email")
+        : field === "name"
+        ? t("username")
+        : field === "password"
+        ? t("password")
+        : t("required");
     return withHeaders(
       NextResponse.json(
         { success: false, error: "invalid_payload", message: msg, request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
@@ -175,22 +202,24 @@ export async function POST(req) {
     return withHeaders(
       NextResponse.json(
         { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
   const email = data.email.trim().toLowerCase();
   const name = data.name.trim();
 
-  // Google-only çakışma → manuel kayıt engeli
-  const googleAccount = await prisma.account.findFirst({ where: { provider: "google", user: { email } } });
+  // Google-only çakışma
+  const googleAccount = await prisma.account.findFirst({
+    where: { provider: "google", user: { email } },
+  });
   if (googleAccount) {
     return withHeaders(
       NextResponse.json(
         { success: false, error: "google_only", message: t("googleReg"), request_id: requestId },
-        { status: 409 },
-      ),
+        { status: 409 }
+      )
     );
   }
 
@@ -200,8 +229,8 @@ export async function POST(req) {
       return withHeaders(
         NextResponse.json(
           { success: false, error: "already_active", message: t("alreadyActive"), request_id: requestId },
-          { status: 409 },
-        ),
+          { status: 409 }
+        )
       );
     }
     // pending → günlük 3 limit
@@ -213,8 +242,8 @@ export async function POST(req) {
       return withHeaders(
         NextResponse.json(
           { success: false, error: "limit_exceeded", message: t("limitExceeded"), request_id: requestId },
-          { status: 429 },
-        ),
+          { status: 429 }
+        )
       );
     }
 
@@ -226,6 +255,8 @@ export async function POST(req) {
         lastActivationRequestAt: now,
         activationRequestedCount: count + 1,
         termsAccepted: true,
+        // dil & para birimini istersen Accept-Language'a göre güncelleyebilirsin:
+        languagePreference: existing.languagePreference || locale,
       },
     });
     try {
@@ -234,12 +265,14 @@ export async function POST(req) {
       return withHeaders(
         NextResponse.json(
           { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
-          { status: 500 },
-        ),
+          { status: 500 }
+        )
       );
     }
     audit({ evt: "register.manual.resend", email, requestId });
-    return withHeaders(NextResponse.json({ success: true, message: t("success"), request_id: requestId }));
+    return withHeaders(
+      NextResponse.json({ success: true, message: t("success"), request_id: requestId })
+    );
   }
 
   // Yeni kullanıcı
@@ -257,6 +290,8 @@ export async function POST(req) {
       activationToken,
       activationRequestedCount: 1,
       lastActivationRequestAt: new Date(),
+      languagePreference: locale, // ilk dil tercihi
+      currencyCode: "TRY",
     },
   });
 
@@ -266,11 +301,13 @@ export async function POST(req) {
     return withHeaders(
       NextResponse.json(
         { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
-        { status: 500 },
-      ),
+        { status: 500 }
+      )
     );
   }
 
   audit({ evt: "register.manual.created", email, requestId });
-  return withHeaders(NextResponse.json({ success: true, message: t("success"), request_id: requestId }));
+  return withHeaders(
+    NextResponse.json({ success: true, message: t("success"), request_id: requestId })
+  );
 }

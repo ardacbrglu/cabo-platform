@@ -1,15 +1,6 @@
+// src/app/api/password_reset/request/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-/**
- * File: src/app/api/password_reset/request/route.js
- * Purpose: Şifre sıfırlama e-postası başlatma.
- * Security Docblock:
- * - POST: Origin/Referer eşleşmesi + X-Requested-With + X-Request-Id (ops. X-CSRF-Token kabul edilir).
- * - RateLimit: 5/dk (IP).
- * - Enumeration-safe: Kullanıcı yoksa da success döner.
- * - JSON error contract: { error, request_id, retry_after? }  (compat için message da döner)
- */
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -27,6 +18,23 @@ function withHeaders(res) {
   return applyApiSecurityHeaders(res);
 }
 
+// NextAuth CSRF (double-submit cookie)
+function readCookie(req, name) {
+  const cookie = req.headers.get("cookie") || "";
+  const m = cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function verifyNextAuthCsrf(req) {
+  const header = req.headers.get("x-csrf-token");
+  if (!header) return false;
+  const cookie =
+    readCookie(req, "__Host-next-auth.csrf-token") ||
+    readCookie(req, "next-auth.csrf-token");
+  if (!cookie) return false;
+  const [cookieToken] = cookie.split("|");
+  return !!cookieToken && header === cookieToken;
+}
+
 const messages = {
   en: {
     required: "Email is required.",
@@ -42,19 +50,23 @@ const messages = {
   },
 };
 
-const BodySchema = z.object({
-  email: z.string().email().max(254),
-});
+const BodySchema = z.object({ email: z.string().email().max(254) });
 
 export async function POST(req) {
   const requestId = requireRequestId(req);
   requireOrigin(req);
   requireAjax(req);
 
+  if (!verifyNextAuthCsrf(req)) {
+    audit({ evt: "pwreset.request.csrf_fail", requestId });
+    return withHeaders(
+      NextResponse.json({ success: false, error: "Forbidden", request_id: requestId }, { status: 403 })
+    );
+  }
+
   const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
   const t = (k) => messages[locale][k] ?? k;
 
-  // Rate limit 5/dk
   const rl = await checkRateLimit({
     key: makeRateLimitKey(req, { scope: "pwreset_req" }),
     limit: 5,
@@ -64,45 +76,47 @@ export async function POST(req) {
     audit({ evt: "pwreset.request.ratelimit", requestId });
     return withHeaders(
       NextResponse.json(
-        {
-          success: false,
-          error: t("ratelimit"),
-          message: t("ratelimit"),
-          request_id: requestId,
-          retry_after: Math.ceil(rl.resetMs / 1000),
-        },
+        { success: false, error: t("ratelimit"), message: t("ratelimit"), request_id: requestId, retry_after: Math.ceil(rl.resetMs / 1000) },
         { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
       )
     );
   }
 
-  // Body parse
   let data;
   try {
-    const body = await req.json();
-    data = BodySchema.parse(body);
+    data = BodySchema.parse(await req.json());
   } catch {
     return withHeaders(
-      NextResponse.json(
-        { success: false, error: t("required"), message: t("required"), request_id: requestId },
-        { status: 400 }
-      )
+      NextResponse.json({ success: false, error: t("required"), message: t("required"), request_id: requestId }, { status: 400 })
     );
   }
 
   const email = data.email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, languagePreference: true, status: true, passwordHash: true },
+  });
 
-  // Enumeration-safe: kullanıcı yoksa da success
-  if (!user) {
-    audit({ evt: "pwreset.request.ok.no_user", email: email.slice(0, 3) + "***", requestId });
-    return withHeaders(
-      NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
-    );
+  // Enumeration-safe: her durumda success
+  if (!user || user.status !== "active") {
+    audit({ evt: "pwreset.request.ok.no_user_or_inactive", email: email.slice(0, 3) + "***", requestId });
+    return withHeaders(NextResponse.json({ success: true, message: t("sent"), request_id: requestId }));
   }
 
-  // Eski kullanılmamış tokenları temizle
-  await prisma.passwordResetToken.deleteMany({ where: { userId: user.id, used: false } });
+  // Google ile kayıtlı ve hiç şifre oluşturmamışsa: e-posta ile reset kapalı
+  const hasGoogle = await prisma.account.findFirst({
+    where: { userId: user.id, provider: "google" },
+    select: { id: true },
+  });
+  if (hasGoogle && !user.passwordHash) {
+    audit({ evt: "pwreset.request.google_no_pw_blocked", userId: user.id, requestId });
+    return withHeaders(NextResponse.json({ success: true, message: t("sent"), request_id: requestId }));
+  }
+
+  // Eski, kullanılmamışları temizle
+  await prisma.passwordResetToken.deleteMany({
+    where: { userId: user.id, used: false },
+  });
 
   // 15 dk geçerli yeni token
   const token = uuidv4();
@@ -116,15 +130,11 @@ export async function POST(req) {
     const lang = user.languagePreference || locale;
     await sendPasswordResetEmail(user.email, token, lang);
   } catch (e) {
-    audit({ evt: "pwreset.request.mail_fail", userId: user.id, requestId, err: String(e && e.message || e) });
-    // Yine enumeration-safe: dışa success
-    return withHeaders(
-      NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
-    );
+    audit({ evt: "pwreset.request.mail_fail", userId: user.id, requestId, err: String(e?.message || e) });
+    // enumeration-safe: yine success
+    return withHeaders(NextResponse.json({ success: true, message: t("sent"), request_id: requestId }));
   }
 
   audit({ evt: "pwreset.request.ok", userId: user.id, requestId });
-  return withHeaders(
-    NextResponse.json({ success: true, message: t("sent"), request_id: requestId })
-  );
+  return withHeaders(NextResponse.json({ success: true, message: t("sent"), request_id: requestId }));
 }

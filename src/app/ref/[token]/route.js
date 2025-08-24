@@ -1,100 +1,170 @@
 // app/api/ref/[token]/route.js
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { z } from 'zod';
+/**
+ * Referral redirect endpoint
+ * - Validates token with Zod (min 16)
+ * - Soft rate-limit (IP+UA); on limit: skip write ops but still redirect if link is valid
+ * - Dedup click per (linkId, ip, ua) for 30 minutes
+ * - Atomic click insert + product.totalClicks increment
+ * - Defensive URL validation; only http/https
+ * - Strict security headers + no-store on ALL responses (incl. redirects)
+ */
 
-// 1) params şeması: token en az 16 karakter olsun
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { z } from "zod";
+import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { applyApiSecurityHeaders } from "@/lib/headers";
+import { audit } from "@/lib/logger";
+
+// --- Configs
+const CLICK_DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30m
+const RL = { limit: 120, windowMs: 60_000 }; // 120/min per IP+UA
+
+// --- Helpers
 const paramsSchema = z.object({
-  token: z.string().min(16)
+  token: z.string().min(16).max(128),
 });
 
-// 2) IP tespiti
-function getClientIp(req) {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  const realIp = req.headers.get('x-real-ip');
-  if (realIp) return realIp;
-  return '127.0.0.1';
+function withHeaders(res) {
+  res.headers.set("Cache-Control", "no-store");
+  return applyApiSecurityHeaders(res);
 }
 
-export async function GET(request, { params }) {
-  try {
-    // 3) params.token'ı await ile aç ve doğrula
-    const { token } = await params;
-    paramsSchema.parse({ token });
+function getClientIp(req) {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0].trim();
+  const rip = req.headers.get("x-real-ip");
+  if (rip) return rip;
+  return "unknown";
+}
 
+function safeHeader(h, max = 512) {
+  return (h || "").toString().slice(0, max);
+}
+
+export async function GET(req, { params }) {
+  // 1) Validate route params
+  const parsed = paramsSchema.safeParse(params || {});
+  if (!parsed.success) {
+    return withHeaders(
+      NextResponse.json({ error: "bad_request" }, { status: 400 })
+    );
+  }
+  const { token } = parsed.data;
+
+  // 2) Soft rate limit (skip writes if exceeded, but still attempt redirect)
+  const rlKey = makeRateLimitKey(req, { scope: "ref" });
+  const rl = await checkRateLimit({
+    key: rlKey,
+    limit: RL.limit,
+    windowMs: RL.windowMs,
+  });
+  const overLimit = !rl.ok;
+
+  try {
     const now = new Date();
 
-    // 4) Link + ürün kontrolü ( yalnızca visible ve henüz expire olmamış )
+    // 3) Find visible, non-expired link + active product
     const link = await prisma.affiliateLink.findFirst({
       where: {
         token,
         isVisible: true,
-        expiresAt: { gt: now }
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       select: {
         linkId: true,
         productId: true,
         product: {
-          select: { merchant_url: true, isActive: true }
-        }
-      }
-    });
-    if (!link || !link.product.isActive) {
-      return NextResponse.json({ error: 'Link not found or inactive' }, { status: 404 });
-    }
-
-    // 5) IP & UA
-    const ip        = getClientIp(request);
-    const userAgent = request.headers.get('user-agent')?.slice(0, 512) || 'unknown';
-
-    // 6) Duplicate click kontrolü (son 30dk)
-    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
-    const recentClick = await prisma.click.findFirst({
-      where: {
-        linkId:   link.linkId,
-        ipAddress: ip,
-        user_agent: userAgent,
-        clicked_at: { gte: cutoff }
-      }
+          select: {
+            merchantUrl: true, // ← schema: MerchantProduct.merchantUrl
+            isActive: true,
+          },
+        },
+      },
     });
 
-    // 7) Yeni tıklamayı ve toplam sayacı atomik olarak ekle
-    if (!recentClick) {
-      await prisma.$transaction([
-        prisma.click.create({
-          data: {
-            linkId:    link.linkId,
-            ipAddress: ip,
-            user_agent: userAgent,
-            clicked_at: new Date()
-          }
-        }),
-        prisma.merchantProduct.update({
-          where: { productId: link.productId },
-          data: { totalClicks: { increment: 1 } }
-        })
-      ]);
+    if (!link || !link.product?.isActive) {
+      audit?.({ evt: "ref.not_found_or_inactive", token });
+      return withHeaders(
+        NextResponse.json({ error: "not_found" }, { status: 404 })
+      );
     }
 
-    // 8) URL doğrula ve redirect paramını ekle
+    // 4) Prepare client meta (IP/UA/Referrer)
+    const ip = getClientIp(req);
+    const ua = safeHeader(req.headers.get("user-agent"), 512) || "unknown";
+    const ref = safeHeader(
+      req.headers.get("referer") || req.headers.get("referrer"),
+      2048
+    );
+
+    // 5) Dedup & write (skip if overLimit)
+    if (!overLimit) {
+      const cutoff = new Date(Date.now() - CLICK_DEDUP_WINDOW_MS);
+      const existing = await prisma.click.findFirst({
+        where: {
+          linkId: link.linkId,
+          ipAddress: ip,
+          userAgent: ua,
+          clickedAt: { gte: cutoff },
+        },
+        select: { clickId: true },
+      });
+
+      if (!existing) {
+        await prisma.$transaction([
+          prisma.click.create({
+            data: {
+              linkId: link.linkId,
+              ipAddress: ip,
+              userAgent: ua,
+              referrer: ref || null,
+              clickedAt: new Date(),
+            },
+          }),
+          prisma.merchantProduct.update({
+            where: { productId: link.productId },
+            data: { totalClicks: { increment: 1 } },
+          }),
+        ]);
+      }
+    } else {
+      audit?.({ evt: "ref.ratelimited_skip_write", token, ip });
+    }
+
+    // 6) Validate and build redirect URL (append referral token)
     let redirectUrl;
     try {
-      redirectUrl = new URL(link.product.merchant_url);
+      redirectUrl = new URL(link.product.merchantUrl);
     } catch {
-      return NextResponse.json({ error: 'Invalid merchant URL' }, { status: 400 });
+      audit?.({ evt: "ref.bad_merchant_url", productId: link.productId });
+      return withHeaders(
+        NextResponse.json({ error: "bad_merchant_url" }, { status: 400 })
+      );
     }
-    if (!['http:', 'https:'].includes(redirectUrl.protocol)) {
-      return NextResponse.json({ error: 'Invalid merchant URL' }, { status: 400 });
+    if (!["http:", "https:"].includes(redirectUrl.protocol)) {
+      return withHeaders(
+        NextResponse.json({ error: "bad_merchant_url" }, { status: 400 })
+      );
     }
-    redirectUrl.searchParams.append('token', token);
 
-    // 9) Redirect
-    return NextResponse.redirect(redirectUrl.toString(), 302);
+    // Append token (idempotent add)
+    redirectUrl.searchParams.set("token", token);
 
+    // 7) Redirect
+    const res = NextResponse.redirect(redirectUrl.toString(), { status: 302 });
+    return withHeaders(res);
   } catch (err) {
-    console.error('[ref] GET error:', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error("[ref] GET error:", err?.message || err);
+    audit?.({
+      evt: "ref.error",
+      error: (err?.message || String(err)).slice(0, 200),
+    });
+    return withHeaders(
+      NextResponse.json({ error: "server_error" }, { status: 500 })
+    );
   }
 }

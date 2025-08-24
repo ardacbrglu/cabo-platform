@@ -5,11 +5,12 @@ export const runtime = "nodejs";
  * File: src/app/api/products/route.js
  * Purpose: Product Marketplace – aktif ürünleri getir (login zorunlu)
  * Security Docblock:
- * - Auth: NextAuth getServerSession(authOptions) → require status:active & role:affiliate
- * - Headers: X-Requested-With, X-Request-Id önerilir; response no-store + security headers
+ * - Auth: NextAuth getServerSession(authOptions) → require status:active & role:affiliate|admin
+ * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id (zorunlu)
  * - Ratelimit: GET 60/dk (IP+userId)
- * - Data validation: none (pure GET); DB only via Prisma
- * - Audit: access log (PII siz)
+ * - Data access: Prisma (raw SQL yok)
+ * - Response: no-store + security headers; audit access (PII’siz)
+ * - Errors: {error, request_id, retry_after?}
  */
 
 import { NextResponse } from "next/server";
@@ -30,12 +31,12 @@ function json(data, init = {}) {
 
 export async function GET(req) {
   // Harden preflight
+  let requestId = "unknown";
   try {
     requireAjax(req);
     requireOrigin(req);
-    requireRequestId(req);
+    requestId = requireRequestId(req);
   } catch {
-    // GET’te çok sert dönmeyelim, generic fail
     return json({ error: "bad_request" }, { status: 400 });
   }
 
@@ -43,13 +44,13 @@ export async function GET(req) {
   const session = await getServerSession(authOptions);
   const user = session?.user;
   if (!user?.id) {
-    return json({ error: "unauthorized" }, { status: 401 });
+    return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
   }
   if (user.status !== "active") {
-    return json({ error: "forbidden_status" }, { status: 403 });
+    return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
   }
   if (user.role !== "affiliate" && user.role !== "admin") {
-    return json({ error: "forbidden_role" }, { status: 403 });
+    return json({ error: "forbidden_role", request_id: requestId }, { status: 403 });
   }
 
   // Rate limit: GET 60/dk
@@ -61,48 +62,70 @@ export async function GET(req) {
   });
   if (!ok) {
     return json(
-      { error: "rate_limited", retry_after: Math.ceil((resetMs || 0) / 1000) },
+      { error: "rate_limited", request_id: requestId, retry_after: Math.ceil((resetMs || 0) / 1000) },
       { status: 429 }
     );
   }
 
   try {
-    // Aktif + admin onaylı ürünler
-    const products = await prisma.merchantProduct.findMany({
-      where: { is_active: true, activated_by_admin: true },
+    // ŞEMA: MerchantProduct camelCase alanlar
+    const productsRaw = await prisma.merchantProduct.findMany({
+      where: { isActive: true, activatedByAdmin: true },
       select: {
-        product_id: true,
+        productId: true,
         name: true,
         description: true,
-        image_url: true,
-        merchant_url: true,
-        commission_rate: true,
-        price: true,
-        total_clicks: true,
-        total_purchases: true,
-        created_at: true,
+        imageUrl: true,
+        merchantUrl: true,
+        commissionRate: true, // Decimal
+        price: true,          // Decimal?
+        totalClicks: true,
+        totalPurchases: true,
+        createdAt: true,
+        maxSalesLimit: true,
       },
-      orderBy: { created_at: "desc" },
+      orderBy: { createdAt: "desc" },
     });
 
-    // Kullanıcının mevcut (görünür) linkleri – claim edilmiş mi?
-    const pIds = products.map((p) => p.product_id);
-    const links = await prisma.affiliateLink.findMany({
-      where: { user_id: user.id, product_id: { in: pIds }, is_visible: true },
-      select: { product_id: true, token: true, created_at: true },
-    });
-    const map = new Map(links.map((l) => [l.product_id, l]));
+    const productIds = productsRaw.map((p) => p.productId);
 
-    const data = products.map((p) => ({
-      ...p,
-      added: map.has(p.product_id),
-      token: map.get(p.product_id)?.token || null,
+    // ŞEMA: AffiliateLink camelCase alanlar
+    const linksRaw = productIds.length
+      ? await prisma.affiliateLink.findMany({
+          where: { userId: user.id, productId: { in: productIds } },
+          select: { productId: true, token: true, isVisible: true, expiresAt: true },
+        })
+      : [];
+
+    // Response camelCase (frontend ile uyumlu)
+    const products = productsRaw.map((p) => ({
+      productId: p.productId,
+      name: p.name,
+      description: p.description,
+      imageUrl: p.imageUrl,
+      merchantUrl: p.merchantUrl,
+      commissionRate: p.commissionRate != null ? Number(p.commissionRate) : 0,
+      price: p.price != null ? Number(p.price) : null,
+      totalClicks: p.totalClicks ?? 0,
+      totalPurchases: p.totalPurchases ?? 0,
+      createdAt: p.createdAt?.toISOString?.() || null,
+      isActive: true, // zaten filtrede aktif
+      maxSalesLimit: p.maxSalesLimit ?? null,
     }));
 
-    audit({ evt: "products.list.ok", who: user.id });
-    return json({ ok: true, items: data }, { status: 200 });
+    const userLinks = linksRaw.map((l) => ({
+      productId: l.productId,
+      token: l.token,
+      isVisible: !!l.isVisible,
+      expiresAt: l.expiresAt?.toISOString?.() || null,
+    }));
+
+    const visibleLinkIds = userLinks.filter((l) => l.isVisible).map((l) => l.productId);
+
+    audit({ evt: "products.list.ok", who: user.id, requestId });
+    return json({ ok: true, products, userLinks, visibleLinkIds, request_id: requestId }, { status: 200 });
   } catch (e) {
-    audit({ evt: "products.list.db_error", code: e?.code || "DB_ERR" });
-    return json({ error: "server_error" }, { status: 500 });
+    audit({ evt: "products.list.db_error", code: e?.code || "DB_ERR", requestId });
+    return json({ error: "server_error", request_id: requestId }, { status: 500 });
   }
 }

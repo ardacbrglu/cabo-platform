@@ -1,3 +1,4 @@
+// src/app/api/settings/change_password/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -7,14 +8,39 @@ import { authOptions } from "@/lib/authOptions";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
-import { validateCsrfToken } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { cookies } from "next/headers";
 
-const passwordSchema = z.object({
+/* ---------- CSRF helpers ---------- */
+function readCsrfCookieValue() {
+  const store = cookies();
+  const raw =
+    store.get("__Host-next-auth.csrf-token")?.value ||
+    store.get("next-auth.csrf-token")?.value ||
+    "";
+  return String(raw).split("|")[0] || "";
+}
+function validateCsrfOrDeny(req, secureJson) {
+  const method = req?.method?.toUpperCase?.() || "GET";
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+  const headerToken =
+    req.headers.get("X-CSRF-Token") ||
+    req.headers.get("x-csrf-token") ||
+    "";
+  const cookieToken = readCsrfCookieValue();
+  if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+    return secureJson({ success: false, errorKey: "csrf" }, { status: 403 });
+  }
+  return null;
+}
+
+/* ---------- schema ---------- */
+const PasswordSchema = z.object({
   current_password: z.string().optional(),
-  new_password: z.string().min(8, "Too short"),
+  new_password: z.string().min(8).regex(/[A-Za-z]/).regex(/\d/), // 8+, harf + rakam
 });
 
+/* ---------- response helper ---------- */
 function secureJson(data, init = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
@@ -26,23 +52,21 @@ function secureJson(data, init = {}) {
 
 export async function POST(req) {
   try {
-    // Content-Type
     const ct = String(req.headers.get("content-type") || "").toLowerCase();
     if (!ct.includes("application/json")) {
-      return secureJson({ error: "Unsupported Media Type" }, { status: 415 });
+      return secureJson({ success: false, errorKey: "unsupported_media" }, { status: 415 });
     }
 
-    // 1) CSRF
-    await validateCsrfToken(req);
+    // CSRF
+    const csrfErr = validateCsrfOrDeny(req, secureJson);
+    if (csrfErr) return csrfErr;
 
-    // 2) Auth (NextAuth)
+    // Auth
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id;
-    if (!userId) {
-      return secureJson({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!userId) return secureJson({ success: false, errorKey: "unauthorized" }, { status: 401 });
 
-    // 3) Rate limit: max 3 deneme / 15dk
+    // RL
     const { ok, resetMs } = await checkRateLimit({
       key: `settings:pwd:u:${userId}`,
       limit: 3,
@@ -50,69 +74,66 @@ export async function POST(req) {
     });
     if (!ok) {
       return secureJson(
-        { error: "Too many attempts" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+        { success: false, errorKey: "too_many" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } },
       );
     }
 
-    // 4) Body doğrulama
-    const json = await req.json().catch(() => ({}));
-    const parsed = passwordSchema.safeParse(json);
+    // Body
+    const body = await req.json().catch(() => ({}));
+    const parsed = PasswordSchema.safeParse(body);
     if (!parsed.success) {
-      return secureJson({ error: "Invalid payload" }, { status: 400 });
+      return secureJson({ success: false, errorKey: "invalid_payload" }, { status: 400 });
     }
     const { current_password, new_password } = parsed.data;
 
-    // 5) Kullanıcıyı çek
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { passwordHash: true, email: true },
+      select: { passwordHash: true },
     });
-    if (!user) return secureJson({ error: "Unauthorized" }, { status: 401 });
+    if (!user) return secureJson({ success: false, errorKey: "unauthorized" }, { status: 401 });
 
-    // Şifre aynı olmasın
+    // yeni şifre eskisiyle aynı mı?
     if (user.passwordHash) {
       const same = await bcrypt.compare(new_password, user.passwordHash);
       if (same) {
-        return secureJson({ error: "New password must be different" }, { status: 400 });
+        return secureJson({ success: false, errorKey: "must_different" }, { status: 400 });
       }
     }
 
-    // Şifre hiç yoksa (ilk kez belirleme — Google only hesaplar)
+    // Google-only → current_password gereksiz
     if (!user.passwordHash) {
       if (current_password && current_password.length > 0) {
-        return secureJson(
-          { error: "You don't have a password yet, just set a new one." },
-          { status: 400 }
-        );
+        return secureJson({ success: false, errorKey: "no_password_nowarn" }, { status: 400 });
       }
       const newHash = await bcrypt.hash(new_password, 12);
-      await prisma.user.update({
-        where: { id: userId },
-        data: { passwordHash: newHash },
+      await prisma.$transaction(async (tx) => {
+        await tx.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+        try { await tx.session.deleteMany({ where: { userId } }); } catch {}
       });
       return secureJson({ success: true, firstTimeSet: true });
     }
 
-    // Normal akış: mevcut şifre gerekli
+    // Parolası VAR → current zorunlu
     if (!current_password) {
-      return secureJson({ error: "Current password required." }, { status: 400 });
+      return secureJson({ success: false, errorKey: "current_required" }, { status: 400 });
     }
 
     const okPw = await bcrypt.compare(current_password, user.passwordHash);
     if (!okPw) {
-      return secureJson({ error: "Current password is incorrect" }, { status: 403 });
+      return secureJson({ success: false, errorKey: "current_wrong" }, { status: 403 });
     }
 
+    // Güncelle
     const newHash = await bcrypt.hash(new_password, 12);
-    await prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: newHash },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+      try { await tx.session.deleteMany({ where: { userId } }); } catch {}
     });
 
     return secureJson({ success: true });
   } catch (err) {
     console.error("POST /api/settings/change_password error:", err);
-    return secureJson({ error: "Server error" }, { status: 500 });
+    return secureJson({ success: false, errorKey: "server" }, { status: 500 });
   }
 }

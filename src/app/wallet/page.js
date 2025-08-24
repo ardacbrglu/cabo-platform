@@ -1,9 +1,10 @@
+// src/app/wallet/page.jsx
 "use client";
 /**
  * Wallet & Payout UI (final prod)
  * Güvenlik:
- * - NextAuth session cookie: fetch'lerde credentials: "include"
- * - CSRF: tüm POST isteklerinde x-csrf-token header'ı (cookie ile eşleşir)
+ * - NextAuth session cookie: fetch'lerde credentials: "include" (apiFetch yapıyor)
+ * - CSRF: tüm POST isteklerinde X-CSRF-Token header'ı apiFetch tarafından otomatik eklenir
  * - Idempotency: payout oluştururken x-idempotency-key
  * - Double-submit önleme: isSubmitting
  */
@@ -25,7 +26,7 @@ import {
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
+import apiFetch from "@/lib/apiFetch";
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
@@ -90,12 +91,9 @@ function exportToCSV(sales, date, t) {
   URL.revokeObjectURL(url);
 }
 
-// HistoryItem type removed (JS only)
-
 export default function WalletPage() {
   const { t } = useTranslation();
   const { user, setUser } = useUser();
-  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   const [loading, setLoading] = useState(true);
   const [balance, setBalance] = useState(0);
@@ -110,10 +108,7 @@ export default function WalletPage() {
   const [bankError, setBankError] = useState("");
   const [realNameError, setRealNameError] = useState("");
   const [history, setHistory] = useState([]);
-  const [payoutState, setPayoutState] = useState({
-    status: "",
-    message: "",
-  });
+  const [payoutState, setPayoutState] = useState({ status: "", message: "" });
 
   // Details modal
   const [detailsModal, setDetailsModal] = useState({
@@ -155,9 +150,8 @@ export default function WalletPage() {
 
   useEffect(() => {
     if (!user?.name) {
-      fetch("/api/me", {
+      apiFetch("/api/me", {
         method: "GET",
-        credentials: "include",
         headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
         cache: "no-store",
       })
@@ -179,9 +173,8 @@ export default function WalletPage() {
 
   const refreshData = () => {
     setLoading(true);
-    fetch("/api/wallet", {
+    apiFetch("/api/wallet", {
       method: "GET",
-      credentials: "include",
       headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
       cache: "no-store",
     })
@@ -210,7 +203,7 @@ export default function WalletPage() {
   }, []);
 
   // client validations
-    function validateIban(val) {
+  function validateIban(val) {
     const s = String(val || "").replace(/\s+/g, "").toUpperCase();
     return s.startsWith("TR") && s.length === 26;
   }
@@ -221,7 +214,6 @@ export default function WalletPage() {
 
   async function handleIbanSave(e) {
     e.preventDefault();
-    if (!csrfReady || !csrfToken) return;
     setIbanError("");
     setBankError("");
     setRealNameError("");
@@ -241,15 +233,10 @@ export default function WalletPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/wallet", {
+      const res = await apiFetch("/api/wallet", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
-          accept: "application/json",
-        },
-        body: JSON.stringify({ iban, bankName, realName }),
+        headers: { "Content-Type": "application/json" },
+        body: { iban, bankName, realName },
       });
       if (res.ok) {
         setIbanSaved(true);
@@ -267,20 +254,17 @@ export default function WalletPage() {
   }
 
   async function handleRequestPayout() {
-    if (isSubmitting || !csrfReady || !csrfToken) return;
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setPayoutState({ status: "loading", message: "" });
     try {
-      const res = await fetch("/api/wallet", {
+      const res = await apiFetch("/api/wallet", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
-          accept: "application/json",
           "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         },
-        body: JSON.stringify({ requestPayout: true }),
+        body: { requestPayout: true },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -298,21 +282,16 @@ export default function WalletPage() {
   }
 
   async function handleCancelRequest(requestId) {
-    if (isSubmitting || !csrfReady || !csrfToken) return;
+    if (isSubmitting) return;
     if (!window.confirm(t("cancelPayoutConfirm"))) return;
 
     setIsSubmitting(true);
     setPayoutState({ status: "loading", message: "" });
     try {
-      const res = await fetch("/api/wallet", {
+      const res = await apiFetch("/api/wallet", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
-          accept: "application/json",
-        },
-        body: JSON.stringify({ cancelRequest: true, requestId }),
+        headers: { "Content-Type": "application/json" },
+        body: { cancelRequest: true, requestId },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -330,24 +309,18 @@ export default function WalletPage() {
   }
 
   const fetchDetails = async (requestId, pageNum = 1) => {
-    if (!csrfReady || !csrfToken) return;
     try {
-      const res = await fetch("/api/payout_request_details", {
+      const res = await apiFetch("/api/payout_request_details", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
-          accept: "application/json",
-        },
-        body: JSON.stringify({ requestId, page: pageNum, pageSize: 10 }),
+        headers: { "Content-Type": "application/json" },
+        body: { requestId, page: pageNum, pageSize: 10 },
       });
       if (!res.ok) return;
       const data = await res.json();
 
       // history üzerinden canEditBank & lockAt da al
       const hist = history.find((h) => h.requestId === requestId);
-  setDetailsModal((modal) => ({
+      setDetailsModal((modal) => ({
         ...modal,
         ...data,
         open: true,
@@ -367,7 +340,7 @@ export default function WalletPage() {
   };
 
   function openDetails(requestId) {
-    if (!csrfReady || !csrfToken) return;
+    if (!requestId) return;
     fetchDetails(requestId, 1);
   }
 
@@ -400,43 +373,38 @@ export default function WalletPage() {
   }
 
   async function handleUpdateRequestBank() {
-    if (!detailsModal.requestId || !csrfReady || !csrfToken) return;
-    if (!/^TR\d{24}$/.test(detailsModal.editIban.replace(/\s+/g, "").toUpperCase())) {
-  setDetailsModal((m) => ({ ...m, editError: t("invalidIban") }));
+    if (!detailsModal.requestId) return;
+
+    if (!/^TR\d{24}$/.test((detailsModal.editIban || "").replace(/\s+/g, "").toUpperCase())) {
+      setDetailsModal((m) => ({ ...m, editError: t("invalidIban") }));
       return;
     }
     if (!String(detailsModal.editBankName).trim()) {
-  setDetailsModal((m) => ({ ...m, editError: t("bankNameRequired") }));
+      setDetailsModal((m) => ({ ...m, editError: t("bankNameRequired") }));
       return;
     }
     const rn = String(detailsModal.editRealName || "").trim();
     if (rn.split(" ").length < 2) {
-  setDetailsModal((m) => ({ ...m, editError: t("realNameRequired") }));
+      setDetailsModal((m) => ({ ...m, editError: t("realNameRequired") }));
       return;
     }
 
-  setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
+    setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
     try {
-      const res = await fetch("/api/wallet", {
+      const res = await apiFetch("/api/wallet", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-csrf-token": csrfToken,
-          accept: "application/json",
-        },
-        body: JSON.stringify({
+        headers: { "Content-Type": "application/json" },
+        body: {
           updateRequestBank: true,
           requestId: detailsModal.requestId,
           iban: detailsModal.editIban,
           bankName: detailsModal.editBankName,
           realName: detailsModal.editRealName,
-        }),
+        },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        // modal içindeki snapshot’ı güncelle
-  setDetailsModal((m) => ({
+        setDetailsModal((m) => ({
           ...m,
           bankName: m.editBankName,
           iban: m.editIban,
@@ -445,13 +413,12 @@ export default function WalletPage() {
           editing: false,
           editError: "",
         }));
-        // history güncel değilse yenile
         refreshData();
       } else {
-  setDetailsModal((m) => ({ ...m, editSaving: false, editError: data?.error || t("unknownError") }));
+        setDetailsModal((m) => ({ ...m, editSaving: false, editError: data?.error || t("unknownError") }));
       }
     } catch {
-  setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("unknownError") }));
+      setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("unknownError") }));
     }
   }
 
@@ -468,7 +435,7 @@ export default function WalletPage() {
   }, [history, totalPages, page]);
 
   const payoutDisabled =
-    loading || confirmed < minPayout || ibanMissing || bankMissing || realNameMissing || isSubmitting || !csrfReady;
+    loading || confirmed < minPayout || ibanMissing || bankMissing || realNameMissing || isSubmitting;
 
   return (
     <Layout>
@@ -607,9 +574,9 @@ export default function WalletPage() {
 
               <button
                 type="submit"
-                disabled={isSubmitting || !csrfReady}
+                disabled={isSubmitting}
                 className={`w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${
-                  isSubmitting || !csrfReady ? "opacity-60 pointer-events-none" : ""
+                  isSubmitting ? "opacity-60 pointer-events-none" : ""
                 }`}
               >
                 {ibanSaved ? t("saved") : t("saveBankInfo")}
@@ -693,7 +660,7 @@ export default function WalletPage() {
                           {item.status === "pending" && item.requestId && item.canCancel && (
                             <button
                               onClick={() => handleCancelRequest(item.requestId)}
-                              disabled={isSubmitting || !csrfReady}
+                              disabled={isSubmitting}
                               className="text-red-500 hover:bg-red-900/30 rounded p-1 transition flex items-center gap-1 text-xs font-mono disabled:opacity-50"
                             >
                               <X size={13} /> {t("cancel")}

@@ -1,43 +1,82 @@
-// app/api/notifications/create/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * POST /api/notifications/create  (admin)
+ * Body:
+ *  - { message: string, type?: "info"|"support_reply"|"important", link?: string|null,
+ *      all?: boolean, userId?: number|string }
+ *  - all=true ise tüm aktif kullanıcılara; değilse userId zorunlu
+ * Güvenlik:
+ *  - NextAuth session (admin) + CSRF (header cookie eşleşmesi) + rate limit
+ * Çıktı: { ok: true, count: number }
+ */
+
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/authz";
 import prisma from "@/lib/prisma";
-import { withCsrfProtection } from "@/lib/csrf";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { cookies } from "next/headers";
 
 const VALID_TYPES = ["info", "support_reply", "important"];
 
-export const POST = withCsrfProtection(async (req) => {
+/* ---------- CSRF (NextAuth) ---------- */
+function readCsrfCookieValue() {
+  const store = cookies();
+  const raw =
+    store.get("__Host-next-auth.csrf-token")?.value ||
+    store.get("next-auth.csrf-token")?.value ||
+    "";
+  return String(raw).split("|")[0] || "";
+}
+function validateCsrfOrDeny(req) {
+  const method = req?.method?.toUpperCase?.() || "GET";
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+  const headerToken =
+    req.headers.get("X-CSRF-Token") ||
+    req.headers.get("x-csrf-token") ||
+    "";
+  const cookieToken = readCsrfCookieValue();
+  if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+    return NextResponse.json({ error: "Invalid CSRF token" }, { status: 403 });
+  }
+  return null;
+}
+
+export async function POST(req) {
   try {
-    const session = await auth();
+    const csrfErr = validateCsrfOrDeny(req);
+    if (csrfErr) return csrfErr;
+
+    const session = await getServerSession(authOptions);
     const user = session?.user;
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    // rate limit (admin bazlı)
     const rlKey = makeRateLimitKey(req, { scope: "notif:create", userId: user.id });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
-    if (!ok) {
+    const rl = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
+    if (!rl.ok) {
       return NextResponse.json(
         { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
       );
     }
 
     const body = await req.json().catch(() => ({}));
     const message = String(body?.message || "").trim();
-    const type = String(body?.type || "info");
+    const type = VALID_TYPES.includes(String(body?.type)) ? String(body.type) : "info";
     const link = body?.link ? String(body.link).trim() : null;
     const all = Boolean(body?.all);
-    const targetUserId = body?.userId ? String(body.userId) : null;
+
+    const targetUserIdRaw = body?.userId ?? null;
+    const targetUserId = Number.isFinite(Number(targetUserIdRaw))
+      ? Number(targetUserIdRaw)
+      : (targetUserIdRaw || null);
 
     if (message.length < 2) {
       return NextResponse.json({ error: "Message required" }, { status: 400 });
-    }
-    if (!VALID_TYPES.includes(type)) {
-      return NextResponse.json({ error: "Invalid notification type" }, { status: 400 });
     }
 
     if (all) {
@@ -48,17 +87,21 @@ export const POST = withCsrfProtection(async (req) => {
       if (!users.length) {
         return NextResponse.json({ error: "No users found" }, { status: 400 });
       }
-      const data = users.map((u) => ({
-        userId: u.id,
-        message,
-        type,
-        link,
-        read: false,
-        isDeleted: false,
-      }));
-      await prisma.notification.createMany({ data, skipDuplicates: true });
+
+      await prisma.notification.createMany({
+        data: users.map((u) => ({
+          userId: u.id,
+          message,
+          type,
+          link,
+          read: false,
+          isDeleted: false,
+        })),
+        skipDuplicates: true,
+      });
+
       return NextResponse.json(
-        { ok: true, count: data.length },
+        { ok: true, count: users.length },
         { headers: { "Cache-Control": "no-store" } }
       );
     }
@@ -70,9 +113,13 @@ export const POST = withCsrfProtection(async (req) => {
     await prisma.notification.create({
       data: { userId: targetUserId, message, type, link, read: false, isDeleted: false },
     });
-    return NextResponse.json({ ok: true, count: 1 }, { headers: { "Cache-Control": "no-store" } });
+
+    return NextResponse.json(
+      { ok: true, count: 1 },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err) {
     console.error("POST /api/notifications/create error:", err);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-});
+}

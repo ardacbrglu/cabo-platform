@@ -1,25 +1,13 @@
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
 /**
- * File: src/app/api/merchant_dashboard/route.js
- * Purpose: Merchant Dashboard API (GET list, POST create, PATCH update/activate)
- *
- * ── Cabo PROD Security Docblock ──────────────────────────────────────────────
- * - AuthN/Z: NextAuth session zorunlu; requireStatus('active'); requireRole('merchant')
- * - CSRF: POST/PATCH → NextAuth double-submit (header: X-CSRF-Token + cookie: next-auth.csrf-token)
- * - Mutations: Origin/Referer host eşleşmesi + X-Requested-With: XMLHttpRequest (SameSite Lax varsayım)
- * - Ratelimit: GET 60/dk; POST/PATCH 10/dk  (key: api:merchant_dashboard:{method}:{userId}:{ip})
- *              429 → {error, request_id, retry_after} + Retry-After header
- * - Headers: security defaults + Cache-Control: no-store + X-Request-Id echo
- * - Audit: tüm mutasyonlar transaction + audit({who, what, ip, ua, requestId, result})
- * - Errors: tek tip JSON {error, request_id, retry_after?}
- * - DB: Sadece Prisma; raw SQL yok. (snake/camel alan fallback’ları)
+ * Merchant Dashboard API (GET list, POST create, PATCH update/activate)
+ * - AuthZ: requireMerchant() (DB doğrulamalı)
+ * - Rate limit: GET 60/dk; POST/PATCH 10/dk (IP+userId)
+ * - CSRF: POST/PATCH → NextAuth double-submit (header + cookie)
+ * - Mutasyonlarda Origin/Referer & X-Requested-With zorunlu
+ * - Tüm yanıtlarda Cache-Control: no-store + security headers
  */
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
@@ -27,6 +15,7 @@ import { checkRateLimit } from "@/lib/ratelimit";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { sanitize } from "@/lib/validation";
+import { requireMerchant } from "@/lib/guards";
 
 const DEV = process.env.NODE_ENV !== "production";
 
@@ -39,7 +28,7 @@ const ipUaOf = (req) => {
   return { ip, ua };
 };
 const withSec = (res, rid) => {
-  applyApiSecurityHeaders(res);                 // CSP sadece API tarafında (middleware set etmez)
+  applyApiSecurityHeaders(res);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("X-Request-Id", rid);
   return res;
@@ -47,14 +36,6 @@ const withSec = (res, rid) => {
 const errorJson = (rid, status, message, extra = {}) =>
   withSec(NextResponse.json({ error: message, request_id: rid, ...extra }, { status }), rid);
 const okJson = (rid, data, init = {}) => withSec(NextResponse.json(data, init), rid);
-
-async function requireMerchant() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) throw { code: 401, msg: "unauthorized" };
-  if (session.user.status !== "active") throw { code: 403, msg: "forbidden" };
-  if (session.user.role !== "merchant") throw { code: 403, msg: "forbidden" };
-  return { userId: session.user.id };
-}
 
 /* ────────── security helpers ────────── */
 function validateNextAuthCsrf(req) {
@@ -68,7 +49,6 @@ function validateNextAuthCsrf(req) {
   const cookieToken = decodeURIComponent(m[1]).split("|")[0];
   return cookieToken && cookieToken === headerToken;
 }
-
 function enforceOrigin(req) {
   if (req.method === "GET" || req.method === "HEAD") return true;
   const xrw = (req.headers.get("x-requested-with") || "").toLowerCase();
@@ -85,27 +65,43 @@ function enforceOrigin(req) {
       catch { return u; }
     })
   );
-
-  const ok = (u) => {
-    try { return !u || allowed.has(new URL(u).host); }
-    catch { return false; }
-  };
+  const ok = (u) => { try { return !u || allowed.has(new URL(u).host); } catch { return false; } };
   return ok(origin) && ok(referer);
 }
 
+/** checkRateLimit imza farklarını normalize eder */
+async function rateLimitAnyShape({ key, limit, windowMs }) {
+  try {
+    const r = await checkRateLimit({ key, limit, windowMs });
+    const ok = (r?.ok ?? r?.allowed ?? true);
+    const resetMs = (r?.resetMs ?? (r?.retryAfterSec ? r.retryAfterSec * 1000 : undefined));
+    return { ok, resetMs: resetMs ?? windowMs };
+  } catch {}
+  try {
+    const r = await checkRateLimit(key, limit, Math.round(windowMs / 1000));
+    const ok = (r?.ok ?? r?.allowed ?? true);
+    const resetMs = (r?.resetMs ?? (r?.retryAfterSec ? r.retryAfterSec * 1000 : undefined));
+    return { ok, resetMs: resetMs ?? windowMs };
+  } catch {
+    return { ok: true, resetMs: windowMs };
+  }
+}
+
 async function enforceRate(req, rid, userId, limitPerMin) {
-  const { ip } = ipUaOf(req);
-  const key = `api:merchant_dashboard:${req.method}:${userId || "anon"}:${ip || "0.0.0.0"}`;
-  const { allowed, retryAfterSec } = await checkRateLimit(key, limitPerMin, 60);
-  if (!allowed) {
-    const res = errorJson(rid, 429, "rate_limited", { retry_after: retryAfterSec || 60 });
-    res.headers.set("Retry-After", String(retryAfterSec || 60));
+  const fwd = req.headers.get("x-forwarded-for") || "";
+  const ip = (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
+  const key = `api:merchant_dashboard:${req.method}:${userId || "anon"}:${ip}`;
+  const { ok, resetMs } = await rateLimitAnyShape({ key, limit: limitPerMin, windowMs: 60_000 });
+  if (!ok) {
+    const retry = Math.ceil((resetMs || 60_000) / 1000);
+    const res = errorJson(rid, 429, "rate_limited", { retry_after: retry });
+    res.headers.set("Retry-After", String(retry));
     return { blocked: true, res };
   }
   return { blocked: false };
 }
 
-/* ────────── prisma helpers (fallback'lı) ────────── */
+/* ────────── prisma helpers ────────── */
 function resolveModel(client, candidates, methods = ["findMany"]) {
   for (const n of candidates) {
     const m = client?.[n];
@@ -113,24 +109,16 @@ function resolveModel(client, candidates, methods = ["findMany"]) {
   }
   return null;
 }
-
 async function findProductsForMerchant(Product, userId) {
-  const whereFields = ["merchant_id", "merchantId", "owner_id", "ownerId"];
-  const orderFields = ["created_at", "createdAt", "id", "product_id", "productId"];
-
-  for (const wf of whereFields) {
-    for (const ofn of orderFields) {
-      try { return await Product.findMany({ where: { [wf]: userId }, orderBy: { [ofn]: "desc" } }); } catch {}
-    }
-    try { return await Product.findMany({ where: { [wf]: userId } }); } catch {}
-  }
-
-  try {
-    const rows = await Product.findMany({ take: 500 });
-    return rows.filter((r) => [r.merchant_id, r.merchantId, r.owner_id, r.ownerId].includes(userId));
-  } catch { return []; }
+  const tries = [
+    { where: { merchantId: userId }, orderBy: { createdAt: "desc" } },
+    { where: { merchant_id: userId }, orderBy: { created_at: "desc" } },
+    { where: { ownerId: userId },     orderBy: { createdAt: "desc" } },
+    { where: { owner_id: userId },    orderBy: { created_at: "desc" } },
+  ];
+  for (const t of tries) { try { return await Product.findMany(t); } catch {} }
+  try { return await Product.findMany({ take: 500 }); } catch { return []; }
 }
-
 async function countLinksByProduct(prismaClient, ids) {
   const Link =
     resolveModel(prismaClient, ["affiliateLink", "affiliateLinks"]) ||
@@ -138,45 +126,35 @@ async function countLinksByProduct(prismaClient, ids) {
   if (!Link || !ids.length) return new Map();
 
   try {
-    const g1 = await Link.groupBy({ by: ["product_id"], where: { product_id: { in: ids } }, _count: { product_id: true } });
-    return new Map(g1.map((g) => [g.product_id, g._count.product_id]));
+    const g = await Link.groupBy({ by: ["productId"], where: { productId: { in: ids } }, _count: { productId: true } });
+    return new Map(g.map((row) => [row.productId, row._count.productId]));
   } catch {}
   try {
-    const g2 = await Link.groupBy({ by: ["productId"], where: { productId: { in: ids } }, _count: { productId: true } });
-    return new Map(g2.map((g) => [g.productId, g._count.productId]));
+    const g = await Link.groupBy({ by: ["product_id"], where: { product_id: { in: ids } }, _count: { product_id: true } });
+    return new Map(g.map((row) => [row.product_id, row._count.product_id]));
   } catch {}
   try {
-    const r1 = await Link.findMany({ where: { product_id: { in: ids } }, select: { product_id: true } });
-    const m = new Map();
-    for (const r of r1) m.set(r.product_id, (m.get(r.product_id) || 0) + 1);
-    return m;
+    const r = await Link.findMany({ where: { productId: { in: ids } }, select: { productId: true } });
+    const m = new Map(); for (const x of r) m.set(x.productId, (m.get(x.productId) || 0) + 1); return m;
   } catch {}
   try {
-    const r2 = await Link.findMany({ where: { productId: { in: ids } }, select: { productId: true } });
-    const m = new Map();
-    for (const r of r2) m.set(r.productId, (m.get(r.productId) || 0) + 1);
-    return m;
+    const r = await Link.findMany({ where: { product_id: { in: ids } }, select: { product_id: true } });
+    const m = new Map(); for (const x of r) m.set(x.product_id, (m.get(x.product_id) || 0) + 1); return m;
   } catch {}
   return new Map();
 }
-
 async function getMinCommission() {
   try {
-    const M =
-      resolveModel(prisma, ["platformConfig", "platformConfigs", "platform_config"], ["findUnique", "findFirst"]) ||
-      resolveModel(prisma, ["PlatformConfig"], ["findUnique", "findFirst"]);
-    if (M) {
-      const row =
-        (M.findUnique && (await M.findUnique({ where: { key: "min_commission" } }))) ||
-        (M.findFirst && (await M.findFirst({ where: { key: "min_commission" } })));
-      const n = Number(row?.value);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
+    const row = await prisma?.platformConfig?.findFirst?.({ where: { keyName: "min_commission" } });
+    const n = Number(row?.value); if (Number.isFinite(n) && n > 0) return n;
+  } catch {}
+  try {
+    const row = await prisma?.platformConfig?.findFirst?.({ where: { key: "min_commission" } });
+    const n = Number(row?.value); if (Number.isFinite(n) && n > 0) return n;
   } catch {}
   return 5;
 }
-
-const pidOf = (p) => p.product_id ?? p.id;
+const pidOf = (p) => p?.product_id ?? p?.id;
 function mapProductRow(p, linkCount) {
   return {
     productId: p.product_id ?? p.id,
@@ -198,9 +176,9 @@ function mapProductRow(p, linkCount) {
 }
 
 /* ────────── validation ────────── */
-const urlStr = z
-  .string().min(6).max(2048)
-  .refine((v) => { try { const u = new URL(v); return ["http:", "https:"].includes(u.protocol); } catch { return false; } }, "invalid_url");
+const urlStr = z.string().min(6).max(2048).refine((v) => {
+  try { const u = new URL(v); return ["http:", "https:"].includes(u.protocol); } catch { return false; }
+}, "invalid_url");
 
 const CreateSchema = z.object({
   name: z.string().min(3).max(120),
@@ -229,7 +207,7 @@ export async function GET(req) {
     if (rl.blocked) return rl.res;
 
     const Product =
-      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["merchantProduct", "product", "merchantProducts", "products"]) ||
       resolveModel(prisma, ["MerchantProduct", "Product"]);
     if (!Product) {
       const minCommission = await getMinCommission();
@@ -246,12 +224,14 @@ export async function GET(req) {
     return okJson(rid, { success: true, products, minCommission });
   } catch (e) {
     if (DEV) console.error("[merchant_dashboard][GET]", e);
+    await audit({ evt: "merchant_dashboard.get.error", requestId: rid, err: String(e?.message || e) });
     const extras = DEV ? { dev_error: String(e?.message || e) } : {};
-    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+    const code = e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500;
+    return errorJson(rid, code, e?.msg || "server_error", extras);
   }
 }
 
-/* ────────── POST (create product) ────────── */
+/* ────────── POST ────────── */
 export async function POST(req) {
   const rid = ridOf(req);
   const { ip, ua } = ipUaOf(req);
@@ -268,31 +248,32 @@ export async function POST(req) {
     if (!parsed.success) return errorJson(rid, 400, "invalid_payload");
 
     const Product =
-      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["merchantProduct", "product", "merchantProducts", "products"]) ||
       resolveModel(prisma, ["MerchantProduct", "Product"]);
     if (!Product) return errorJson(rid, 500, "server_error");
 
     const minCommission = await getMinCommission();
 
-    const name = sanitize.text(parsed.data.name.trim());
+    const name = sanitize.text((parsed.data.name || "").trim());
     const description = sanitize.text((parsed.data.description || "").trim());
-    const image_url = sanitize.text(parsed.data.image_url.trim());
-    const merchant_url = sanitize.text(parsed.data.merchant_url.trim());
+    const image_url = sanitize.text((parsed.data.image_url || "").trim());
+    const merchant_url = sanitize.text((parsed.data.merchant_url || "").trim());
     const price = Number(parsed.data.price);
     const commissionRate = Number(parsed.data.commissionRate);
-    const max_sales_limit = Math.max(0, Math.floor(Number(parsed.data.max_sales_limit)));
+
+    // REQUIRED & >= 1
+    const max_sales_limit = Math.floor(Number(String(parsed.data.max_sales_limit ?? "").trim()));
 
     if (!Number.isFinite(price) || price <= 0) return errorJson(rid, 400, "invalid_price");
     if (!Number.isFinite(commissionRate) || commissionRate < minCommission || commissionRate > 99.9)
       return errorJson(rid, 400, "invalid_commission");
-    if (!Number.isInteger(max_sales_limit) || max_sales_limit < 0) return errorJson(rid, 400, "invalid_limit");
+    if (!Number.isInteger(max_sales_limit) || max_sales_limit < 1) return errorJson(rid, 400, "invalid_limit");
 
     const created = await prisma.$transaction(async (tx) => {
       const M =
-        resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+        resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
         resolveModel(tx, ["MerchantProduct", "Product"]);
 
-      // snake → camel fallback
       async function createSnake() {
         return await M.create({
           data: {
@@ -329,8 +310,7 @@ export async function POST(req) {
       }
 
       let product;
-      try { product = await createSnake(); }
-      catch { product = await createCamel(); }
+      try { product = await createSnake(); } catch { product = await createCamel(); }
 
       await audit({ who: userId, what: "merchant_product_create", ip, ua, requestId: rid, result: { product_id: pidOf(product) } });
       return product;
@@ -339,12 +319,14 @@ export async function POST(req) {
     return okJson(rid, { success: true, productId: pidOf(created) });
   } catch (e) {
     if (DEV) console.error("[merchant_dashboard][POST]", e);
+    await audit({ evt: "merchant_dashboard.post.error", requestId: rid, err: String(e?.message || e) });
     const extras = DEV ? { dev_error: String(e?.message || e) } : {};
-    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+    const code = e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500;
+    return errorJson(rid, code, e?.msg || "server_error", extras);
   }
 }
 
-/* ────────── PATCH (edit/activate) ────────── */
+/* ────────── PATCH ────────── */
 export async function PATCH(req) {
   const rid = ridOf(req);
   const { ip, ua } = ipUaOf(req);
@@ -361,7 +343,7 @@ export async function PATCH(req) {
     if (!parsed.success) return errorJson(rid, 400, "invalid_payload");
 
     const Product =
-      resolveModel(prisma, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+      resolveModel(prisma, ["merchantProduct", "product", "merchantProducts", "products"]) ||
       resolveModel(prisma, ["MerchantProduct", "Product"]);
     if (!Product) return errorJson(rid, 500, "server_error");
 
@@ -371,27 +353,9 @@ export async function PATCH(req) {
     // mevcut kayıt
     let current = null;
     try {
-      current = await Product.findFirst({
-        where: { AND: [{ product_id: pid }, { merchant_id: userId }] },
-        select: {
-          product_id: true, id: true,
-          is_active: true, isActive: true,
-          total_purchases: true, totalPurchases: true,
-          max_sales_limit: true, maxSalesLimit: true,
-          commission_rate: true, commissionRate: true,
-        },
-      });
+      current = await Product.findFirst({ where: { AND: [{ product_id: pid }, { merchant_id: userId }] } });
     } catch {
-      current = await Product.findFirst({
-        where: { AND: [{ id: pid }, { merchantId: userId }] },
-        select: {
-          product_id: true, id: true,
-          is_active: true, isActive: true,
-          total_purchases: true, totalPurchases: true,
-          max_sales_limit: true, maxSalesLimit: true,
-          commission_rate: true, commissionRate: true,
-        },
-      });
+      current = await Product.findFirst({ where: { AND: [{ id: pid }, { merchantId: userId }] } });
     }
     if (!current) return errorJson(rid, 404, "not_found");
 
@@ -408,7 +372,7 @@ export async function PATCH(req) {
 
       await prisma.$transaction(async (tx) => {
         const M =
-          resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+          resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
           resolveModel(tx, ["MerchantProduct", "Product"]);
         try {
           await M.updateMany({ where: { product_id: pid, merchant_id: userId }, data: { is_active: activate } });
@@ -429,25 +393,19 @@ export async function PATCH(req) {
     }
     if (parsed.data.max_sales_limit !== undefined) {
       const v = Math.floor(Number(parsed.data.max_sales_limit));
-      if (!Number.isInteger(v) || v < 0) return errorJson(rid, 400, "invalid_limit");
+      if (!Number.isInteger(v) || v < 1) return errorJson(rid, 400, "invalid_limit");
       if (v < sold) return errorJson(rid, 400, "limit_lt_sold");
       nextLimit = v;
     }
 
     await prisma.$transaction(async (tx) => {
       const M =
-        resolveModel(tx, ["merchantProduct", "merchantProducts", "product", "products"]) ||
+        resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
         resolveModel(tx, ["MerchantProduct", "Product"]);
       try {
-        await M.updateMany({
-          where: { product_id: pid, merchant_id: userId },
-          data: { commission_rate: nextCommission, max_sales_limit: nextLimit },
-        });
+        await M.updateMany({ where: { product_id: pid, merchant_id: userId }, data: { commission_rate: nextCommission, max_sales_limit: nextLimit } });
       } catch {
-        await M.updateMany({
-          where: { id: pid, merchantId: userId },
-          data: { commissionRate: nextCommission, maxSalesLimit: nextLimit },
-        });
+        await M.updateMany({ where: { id: pid, merchantId: userId }, data: { commissionRate: nextCommission, maxSalesLimit: nextLimit } });
       }
       await audit({
         who: userId, what: "merchant_product_update", ip, ua, requestId: rid,
@@ -458,7 +416,12 @@ export async function PATCH(req) {
     return okJson(rid, { success: true });
   } catch (e) {
     if (DEV) console.error("[merchant_dashboard][PATCH]", e);
+    await audit({ evt: "merchant_dashboard.patch.error", requestId: rid, err: String(e?.message || e) });
     const extras = DEV ? { dev_error: String(e?.message || e) } : {};
-    return errorJson(rid, e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500, e?.msg || "server_error", extras);
+    const code = e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500;
+    return errorJson(rid, code, e?.msg || "server_error", extras);
   }
 }
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";

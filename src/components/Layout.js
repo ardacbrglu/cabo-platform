@@ -82,7 +82,7 @@ export default function Layout({ children }) {
                 <Link prefetch={false} href="/performance" className={navItemClass("/performance")} style={navItemStyle}
                       aria-current={isActive("/performance") ? "page" : undefined}>
                   <BarChart2 size={22} />
-                  <span>{t("performance.title")}</span>
+                  <span>{t("performance")}</span>
                 </Link>
               </li>
               <li>

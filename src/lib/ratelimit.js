@@ -18,7 +18,6 @@ let warnedOnce = false;
 function warnOnce(msg) {
   if (!warnedOnce) {
     warnedOnce = true;
-    // Prod'da gereksiz gürültü yapma; tek satır uyarı yeterli
     console.warn(`[ratelimit] ${msg}`);
   }
 }
@@ -46,8 +45,7 @@ function createRedis() {
       reconnectOnError: () => false,
     });
     client.on("error", () => {
-      // DNS/ENOTFOUND vb. build’de görülebilir; sessizce geç.
-      // Ayrıntılı log istiyorsan burada console.debug kullan.
+      // Ayrıntılı log istersen console.debug kullan.
     });
     return client;
   } catch {
@@ -64,9 +62,9 @@ async function ensureRedis() {
     if (redis.status === "end" || redis.status === "wait") {
       await redis.connect();
     } else if (redis.status === "ready") {
-      // nothing
+      // hazır
     } else if (redis.status === "connecting") {
-      // bekleme
+      // bekle
     } else if (redis.options?.lazyConnect) {
       await redis.connect();
     }
@@ -107,14 +105,14 @@ export async function checkRateLimit({ key, limit, windowMs }) {
     return memCheck({ key, limit, windowMs });
   }
 
-  // Redis atomic: INCR + EXPIRE
   const ttlSec = Math.ceil(windowMs / 1000);
   try {
     const count = await client.incr(key);
     if (count === 1) await client.expire(key, ttlSec);
-    // PTTL ms cinsinden daha iyi; yoksa tahmini dön
-    let pttl = await client.pttl(key);
+
+    let pttl = await client.pttl(key); // ms
     if (pttl < 0) pttl = windowMs;
+
     return { ok: count <= limit, resetMs: Math.max(pttl, 0) };
   } catch {
     warnOnce("Redis komutu başarısız; memory fallback.");
@@ -133,6 +131,16 @@ export function makeRateLimitKey(req, { scope = "default", userId } = {}) {
     "0.0.0.0";
   const uid = userId ? `:u:${userId}` : "";
   return `rl:${scope}:ip:${ip}${uid}`;
+}
+
+/**
+ * 429 yanıtları için standart header üretir.
+ * Örn:
+ * return json(payload, { status: 429, headers: rateLimitHeaders(resetMs) })
+ */
+export function rateLimitHeaders(resetMs) {
+  const secs = Math.ceil(Math.max(resetMs || 0, 0) / 1000);
+  return { "Retry-After": String(secs) };
 }
 
 /* Opsiyonel yardımcı: testlerde temizlik */

@@ -1,14 +1,13 @@
 // app/faq/page.js
-'use client';
+"use client";
 
 // Amaç: SSS sayfası (erişilebilir, SEO dostu, JSON-LD ile zengin sonuç).
 // Not: Tasarım korunmuş; yönlendiren linkler kaldırıldı (ref linksiz sade katalog).
 
-import PublicLayout from '@/components/PublicLayout';
-import { useLocale } from '@/context/LocaleContext';
-import { useMemo } from 'react';
+import PublicLayout from "@/components/PublicLayout";
+import { useLocale } from "@/context/LocaleContext";
+import { useMemo } from "react";
 
-// (İçerik mevcut metinlerle aynı; CTA anahtarları dursa da kullanılmıyor)
 const translations = {
   en: {
     faqTitle: "Frequently Asked Questions",
@@ -43,7 +42,7 @@ const translations = {
     a6: "Hayır! Cabo'ya kayıt olmak ve kazanmak tamamen ücretsizdir. Gizli ücret yok, sadece paylaş ve kazan.",
     q7: "Daha fazla nasıl kazanırım?",
     a7: "Trend ürünleri öne çıkar, sosyal medyada ve çevrende sıkça paylaş. Ne kadar çok paylaşırsan, o kadar fazla kazanırsın. Bu kadar basit.",
-  }
+  },
 };
 
 const questionKeys = [1, 2, 3, 4, 5, 6, 7];
@@ -52,24 +51,29 @@ export default function FAQPage() {
   const { locale, ready } = useLocale();
   if (!ready) return null;
 
-  const t = (key) => translations[locale][key] || key;
+  const dict = translations[locale] || translations.en;
+  const t = (key) => dict[key] || key;
 
   // JSON-LD (FAQPage) — zengin sonuçlar için
   const faqJsonLd = useMemo(() => {
     const mainEntity = questionKeys.map((n) => ({
-      '@type': 'Question',
+      "@type": "Question",
       name: t(`q${n}`),
-      acceptedAnswer: { '@type': 'Answer', text: t(`a${n}`) },
+      acceptedAnswer: { "@type": "Answer", text: t(`a${n}`) },
     }));
-    return { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity };
-  }, [locale]);
+    return { "@context": "https://schema.org", "@type": "FAQPage", mainEntity };
+  }, [dict]);
 
   return (
     <PublicLayout>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <script
+        id="faq-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
       <div className="max-w-3xl mx-auto py-16 px-6 sm:py-20 sm:px-8">
         <h1 className="text-4xl md:text-5xl font-extrabold text-[#d1ffd0] mb-10 text-center">
-          {t('faqTitle')}
+          {t("faqTitle")}
         </h1>
 
         {/* İçindekiler (sayfa içi anchor’lar; dış sayfaya gitmiyor) */}

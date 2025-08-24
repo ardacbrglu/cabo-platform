@@ -7,6 +7,7 @@
  * - Görsel yapı korunmuştur.
  * - Erişilebilirlik için “skip to content” linki var.
  * - i18n: Önce yerel (inline) sözlük, sonra global useTranslation(), sonra key fallback.
+ * - CTA’lar ayrıldı: Affiliate → /login, Merchant Access → /merchant/login
  */
 
 import React, { useMemo } from "react";
@@ -24,6 +25,7 @@ const L = {
     heroDesc:
       "Cabo lets you earn by just sharing product links. When someone buys, cash is on the way.",
     loginBtn: "Start Earning Now",
+    merchantAccess: "Merchant Access",
   },
   tr: {
     a11y_skip: "Ana içeriğe geç",
@@ -32,6 +34,7 @@ const L = {
     heroDesc:
       "Cabo, yalnızca ürün linklerini paylaşarak kazanmanı sağlar. Biri satın aldığında ödeme yoldadır.",
     loginBtn: "Hemen Kazanmaya Başla",
+    merchantAccess: "Satıcı Girişi",
   },
 };
 
@@ -70,8 +73,9 @@ export default function Homepage() {
             {lt("heroDesc")}
           </p>
 
-          {/* LOGIN BUTTON */}
-          <div className="flex justify-center mt-7">
+          {/* CTAs: Affiliate + Merchant */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mt-7">
+            {/* Affiliate CTA */}
             <Link
               href="/login"
               aria-label={lt("loginBtn")}
@@ -95,12 +99,37 @@ export default function Homepage() {
                 focus:ring-offset-[#0B0B0B]
                 active:scale-95
               "
-              style={{
-                letterSpacing: "-0.01em",
-                boxShadow: "0 4px 32px 0 rgba(129,215,66,0.08)",
-              }}
+              style={{ letterSpacing: "-0.01em", boxShadow: "0 4px 32px 0 rgba(129,215,66,0.08)" }}
             >
               {lt("loginBtn")}
+            </Link>
+
+            {/* Merchant Access CTA */}
+            <Link
+              href="/merchant/login"
+              aria-label={lt("merchantAccess")}
+              prefetch
+              className="
+                bg-transparent
+                text-[#d1ffd0]
+                border border-[#2a2a2a]
+                hover:border-[#3a3a3a]
+                hover:bg-[#141414]
+                font-semibold
+                text-lg
+                px-8 py-3
+                rounded-xl
+                transition
+                duration-200
+                focus:outline-none
+                focus:ring-2
+                focus:ring-[#2f4]
+                focus:ring-offset-2
+                focus:ring-offset-[#0B0B0B]
+                active:scale-95
+              "
+            >
+              {lt("merchantAccess")}
             </Link>
           </div>
         </section>

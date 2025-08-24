@@ -1,4 +1,5 @@
 "use client";
+
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Home, ShoppingCart, Link2, BarChart2, Wallet2, Menu, X, Bell, Settings, Headset, LogOut, User2 } from "lucide-react";
@@ -8,7 +9,6 @@ import { usePathname } from "next/navigation";
 import { useNotifications } from "@/hooks/useNotifications";
 import NotificationBadge from "@/components/NotificationBadge";
 import Portal from "@/components/Portal";
-import { useCsrfToken } from "@/hooks/useCsrfToken";
 
 export default function HamburgerMenu() {
   const [open, setOpen] = useState(false);
@@ -17,7 +17,6 @@ export default function HamburgerMenu() {
   const { t } = useTranslation();
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
-  const { csrfToken, ready: csrfReady } = useCsrfToken();
 
   useEffect(() => {
     function handleClick(e) {
@@ -38,27 +37,14 @@ export default function HamburgerMenu() {
     };
   }, [open, profileOpen]);
 
-  async function handleLogout() {
-    try {
-      // NextAuth oturumu güvenli kapat (CSRF zorunlu)
-      if (!csrfReady || !csrfToken) {
-        // min fail-soft: yine de temizlemeyi dene
-        document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
-      } else {
-        await fetch("/api/logout", {
-          method: "POST",
-          credentials: "include",
-          headers: { "x-csrf-token": csrfToken },
-        });
-      }
-    } catch {
-      // sessiz geç
-    } finally {
-      // Ekstra: eski custom cookie’yi de temizle
+  function handleLogout() {
+    // En güvenli yol: tam sayfa yönlendirme → server cookie silsin → 302 /login
+    if (typeof window !== "undefined") {
+      // (İsteğe bağlı) Eski custom cookie varsa temizlemeyi dene — güvenlik için şart değil
       document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
-      document.cookie = "cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=" + window.location.hostname + ";";
+      document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
       setUser && setUser(null);
-      window.location.href = "/login";
+      window.location.assign("/api/logout");
     }
   }
 

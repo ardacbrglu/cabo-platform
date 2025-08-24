@@ -118,7 +118,12 @@ export default function PublicLayout({ children }) {
       <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
         <span className="text-gray-400">{t("merchantQ")}</span>
-        <Link href="/merchant" className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition" prefetch={false}>
+        <Link
+          href="/merchant/login"
+          className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
+          prefetch={false}
+          aria-label={t("merchantAccess")}
+        >
           {t("merchantAccess")}
         </Link>
       </div>

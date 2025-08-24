@@ -1,6 +1,4 @@
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
+// app/api/dashboard/route.js
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
@@ -15,9 +13,8 @@ function withHeaders(res) {
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
 }
-function json(data, init = {}) {
-  return withHeaders(NextResponse.json(data, init));
-}
+function json(data, init = {}) { return withHeaders(NextResponse.json(data, init)); }
+
 function deviceFromUA(userAgent = "") {
   const ua = (userAgent || "").toLowerCase();
   if (ua.includes("android")) return "Android";
@@ -57,10 +54,7 @@ export async function GET(req) {
     // 2) Kullanıcı
     const dbUser = await prisma.user.findUnique({
       where: { email },
-      select: {
-        id: true, role: true, status: true, name: true, email: true,
-        iban: true, bankName: true, realUserFullname: true,
-      },
+      select: { id: true, role: true, status: true, name: true, email: true, iban: true, bankName: true, realUserFullname: true },
     });
     if (!dbUser) {
       audit({ evt: "dashboard.unauthorized.no_user", email, requestId });
@@ -96,18 +90,12 @@ export async function GET(req) {
     let minPayout = 100;
     try {
       const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
-      if (cfg?.value) {
-        const v = Number(cfg.value);
-        if (!Number.isNaN(v)) minPayout = v;
-      }
+      const v = Number(cfg?.value); if (!Number.isNaN(v)) minPayout = v;
     } catch {}
     let platformCommission = 5;
     try {
       const pcfg = await prisma.platformConfig.findUnique({ where: { keyName: "platform_commission" } });
-      if (pcfg?.value) {
-        const v = Number(pcfg.value);
-        if (!Number.isNaN(v)) platformCommission = v;
-      }
+      const v = Number(pcfg?.value); if (!Number.isNaN(v)) platformCommission = v;
     } catch {}
 
     // 5) Banka alanları
@@ -119,34 +107,18 @@ export async function GET(req) {
     const realNameMissing = !realName || realName.trim().split(/\s+/).length < 2;
 
     // 6) Linkler
-    const userLinks = await prisma.affiliateLink.findMany({
-      where: { userId },
-      select: { productId: true, linkId: true },
-    });
+    const userLinks = await prisma.affiliateLink.findMany({ where: { userId }, select: { productId: true, linkId: true } });
     const productIds = userLinks.map((l) => l.productId);
     const linkIds = userLinks.map((l) => l.linkId);
 
     if (productIds.length === 0) {
       audit({ evt: "dashboard.ok.empty", userId, requestId });
       return json({
-        totalClicks: 0,
-        totalSales: 0,
-        totalEarnings: 0,
-        balance: 0,
-        minPayout,
-        platformCommission,
-        username: dbUser.name || "",
-        email: dbUser.email || "",
-        userId,
-        iban,
-        bankName,
-        ibanMissing,
-        bankMissing,
-        realNameMissing,
-        recentActions: [],
-        leaderboard: [],
-        lastConversion: null,
-        lastClick: null,
+        totalClicks: 0, totalSales: 0, totalEarnings: 0, balance: 0,
+        minPayout, platformCommission,
+        username: dbUser.name || "", email: dbUser.email || "", userId,
+        iban, bankName, ibanMissing, bankMissing, realNameMissing,
+        recentActions: [], leaderboard: [], lastConversion: null, lastClick: null,
       });
     }
 
@@ -188,10 +160,7 @@ export async function GET(req) {
       take: 3,
     });
     const nameById = new Map(activeAffiliates.map((u) => [u.id, u.name || "User"]));
-    const leaderboard = agg.map((row) => ({
-      name: nameById.get(row.userId) || "User",
-      value: Number(row._sum.commissionAffiliate || 0),
-    }));
+    const leaderboard = agg.map((row) => ({ name: nameById.get(row.userId) || "User", value: Number(row._sum.commissionAffiliate || 0) }));
 
     // 10) Son 24 saat
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -207,41 +176,21 @@ export async function GET(req) {
     });
 
     const lastConversionData = lastConversion
-      ? {
-          type: "conversion",
-          time: lastConversion.convertedAt,
-          productName: lastConversion.merchantProduct?.name || "Unknown Product",
-          commission: Number(lastConversion.commissionAffiliate || 0),
-          quantity: lastConversion.quantity || 1,
-        }
+      ? { type: "conversion", time: lastConversion.convertedAt, productName: lastConversion.merchantProduct?.name || "Unknown Product",
+          commission: Number(lastConversion.commissionAffiliate || 0), quantity: lastConversion.quantity || 1 }
       : null;
 
     const lastClickData = lastClick
-      ? {
-          type: "click",
-          time: lastClick.clickedAt,
-          productName: lastClick.affiliateLink?.product?.name || "Unknown Product",
-          extra: deviceFromUA(lastClick.userAgent),
-        }
+      ? { type: "click", time: lastClick.clickedAt, productName: lastClick.affiliateLink?.product?.name || "Unknown Product",
+          extra: deviceFromUA(lastClick.userAgent) }
       : null;
 
     audit({ evt: "dashboard.ok", userId, totals: { clicks: totalClicks, sales: totalSales, earn: totalEarnings }, requestId });
 
     return json({
-      totalClicks,
-      totalSales,
-      totalEarnings,
-      balance,
-      minPayout,
-      platformCommission,
-      username: dbUser.name || "",
-      email: dbUser.email || "",
-      userId,
-      iban,
-      bankName,
-      ibanMissing,
-      bankMissing,
-      realNameMissing,
+      totalClicks, totalSales, totalEarnings, balance, minPayout, platformCommission,
+      username: dbUser.name || "", email: dbUser.email || "", userId,
+      iban, bankName, ibanMissing, bankMissing, realNameMissing,
       recentActions: (recentConversions || []).map((c) => ({
         amount: `+${Number(c.commissionAffiliate || 0).toFixed(2)}₺`,
         desc: `Sale: ${c.merchantProduct?.name || "Product"} (${c.quantity || 1} adet)`,

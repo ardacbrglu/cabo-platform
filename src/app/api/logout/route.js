@@ -5,14 +5,17 @@ export const runtime = "nodejs";
  * File: src/app/api/logout/route.js
  * Purpose: Tüm roller için idempotent logout + güvenli redirect.
  *
- * Güvenlik:
- * - Method: GET/HEAD (CSRF gerekmez) + 30/dk IP rate-limit.
- * - Cookies: NextAuth oturum/CSRF/callback-url çerezleri tüm varyantlarıyla expire edilir.
- * - Redirect: Localhost'ta daima http; proxy arkasında x-forwarded-* ile doğru origin.
+ * Güvenlik (Cabo PROD):
+ * - Method: GET/HEAD (CSRF gerekmez).
+ * - Rate limit: IP 30/dk → 429 + Retry-After.
+ * - Cookies: NextAuth oturum/CSRF/callback-url çerezlerinin tüm varyantlarını expire eder.
+ * - Redirect: /merchant* sayfalarından çıkış → /merchant/login, diğer her yer → /login.
+ * - Origin tespiti: proxy arkasında x-forwarded-*; localhost ise http.
+ * - Headers: security defaults + Cache-Control: no-store.
  */
 
 import { NextResponse } from "next/server";
-import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
+import { checkRateLimit } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 
@@ -21,9 +24,15 @@ function withHeaders(res) {
   return applyApiSecurityHeaders(res);
 }
 
+// IP çıkarımı (rate-limit anahtarı için)
+function ipOf(req) {
+  const fwd = req.headers.get("x-forwarded-for") || "";
+  return (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
+}
+
 // Sağlam origin tespiti (localhost => http)
 function getBaseOrigin(req) {
-  const xfProto = req.headers.get("x-forwarded-proto");
+  const xfProto = (req.headers.get("x-forwarded-proto") || "").toLowerCase();
   const xfHost = req.headers.get("x-forwarded-host");
   const host = xfHost || req.headers.get("host") || "localhost:3000";
   let proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
@@ -31,6 +40,7 @@ function getBaseOrigin(req) {
   return `${proto}://${host}`;
 }
 
+// Nereden gelindiğine göre login hedefi
 function guessLoginPath(req) {
   const referer = req.headers.get("referer") || "";
   try {
@@ -40,7 +50,7 @@ function guessLoginPath(req) {
   return "/login";
 }
 
-// Tüm varyantları expire et (Lax/None + Secure/NonSecure)
+// Tüm varyantları expire et (Lax/None + Secure)
 function expireCookieVariants(res, name) {
   const expires = "Thu, 01 Jan 1970 00:00:00 GMT";
   const base = `; Path=/; Expires=${expires}; HttpOnly`;
@@ -75,32 +85,34 @@ function nukeCookies(res) {
   for (const n of names) expireCookieVariants(res, n);
 }
 
-export async function GET(req) {
+async function handle(req) {
   const requestId =
     req.headers.get("x-request-id") ||
     globalThis.crypto?.randomUUID?.() ||
     `${Date.now()}-${Math.random()}`;
 
+  // Rate limit: IP 30/dk
+  const key = `auth:logout:ip:${ipOf(req)}`;
+  const { allowed, retryAfterSec } = await checkRateLimit(key, 30, 60);
+
+  const base = getBaseOrigin(req);
+  const loginPath = guessLoginPath(req);
+  const redirectUrl = new URL(loginPath, base);
+
+  const res = NextResponse.redirect(redirectUrl, 302);
+  nukeCookies(res);
+
+  if (!allowed) {
+    res.headers.set("Retry-After", String(retryAfterSec || 60));
+  }
+
+  audit({ evt: "logout", requestId, to: loginPath });
+  return withHeaders(res);
+}
+
+export async function GET(req) {
   try {
-    const rl = await checkRateLimit({
-      key: makeRateLimitKey(req, { scope: "logout" }),
-      limit: 30,
-      windowMs: 60_000,
-    });
-
-    const base = getBaseOrigin(req);
-    const loginPath = guessLoginPath(req);
-    const redirectUrl = new URL(loginPath, base);
-
-    const res = NextResponse.redirect(redirectUrl, 302);
-    nukeCookies(res);
-
-    if (!rl?.ok && rl?.resetMs) {
-      res.headers.set("Retry-After", String(Math.ceil(rl.resetMs / 1000)));
-    }
-
-    audit({ evt: "logout", requestId, to: loginPath });
-    return withHeaders(res);
+    return await handle(req);
   } catch {
     const res = NextResponse.redirect(new URL("/login", getBaseOrigin(req)), 302);
     nukeCookies(res);

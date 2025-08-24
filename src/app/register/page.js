@@ -1,9 +1,8 @@
 "use client";
+
 /**
  * Affiliate Register (manual + Google precheck)
- * - Merchant register ile aynı input stilleri
- * - Alan bazlı tooltip uyarıları (ilk submit'te görünür; focus/tıklamada kapanır)
- * - Google: /api/register (flow=google) → precheck cookie → signIn("google")
+ * - Terms & Privacy linkleri ayrı sayfalara gider (/terms, /privacy), lang paramı eklenir.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -11,12 +10,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
-import dynamic from "next/dynamic";
+import NextDynamic from "next/dynamic";
 import { signIn } from "next-auth/react";
 import { apiFetch } from "@/lib/apiFetch";
 import { AlertTriangle } from "lucide-react";
 
-const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
+const Captcha = NextDynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const translations = {
   en: {
@@ -37,19 +36,10 @@ const translations = {
     emailPH: "you@example.com",
     password: "Password",
     passwordPH: "Create a password",
-    terms: (
-      <>
-        I accept the{" "}
-        <Link
-          href="/terms_privacy"
-          className="text-[#81d742] underline hover:text-[#b3ffb3]"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Terms and Privacy Policy
-        </Link>
-      </>
-    ),
+    termsPrefix: "I accept the",
+    termsTos: "Terms of Service",
+    termsAnd: "and",
+    termsPrivacy: "Privacy Policy",
     registerBtn: "Register",
     already: "Already have an account?",
     loginLink: "Log in",
@@ -87,20 +77,10 @@ const translations = {
     emailPH: "sen@example.com",
     password: "Şifre",
     passwordPH: "Şifre oluştur",
-    terms: (
-      <>
-        {" "}
-        <Link
-          href="/terms_privacy"
-          className="text-[#81d742] underline hover:text-[#b3ffb3]"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Kullanım ve Gizlilik Şartlarını
-        </Link>{" "}
-        kabul ediyorum
-      </>
-    ),
+    termsPrefix: "",
+    termsTos: "Kullanım Koşulları",
+    termsAnd: "ve",
+    termsPrivacy: "Gizlilik Politikası’nı",
     registerBtn: "Kaydol",
     already: "Zaten hesabın var mı?",
     loginLink: "Giriş yap",
@@ -121,10 +101,13 @@ const translations = {
   },
 };
 
-function FieldHint({ show, message }) {
+function TermsHint({ show, message }) {
   if (!show) return null;
   return (
-    <div className="absolute -top-10 left-0 z-[5] rounded-md bg-[#222] text-white text-sm px-3 py-2 shadow-lg border border-[#333]">
+    <div
+      className="absolute -top-10 left-0 z-[5] rounded-md bg-[#222] text-white text-sm px-3 py-2 shadow-lg border border-[#333]"
+      role="alert"
+    >
       <div className="flex items-center gap-2">
         <AlertTriangle size={16} className="text-[#ffb74d]" />
         <span>{message}</span>
@@ -134,6 +117,35 @@ function FieldHint({ show, message }) {
         className="absolute left-4 -bottom-2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-[#222]"
       />
     </div>
+  );
+}
+
+function TermsLabel({ locale }) {
+  const isTr = String(locale || "en").toLowerCase().startsWith("tr");
+  const lang = isTr ? "tr" : "en";
+  const dict = isTr ? translations.tr : translations.en;
+  return (
+    <>
+      {dict.termsPrefix ? <>{dict.termsPrefix} </> : null}
+      <Link
+        href={`/terms?lang=${lang}`}
+        className="text-[#81d742] underline hover:text-[#b3ffb3]"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {dict.termsTos}
+      </Link>{" "}
+      {dict.termsAnd}{" "}
+      <Link
+        href={`/privacy?lang=${lang}`}
+        className="text-[#81d742] underline hover:text-[#b3ffb3]"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {dict.termsPrivacy}
+      </Link>
+      {isTr ? " kabul ediyorum" : ""}
+    </>
   );
 }
 
@@ -148,22 +160,27 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [terms, setTerms] = useState(false);
   const [captcha, setCaptcha] = useState("");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Tooltip state (merchant ile aynı davranış)
+  // Tooltip state (SADECE TERMS için)
   const [submitted, setSubmitted] = useState(false);
-  const [hintsVisible, setHintsVisible] = useState(false);
+  const [termsHintVisible, setTermsHintVisible] = useState(false);
   const firstInvalidRef = useRef(null);
 
   useEffect(() => {
-    if (!hintsVisible) return;
-    const close = () => setHintsVisible(false);
+    if (!termsHintVisible) return;
+    const close = () => setTermsHintVisible(false);
     window.addEventListener("pointerdown", close, { once: true });
-    return () => window.removeEventListener("pointerdown", close);
-  }, [hintsVisible]);
+    window.addEventListener("keydown", close, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [termsHintVisible]);
 
   if (!ready) return null;
 
@@ -186,20 +203,29 @@ export default function RegisterPage() {
   };
 
   const errors = submitted ? validate() : {};
-  const show = (name) => hintsVisible && !!errors[name];
   const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
+
+  const inputBase =
+    "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
+  const ringOk = "focus:ring-[#81d742]";
+  const ringErr = "focus:ring-red-400 border-red-500";
 
   async function onSubmit(e) {
     e.preventDefault();
     setSubmitted(true);
-    setHintsVisible(true);
     setServerError("");
     setSuccess("");
     firstInvalidRef.current = null;
 
     const errs = validate();
+    setTermsHintVisible(Boolean(errs.terms));
+
     if (Object.keys(errs).length) {
-      setTimeout(() => firstInvalidRef.current?.focus(), 0);
+      const order = ["name", "email", "password", "terms", "captcha"];
+      const firstKey = order.find((k) => errs[k]);
+      if (firstKey && firstKey !== "terms") {
+        requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
+      }
       return;
     }
 
@@ -220,12 +246,16 @@ export default function RegisterPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setServerError(data?.message || t("failed"));
+        setCaptcha("");
+        setCaptchaResetKey((k) => k + 1);
       } else {
         setSuccess(t("success"));
         setTimeout(() => router.push("/login"), 1800);
       }
     } catch {
       setServerError(t("server"));
+      setCaptcha("");
+      setCaptchaResetKey((k) => k + 1);
     } finally {
       setLoading(false);
     }
@@ -233,14 +263,13 @@ export default function RegisterPage() {
 
   async function onGoogle() {
     setSubmitted(true);
-    setHintsVisible(true);
     setServerError("");
     setSuccess("");
-    const errs = validate();
-    // Google akışında kullanıcı adı/şifre aranmaz → sadece terms+captcha kontrol edelim
+
     const gErrs = {};
     if (!terms) gErrs.terms = t("req_terms");
     if (!captcha) gErrs.captcha = t("req_captcha");
+    setTermsHintVisible(Boolean(gErrs.terms));
     if (Object.keys(gErrs).length) return;
 
     setLoading(true);
@@ -253,26 +282,25 @@ export default function RegisterPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setServerError(data?.message || t("failed"));
+        setCaptcha("");
+        setCaptchaResetKey((k) => k + 1);
         setLoading(false);
         return;
       }
       await signIn("google", { callbackUrl: "/dashboard", redirect: true });
     } catch {
-      setServerError(locale === "tr" ? "Google ile giriş başarısız oldu." : "Google sign-in failed.");
+      setServerError(String(locale).toLowerCase().startsWith("tr")
+        ? "Google ile giriş başarısız oldu."
+        : "Google sign-in failed.");
     } finally {
       setLoading(false);
     }
   }
 
-  const inputBase =
-    "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
-  const ringOk = "focus:ring-[#81d742]";
-  const ringErr = "focus:ring-red-400 border-red-500";
-
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* LEFT INFO */}
+        {/* SOL BİLGİ */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
@@ -293,21 +321,23 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        {/* REGISTER FORM */}
-        <form onSubmit={onSubmit} className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center" autoComplete="off" noValidate>
+        {/* FORM */}
+        <form
+          onSubmit={onSubmit}
+          className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
+          autoComplete="off"
+          noValidate
+        >
           <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">{t("title")}</h3>
 
           {/* Username */}
-          <div className="w-full relative" onFocus={() => setHintsVisible(false)}>
-            <FieldHint show={show("name")} message={errors.name} />
+          <div className="w-full">
             <label htmlFor="name" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
               {t("username")}
             </label>
             <input
               id="name"
-              ref={(el) => {
-                if (needsRef("name")) firstInvalidRef.current = el;
-              }}
+              ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
               type="text"
               spellCheck={false}
               autoComplete="username"
@@ -322,16 +352,13 @@ export default function RegisterPage() {
           </div>
 
           {/* Email */}
-          <div className="w-full relative" onFocus={() => setHintsVisible(false)}>
-            <FieldHint show={show("email")} message={errors.email} />
+          <div className="w-full">
             <label htmlFor="email" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
               {t("email")}
             </label>
             <input
               id="email"
-              ref={(el) => {
-                if (needsRef("email")) firstInvalidRef.current = el;
-              }}
+              ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
               type="email"
               spellCheck={false}
               autoComplete="email"
@@ -344,16 +371,13 @@ export default function RegisterPage() {
           </div>
 
           {/* Password */}
-          <div className="w-full relative" onFocus={() => setHintsVisible(false)}>
-            <FieldHint show={show("password")} message={errors.password} />
+          <div className="w-full">
             <label htmlFor="password" className="block text-base md:text-lg font-semibold mb-1 text-gray-200">
               {t("password")}
             </label>
             <input
               id="password"
-              ref={(el) => {
-                if (needsRef("password")) firstInvalidRef.current = el;
-              }}
+              ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
               type="password"
               autoComplete="new-password"
               value={password}
@@ -365,19 +389,25 @@ export default function RegisterPage() {
             />
           </div>
 
-          {/* Terms */}
-          <div className="relative flex items-center gap-2 w-full" onFocus={() => setHintsVisible(false)}>
-            <input id="terms" type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} required className="accent-[#81d742] h-5 w-5" />
+          {/* Terms (tek tooltip burada) */}
+          <div className="relative flex items-center gap-2 w-full">
+            <input
+              id="terms"
+              type="checkbox"
+              checked={terms}
+              onChange={(e) => setTerms(e.target.checked)}
+              required
+              className="accent-[#81d742] h-5 w-5"
+            />
             <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
-              {t("terms")}
+              <TermsLabel locale={locale} />
             </label>
-            <FieldHint show={show("terms")} message={errors.terms} />
+            <TermsHint show={termsHintVisible} message={errors.terms} />
           </div>
 
           {/* CAPTCHA */}
-          <div className="w-full relative" onFocus={() => setHintsVisible(false)}>
-            <Captcha onChange={setCaptcha} lang={locale} />
-            <FieldHint show={show("captcha")} message={errors.captcha} />
+          <div className="w-full">
+            <Captcha onChange={setCaptcha} lang={locale} resetKey={captchaResetKey} />
           </div>
 
           {/* Server messages */}
@@ -393,8 +423,14 @@ export default function RegisterPage() {
           )}
 
           {/* Manual submit */}
-          <button type="submit" disabled={loading} className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition disabled:opacity-60">
-            {loading ? (locale === "tr" ? "Kaydediliyor..." : "Registering...") : t("registerBtn")}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition disabled:opacity-60"
+          >
+            {loading
+              ? (String(locale).toLowerCase().startsWith("tr") ? "Kaydediliyor..." : "Registering...")
+              : t("registerBtn")}
           </button>
 
           {/* Divider */}
@@ -426,14 +462,12 @@ export default function RegisterPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 3rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem; }
+          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>
   );
 }
+
+export const runtime = "nodejs";

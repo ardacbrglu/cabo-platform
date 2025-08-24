@@ -1,4 +1,3 @@
-// src/lib/apiFetch.js
 /**
  * File: src/lib/apiFetch.js
  * Purpose: Tek HTTP wrapper (Cabo PROD).
@@ -6,23 +5,25 @@
  * Security Docblock:
  * - credentials:'include', X-Requested-With ve X-Request-Id otomatik eklenir.
  * - Mutasyonlarda NextAuth CSRF token (/api/auth/csrf) otomatik eklenir ve 10dk cache'lenir.
- * - 429 (Too Many Requests): Retry-After saniyesi kadar **sessizce** bekler, tek kez yeniden dener.
- *   Kullanıcıya toast/log göstermez.
- * - 401/403: Bulunduğunuz alana göre doğru login sayfasına yönlendirir (merchant vs affiliate).
+ * - 429 (Too Many Requests): Retry-After saniyesi kadar sessizce bekler, tek kez yeniden dener.
+ * - 401/403: Bulunduğunuz alana göre doğru login sayfasına yönlendirir (opsiyonel kapatma: init.noAuthRedirect === true).
  * - Body: FormData değilse otomatik JSON.stringify + Content-Type: application/json.
- * - Geri dönüş: Orijinal Response nesnesi (mevcut çağrılar kırılmaz).
+ * - Dönüş: Orijinal Response nesnesi.
  */
 
 let _csrf = { token: "", ts: 0 };
 const CSRF_TTL = 10 * 60 * 1000; // 10 dk
 
 async function getCsrfToken() {
-  if (typeof window === "undefined") return ""; // SSR/Route içinde isteme
+  if (typeof window === "undefined") return ""; // SSR/Route handler'da isteme
   const fresh = _csrf.token && Date.now() - _csrf.ts < CSRF_TTL;
   if (fresh) return _csrf.token;
 
   try {
-    const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
+    const r = await fetch("/api/auth/csrf", {
+      credentials: "include",
+      cache: "no-store",
+    });
     const j = await r.json().catch(() => ({}));
     const token = j?.csrfToken || "";
     _csrf = { token, ts: Date.now() };
@@ -55,9 +56,10 @@ export async function apiFetch(input, init = {}) {
 
   // Body'yi otomatik JSON'a çevir (FormData ise dokunma)
   let body = init.body;
-  if (body && typeof body !== "string" && !(body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-    body = JSON.stringify(body);
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body != null && typeof body !== "string" && !isFormData) {
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    try { body = JSON.stringify(body); } catch { /* noop */ }
   }
 
   // CSRF (yalnızca client + mutasyon + header yoksa)
@@ -76,9 +78,7 @@ export async function apiFetch(input, init = {}) {
     redirect: init.redirect || "follow",
   };
 
-  async function exec() {
-    return fetch(input, reqInit);
-  }
+  const exec = () => fetch(input, reqInit);
 
   // İlk deneme
   let res = await exec();
@@ -86,21 +86,33 @@ export async function apiFetch(input, init = {}) {
   // 429 ise: Retry-After kadar sessiz bekle + tek retry
   if (res.status === 429) {
     const ra = parseInt(res.headers.get("Retry-After") || "0", 10);
-    const waitMs = ((Number.isFinite(ra) && ra > 0 ? Math.min(ra, 60) : 1) * 1000) + Math.floor(Math.random() * 250);
+    const waitMs =
+      ((Number.isFinite(ra) && ra > 0 ? Math.min(ra, 60) : 1) * 1000) +
+      Math.floor(Math.random() * 250);
     await sleep(waitMs);
     res = await exec();
   }
 
-  // 401/403 → doğru login’e yönlendir
-  if (typeof window !== "undefined" && (res.status === 401 || res.status === 403)) {
+  // 401/403 → doğru login’e yönlendir (opsiyonel kapatma bayrağı ile)
+  const noAuthRedirect = !!init.noAuthRedirect;
+  if (typeof window !== "undefined" && (res.status === 401 || res.status === 403) && !noAuthRedirect) {
     const path = window.location?.pathname || "";
-    const to = path.startsWith("/merchant") ? "/merchant/login" : "/login";
+    const isMerchantArea =
+      path.startsWith("/merchant") ||
+      (typeof input === "string" && /\/api\/merchant_/i.test(input));
+
+    const to = isMerchantArea ? "/merchant/login" : "/login";
     const url = new URL(to, window.location.origin);
     url.searchParams.set("callbackUrl", window.location.href);
-    try { window.location.replace(url.toString()); } catch { window.location.href = url.toString(); }
+
+    try {
+      window.location.replace(url.toString());
+    } catch {
+      window.location.href = url.toString();
+    }
   }
 
-  return res; // Mevcut kullanım şekilleri bozulmasın
+  return res;
 }
 
 export default apiFetch;
