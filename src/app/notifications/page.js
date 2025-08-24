@@ -5,7 +5,7 @@ import { useState, useMemo } from "react";
 import Layout from "@/components/Layout";
 import { useNotifications } from "@/hooks/useNotifications";
 import useTranslation from "@/hooks/useTranslation";
-import { Bell, CheckCircle, Trash2 } from "lucide-react";
+import { Bell, CheckCircle, Trash2, Eye } from "lucide-react";
 
 const NOTIFS_PER_PAGE = 8;
 
@@ -32,10 +32,24 @@ function NotificationTypeDot({ type }) {
 
 export default function NotificationsPage() {
   const { t } = useTranslation();
-  const { notifications, markSelectedAsRead, deleteNotifications, unreadCount } = useNotifications(true);
+  const {
+    notifications,
+    markSelectedAsRead,
+    markOneAsRead,
+    deleteNotifications,
+    deleteOne,
+    unreadCount,
+  } = useNotifications(true);
+
+  // küçük i18n fallback yardımcıları
+  const tt = (key, fallback) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
+  const [viewer, setViewer] = useState(null); // {id,message,link,createdAt}
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((notifications?.length || 0) / NOTIFS_PER_PAGE)),
@@ -77,6 +91,12 @@ export default function NotificationsPage() {
   const renderReadIcon = (read) => (
     <CheckCircle size={20} className={read ? "text-[#81d742]" : "text-gray-500 opacity-60"} />
   );
+
+  const openViewer = async (n) => {
+    if (!n.read) await markOneAsRead(n.id);
+    setViewer(n);
+  };
+  const closeViewer = () => setViewer(null);
 
   return (
     <Layout>
@@ -154,11 +174,22 @@ export default function NotificationsPage() {
                     {new Date(n.createdAt).toLocaleString()}
                   </span>
                 </div>
+
+                <button
+                  className="ml-2 p-1.5 rounded hover:bg-[#222222] transition"
+                  title={tt("view", "Read")}
+                  onClick={() => openViewer(n)}
+                >
+                  <Eye size={19} className="text-gray-200" />
+                </button>
+
                 <span className="mx-1">{renderReadIcon(n.read)}</span>
+
                 <button
                   className="ml-2 p-1.5 rounded hover:bg-[#ff555520] transition"
-                  onClick={() => deleteNotifications([n.id])}
+                  onClick={() => deleteOne(n.id)}
                   aria-label={t("delete")}
+                  title={t("delete")}
                 >
                   <Trash2 size={19} className="text-[#ff5555]" />
                 </button>
@@ -187,6 +218,48 @@ export default function NotificationsPage() {
           </div>
         </div>
       </div>
+
+      {/* Simple modal viewer */}
+      {viewer && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          aria-modal="true"
+          role="dialog"
+        >
+          <div className="absolute inset-0 bg-black/60" onClick={closeViewer} />
+          <div className="relative bg-[#181818] border border-[#232323] rounded-2xl shadow-2xl max-w-lg w-[92%] p-6">
+            <h3 className="text-[#d1ffd0] font-mono font-black text-xl mb-3">
+              {tt("viewNotification", "Notification")}
+            </h3>
+            <p className="text-gray-100 leading-relaxed whitespace-pre-wrap">{viewer.message}</p>
+            <p className="text-gray-500 text-xs mt-3 font-mono">
+              {new Date(viewer.createdAt).toLocaleString()}
+            </p>
+
+            <div className="flex gap-2 justify-end mt-5">
+              {viewer.link ? (
+                <a
+                  href={viewer.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded bg-[#262f24] text-[#d1ffd0] font-mono font-bold hover:bg-[#293f21]"
+                >
+                  {tt("openLink", "Open")}
+                </a>
+              ) : null}
+              <button
+                onClick={closeViewer}
+                className="px-3 py-1.5 rounded bg-[#ff5555] text-white font-mono font-bold hover:bg-[#ff6f6f]"
+              >
+                {tt("close", "Close")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";

@@ -80,37 +80,47 @@ export function useNotifications(enabled = true) {
     };
   }, [enabled, fetchNotifications]);
 
-  const markSelectedAsRead = useCallback(async (ids) => {
-    if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
-    try {
-      const res = await apiFetch("/api/notifications/mark-read", {
-        method: "POST",
-        body: { ids },
-      });
-      if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
-      setNotifications((prev = []) =>
-        Array.isArray(prev) ? prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)) : []
-      );
-    } catch {
-      /* sessiz; polling toparlar */
-    }
-  }, [enabled]);
+  const markSelectedAsRead = useCallback(
+    async (ids) => {
+      if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
+      try {
+        const res = await apiFetch("/api/notifications/mark-read", {
+          method: "POST",
+          body: { ids },
+        });
+        if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
+        setNotifications((prev = []) =>
+          Array.isArray(prev) ? prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)) : []
+        );
+      } catch {
+        /* sessiz; polling toparlar */
+      }
+    },
+    [enabled]
+  );
 
-  const _delete = useCallback(async (ids) => {
-    if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
-    try {
-      const res = await apiFetch("/api/notifications/delete", {
-        method: "POST",
-        body: { ids },
-      });
-      if (!res.ok) throw new Error(`delete failed: ${res.status}`);
-      setNotifications((prev = []) =>
-        Array.isArray(prev) ? prev.filter((n) => !ids.includes(n.id)) : []
-      );
-    } catch {
-      /* sessiz */
-    }
-  }, [enabled]);
+  const _delete = useCallback(
+    async (ids) => {
+      if (!enabled || !Array.isArray(ids) || ids.length === 0) return;
+      try {
+        const res = await apiFetch("/api/notifications/delete", {
+          method: "POST",
+          body: { ids },
+        });
+        if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+        setNotifications((prev = []) =>
+          Array.isArray(prev) ? prev.filter((n) => !ids.includes(n.id)) : []
+        );
+      } catch {
+        /* sessiz */
+      }
+    },
+    [enabled]
+  );
+
+  // Tekil yardımcılar
+  const markOneAsRead = useCallback((id) => markSelectedAsRead([id]), [markSelectedAsRead]);
+  const deleteOne = useCallback((id) => _delete([id]), [_delete]);
 
   return {
     notifications,
@@ -119,6 +129,11 @@ export function useNotifications(enabled = true) {
     lastError,
     fetchNotifications,
     markSelectedAsRead,
-    deletenotifications: _delete, // ← senin NotificationsPage ile birebir uyum
+    markOneAsRead,
+    deleteOne,
+    // doğru isim (NotificationsPage bununla çağırıyor)
+    deleteNotifications: _delete,
+    // geri uyumluluk (eski kullanım varsa kırılmasın)
+    deletenotifications: _delete,
   };
 }

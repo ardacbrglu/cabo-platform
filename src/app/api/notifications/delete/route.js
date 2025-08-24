@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { cookies } from "next/headers";
 
+/* ---------- CSRF (NextAuth) ---------- */
 function readCsrfCookieValue() {
   const store = cookies();
   const raw =
@@ -34,7 +35,7 @@ export async function POST(req) {
   try {
     const session = await getServerSession(authOptions);
     const userIdRaw = session?.user?.id ?? session?.user?.userId ?? null;
-    const userId = userIdRaw ? Number(userIdRaw) : null;
+    const userId = Number.isInteger(Number(userIdRaw)) ? Number(userIdRaw) : null;
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const rlKey = makeRateLimitKey(req, { scope: "notif:delete", userId });
@@ -47,8 +48,14 @@ export async function POST(req) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const ids = Array.isArray(body?.ids) ? body.ids.map(String).filter(Boolean) : [];
-    if (!ids.length) return NextResponse.json({ error: "No ids" }, { status: 400 });
+    // IMPORTANT: ids → INT[]
+    const ids = (Array.isArray(body?.ids) ? body.ids : [])
+      .map((v) => Number(v))
+      .filter((n) => Number.isInteger(n) && n > 0);
+
+    if (!ids.length) {
+      return NextResponse.json({ error: "No valid ids" }, { status: 400 });
+    }
 
     await prisma.notification.updateMany({
       where: { id: { in: ids }, userId, isDeleted: false },

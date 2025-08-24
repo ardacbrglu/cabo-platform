@@ -1,15 +1,5 @@
+// src/components/ProfileDropdown.jsx
 "use client";
-
-/**
- * File: src/components/ProfileDropdown.jsx
- * Purpose: Profil menüsü + bildirim kısayolları + güvenli çıkış.
- * Security Docblock:
- * - Logout: /api/logout GET + 302 redirect. CSRF gerekmez. En güvenli yöntem
- *   tam sayfa yönlendirme (window.location.assign) — Set-Cookie ve redirect zinciri
- *   tarayıcı tarafından işletilir.
- * - Ek bir client-side cookie temizliğine gerek yoktur; NextAuth çerezleri
- *   HttpOnly olduğundan JS ile silinmez. Sunucu tarafı zaten siliyor.
- */
 
 import { useState, useRef, useEffect } from "react";
 import { useUser } from "@/context/UserContext";
@@ -19,6 +9,7 @@ import { User2, LogOut, Bell, Settings, Headset } from "lucide-react";
 import useTranslation from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
 import { useNotifications } from "@/hooks/useNotifications";
+import NotificationBadge from "@/components/NotificationBadge";
 
 export default function ProfileDropdown({ alwaysVisible = false }) {
   const [open, setOpen] = useState(false);
@@ -46,7 +37,6 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
 
   function handleLogout(e) {
     e.preventDefault();
-    // En güvenli akış: tarayıcıyı API'ye götür → Set-Cookie temizlensin → 302 ile /login
     if (typeof window !== "undefined") {
       window.location.assign("/api/logout");
     } else {
@@ -90,15 +80,10 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
       >
         <span className="relative">
           <User2 size={20} />
-          {/* Profil ikonunun sağ üstünde badge */}
-          <span
-            aria-hidden
-            className={`absolute -top-1 -right-1 inline-block rounded-full ${unreadCount > 0 ? "bg-[#81d742]" : "bg-transparent"}`}
-            style={{ width: 10, height: 10 }}
-          />
+          {/* Tek tip kırmızı notification dot */}
+          <NotificationBadge show={unreadCount > 0} size={10} />
         </span>
         <span className="truncate max-w-[90px]">{user?.name || ""}</span>
-        {/* Chevron */}
         <svg width="16" height="16" className="ml-1 align-middle relative top-[1px]">
           <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
         </svg>
@@ -131,11 +116,7 @@ export default function ProfileDropdown({ alwaysVisible = false }) {
           >
             <span className="relative flex items-center">
               <Bell size={16} />
-              <span
-                aria-hidden
-                className={`absolute -top-1 -right-1 inline-block rounded-full ${unreadCount > 0 ? "bg-[#81d742]" : "bg-transparent"}`}
-                style={{ width: 9, height: 9 }}
-              />
+              <NotificationBadge show={unreadCount > 0} size={9} />
             </span>
             {t("notifications")}
           </Link>

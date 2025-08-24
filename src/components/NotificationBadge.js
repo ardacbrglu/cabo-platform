@@ -1,4 +1,12 @@
-export default function NotificationBadge({ show, size = 11, style }) {
+export default function NotificationBadge({
+  show,
+  size = 11,
+  bgColor = "#ff5555",
+  borderColor = "#181818",
+  offsetX = -4,   // right offset (px, negative = dışa doğru)
+  offsetY = -4,   // top offset
+  style,
+}) {
   if (!show) return null;
   return (
     <span
@@ -7,13 +15,13 @@ export default function NotificationBadge({ show, size = 11, style }) {
         height: size,
         minWidth: size,
         minHeight: size,
-        background: "#ff5555",
-        border: "3px solid #181818",
+        background: bgColor,
+        border: `2px solid ${borderColor}`,
         borderRadius: "9999px",
         display: "inline-block",
         position: "absolute",
-        top: "-5px",
-        right: "-4px",
+        top: `${offsetY}px`,
+        right: `${offsetX}px`,
         ...style,
       }}
       className="animate-pulse"
