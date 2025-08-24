@@ -389,7 +389,22 @@
   "performance.status": "status",
   "performance.prev": "Previous",
   "performance.next": "Next",
-  "performance.export_csv": "Export CSV"
+  "performance.export_csv": "Export CSV",
+
+
+  "minLabel": "min",
+  "commissionTip": "set a competitive rate to get more promoters",
+  "forbidden": "You don't have permission to perform this action.",
+  "validation_required": "This field is required.",
+  "validation_url": "Enter a valid HTTPS URL.",
+  "validation_imageUrl": "Provide a valid HTTPS URL or a data:image/*;base64,... image (≤ 2 MB).",
+  "validation_imageUrlHttp": "Image URL must start with https://",
+  "validation_price": "Enter a valid price greater than 0.",
+  "validation_commission": "Commission must be between {min}% and 99.9%.",
+  "validation_maxLimit": "Max sales limit must be an integer ≥ 1.",
+  "validation_maxLimitEdit": "Max sales limit must be an integer ≥ 1 and cannot be less than the sold count.",
+  "imageHint": "HTTPS image URL or data:image/*;base64,… (≤ 2 MB) is accepted."
 }
+
 
 

@@ -400,7 +400,22 @@
   "performance.range_7d": "Son 7 gün",
   "performance.range_30d": "Son 30 gün",
   "performance.range_90d": "Son 90 gün",
-  "performance.select_product": "Ürün Seç"
-}
+  "performance.select_product": "Ürün Seç",
 
+
+
+
+  "minLabel": "min",
+  "commissionTip": "daha çok tanıtım için rekabetçi bir oran belirleyin",
+  "forbidden": "Bu işlem için yetkiniz yok.",
+  "validation_required": "Bu alan zorunludur.",
+  "validation_url": "Geçerli bir HTTPS adresi girin.",
+  "validation_imageUrl": "Geçerli bir HTTPS adresi ya da data:image/*;base64,… görseli (≤ 2 MB) girin.",
+  "validation_imageUrlHttp": "Görsel URL’si https:// ile başlamalıdır.",
+  "validation_price": "0’dan büyük geçerli bir fiyat girin.",
+  "validation_commission": "Komisyon {min}% ile 99,9% arasında olmalıdır.",
+  "validation_maxLimit": "Maksimum satış limiti 1 veya daha büyük tam sayı olmalıdır.",
+  "validation_maxLimitEdit": "Maksimum satış limiti 1 veya daha büyük olmalı ve satılan adetten küçük olamaz.",
+  "imageHint": "HTTPS görsel linki veya data:image/*;base64,… (≤ 2 MB) kabul edilir."
+}
 
