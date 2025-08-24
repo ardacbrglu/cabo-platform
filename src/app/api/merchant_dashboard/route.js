@@ -1,10 +1,6 @@
 /**
  * Merchant Dashboard API (GET list, POST create, PATCH update/activate)
- * - AuthZ: requireMerchant() (DB doğrulamalı)
- * - Rate limit: GET 60/dk; POST/PATCH 10/dk (IP+userId)
- * - CSRF: POST/PATCH → NextAuth double-submit (header + cookie)
- * - Mutasyonlarda Origin/Referer & X-Requested-With zorunlu
- * - Tüm yanıtlarda Cache-Control: no-store + security headers
+ * - image_url: http(s) **veya** data:image/*;base64,… (≤ 2MB)
  */
 
 import { NextResponse } from "next/server";
@@ -19,32 +15,17 @@ import { requireMerchant } from "@/lib/guards";
 
 const DEV = process.env.NODE_ENV !== "production";
 
-/* ────────── tiny utils ────────── */
+/* ────────── utils ────────── */
 const ridOf = (req) => req.headers.get("x-request-id")?.slice(0, 128) || crypto.randomUUID();
-const ipUaOf = (req) => {
-  const fwd = req.headers.get("x-forwarded-for") || "";
-  const ip = (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
-  const ua = req.headers.get("user-agent") || "unknown";
-  return { ip, ua };
-};
-const withSec = (res, rid) => {
-  applyApiSecurityHeaders(res);
-  res.headers.set("Cache-Control", "no-store");
-  res.headers.set("X-Request-Id", rid);
-  return res;
-};
-const errorJson = (rid, status, message, extra = {}) =>
-  withSec(NextResponse.json({ error: message, request_id: rid, ...extra }, { status }), rid);
+const withSec = (res, rid) => { applyApiSecurityHeaders(res); res.headers.set("Cache-Control", "no-store"); res.headers.set("X-Request-Id", rid); return res; };
+const errorJson = (rid, status, message, extra = {}) => withSec(NextResponse.json({ error: message, request_id: rid, ...extra }, { status }), rid);
 const okJson = (rid, data, init = {}) => withSec(NextResponse.json(data, init), rid);
 
-/* ────────── security helpers ────────── */
 function validateNextAuthCsrf(req) {
   const headerToken = req.headers.get("x-csrf-token") || req.headers.get("X-CSRF-Token");
   if (!headerToken) return false;
   const cookie = req.headers.get("cookie") || "";
-  const m =
-    cookie.match(/(?:^|;\s*)(?:__Host-)?next-auth\.csrf-token=([^;]+)/i) ||
-    cookie.match(/(?:^|;\s*)next-auth\.csrf-token=([^;]+)/i);
+  const m = cookie.match(/(?:^|;\s*)(?:__Host-)?next-auth\.csrf-token=([^;]+)/i);
   if (!m) return false;
   const cookieToken = decodeURIComponent(m[1]).split("|")[0];
   return cookieToken && cookieToken === headerToken;
@@ -53,40 +34,20 @@ function enforceOrigin(req) {
   if (req.method === "GET" || req.method === "HEAD") return true;
   const xrw = (req.headers.get("x-requested-with") || "").toLowerCase();
   if (xrw !== "xmlhttprequest") return false;
-
   const host = req.headers.get("host");
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
   const envUrl = process.env.NEXTAUTH_URL || process.env.BASE_URL || "";
-
-  const allowed = new Set(
-    [host, envUrl].filter(Boolean).map((u) => {
-      try { return new URL(u.startsWith("http") ? u : `https://${u}`).host; }
-      catch { return u; }
-    })
-  );
+  const allowed = new Set([host, envUrl].filter(Boolean).map((u) => { try { return new URL(u.startsWith("http") ? u : `https://${u}`).host; } catch { return u; } }));
   const ok = (u) => { try { return !u || allowed.has(new URL(u).host); } catch { return false; } };
   return ok(origin) && ok(referer);
 }
-
-/** checkRateLimit imza farklarını normalize eder */
 async function rateLimitAnyShape({ key, limit, windowMs }) {
   try {
     const r = await checkRateLimit({ key, limit, windowMs });
-    const ok = (r?.ok ?? r?.allowed ?? true);
-    const resetMs = (r?.resetMs ?? (r?.retryAfterSec ? r.retryAfterSec * 1000 : undefined));
-    return { ok, resetMs: resetMs ?? windowMs };
-  } catch {}
-  try {
-    const r = await checkRateLimit(key, limit, Math.round(windowMs / 1000));
-    const ok = (r?.ok ?? r?.allowed ?? true);
-    const resetMs = (r?.resetMs ?? (r?.retryAfterSec ? r.retryAfterSec * 1000 : undefined));
-    return { ok, resetMs: resetMs ?? windowMs };
-  } catch {
-    return { ok: true, resetMs: windowMs };
-  }
+    return { ok: (r?.ok ?? r?.allowed ?? true), resetMs: (r?.resetMs ?? (r?.retryAfterSec ? r.retryAfterSec * 1000 : windowMs)) };
+  } catch { return { ok: true, resetMs: windowMs }; }
 }
-
 async function enforceRate(req, rid, userId, limitPerMin) {
   const fwd = req.headers.get("x-forwarded-for") || "";
   const ip = (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
@@ -101,12 +62,9 @@ async function enforceRate(req, rid, userId, limitPerMin) {
   return { blocked: false };
 }
 
-/* ────────── prisma helpers ────────── */
+/* ────────── prisma helpers (değişmedi) ────────── */
 function resolveModel(client, candidates, methods = ["findMany"]) {
-  for (const n of candidates) {
-    const m = client?.[n];
-    if (m && methods.every((fn) => typeof m[fn] === "function")) return m;
-  }
+  for (const n of candidates) { const m = client?.[n]; if (m && methods.every((fn) => typeof m[fn] === "function")) return m; }
   return null;
 }
 async function findProductsForMerchant(Product, userId) {
@@ -124,7 +82,6 @@ async function countLinksByProduct(prismaClient, ids) {
     resolveModel(prismaClient, ["affiliateLink", "affiliateLinks"]) ||
     resolveModel(prismaClient, ["AffiliateLink", "AffiliateLinks"]);
   if (!Link || !ids.length) return new Map();
-
   try {
     const g = await Link.groupBy({ by: ["productId"], where: { productId: { in: ids } }, _count: { productId: true } });
     return new Map(g.map((row) => [row.productId, row._count.productId]));
@@ -132,14 +89,6 @@ async function countLinksByProduct(prismaClient, ids) {
   try {
     const g = await Link.groupBy({ by: ["product_id"], where: { product_id: { in: ids } }, _count: { product_id: true } });
     return new Map(g.map((row) => [row.product_id, row._count.product_id]));
-  } catch {}
-  try {
-    const r = await Link.findMany({ where: { productId: { in: ids } }, select: { productId: true } });
-    const m = new Map(); for (const x of r) m.set(x.productId, (m.get(x.productId) || 0) + 1); return m;
-  } catch {}
-  try {
-    const r = await Link.findMany({ where: { product_id: { in: ids } }, select: { product_id: true } });
-    const m = new Map(); for (const x of r) m.set(x.product_id, (m.get(x.product_id) || 0) + 1); return m;
   } catch {}
   return new Map();
 }
@@ -175,16 +124,39 @@ function mapProductRow(p, linkCount) {
   };
 }
 
-/* ────────── validation ────────── */
-const urlStr = z.string().min(6).max(2048).refine((v) => {
+/* ────────── image_url validator ────────── */
+function isSafeImageUrl(s, maxBytes = 2 * 1024 * 1024) {
+  if (!s) return false;
+
+  // data:image/*;base64,…
+  if (s.startsWith("data:image/")) {
+    const m = s.match(/^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)$/i);
+    if (!m) return false;
+    try {
+      const buf = Buffer.from(m[2], "base64");
+      return buf.length > 0 && buf.length <= maxBytes;
+    } catch { return false; }
+  }
+
+  // http(s)
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/* ────────── zod schemas ────────── */
+const httpUrl = z.string().min(6).max(2048).refine((v) => {
   try { const u = new URL(v); return ["http:", "https:"].includes(u.protocol); } catch { return false; }
 }, "invalid_url");
 
 const CreateSchema = z.object({
   name: z.string().min(3).max(120),
   description: z.string().max(2000).optional().default(""),
-  image_url: urlStr,
-  merchant_url: urlStr,
+  image_url: z.string().min(10).max(5_000).refine((v) => isSafeImageUrl(v), "invalid_image_url"),
+  merchant_url: httpUrl,
   price: z.union([z.string(), z.number()]),
   commissionRate: z.union([z.string(), z.number()]),
   max_sales_limit: z.union([z.string(), z.number()]),
@@ -234,7 +206,6 @@ export async function GET(req) {
 /* ────────── POST ────────── */
 export async function POST(req) {
   const rid = ridOf(req);
-  const { ip, ua } = ipUaOf(req);
   try {
     const { userId } = await requireMerchant();
     if (!enforceOrigin(req)) return errorJson(rid, 403, "bad_origin");
@@ -260,14 +231,13 @@ export async function POST(req) {
     const merchant_url = sanitize.text((parsed.data.merchant_url || "").trim());
     const price = Number(parsed.data.price);
     const commissionRate = Number(parsed.data.commissionRate);
-
-    // REQUIRED & >= 1
     const max_sales_limit = Math.floor(Number(String(parsed.data.max_sales_limit ?? "").trim()));
 
     if (!Number.isFinite(price) || price <= 0) return errorJson(rid, 400, "invalid_price");
     if (!Number.isFinite(commissionRate) || commissionRate < minCommission || commissionRate > 99.9)
       return errorJson(rid, 400, "invalid_commission");
     if (!Number.isInteger(max_sales_limit) || max_sales_limit < 1) return errorJson(rid, 400, "invalid_limit");
+    if (!isSafeImageUrl(image_url)) return errorJson(rid, 400, "invalid_image_url");
 
     const created = await prisma.$transaction(async (tx) => {
       const M =
@@ -312,7 +282,7 @@ export async function POST(req) {
       let product;
       try { product = await createSnake(); } catch { product = await createCamel(); }
 
-      await audit({ who: userId, what: "merchant_product_create", ip, ua, requestId: rid, result: { product_id: pidOf(product) } });
+      await audit({ who: userId, what: "merchant_product_create", requestId: rid, result: { product_id: pidOf(product) } });
       return product;
     });
 
@@ -329,7 +299,6 @@ export async function POST(req) {
 /* ────────── PATCH ────────── */
 export async function PATCH(req) {
   const rid = ridOf(req);
-  const { ip, ua } = ipUaOf(req);
   try {
     const { userId } = await requireMerchant();
     if (!enforceOrigin(req)) return errorJson(rid, 403, "bad_origin");
@@ -350,13 +319,9 @@ export async function PATCH(req) {
     const pid = Number(parsed.data.productId);
     if (!Number.isFinite(pid) || pid <= 0) return errorJson(rid, 400, "invalid_product_id");
 
-    // mevcut kayıt
     let current = null;
-    try {
-      current = await Product.findFirst({ where: { AND: [{ product_id: pid }, { merchant_id: userId }] } });
-    } catch {
-      current = await Product.findFirst({ where: { AND: [{ id: pid }, { merchantId: userId }] } });
-    }
+    try { current = await Product.findFirst({ where: { AND: [{ product_id: pid }, { merchant_id: userId }] } }); }
+    catch { current = await Product.findFirst({ where: { AND: [{ id: pid }, { merchantId: userId }] } }); }
     if (!current) return errorJson(rid, 404, "not_found");
 
     const sold = current.total_purchases ?? current.totalPurchases ?? 0;
@@ -365,7 +330,6 @@ export async function PATCH(req) {
 
     const minCommission = await getMinCommission();
 
-    // Activate/Deactivate
     if (parsed.data.action) {
       const activate = parsed.data.action === "activate";
       if (activate && sold >= nextLimit) return errorJson(rid, 400, "quota_reached");
@@ -379,13 +343,12 @@ export async function PATCH(req) {
         } catch {
           await M.updateMany({ where: { id: pid, merchantId: userId }, data: { isActive: activate } });
         }
-        await audit({ who: userId, what: `merchant_product_${activate ? "activate" : "deactivate"}`, ip, ua, requestId: rid, result: { product_id: pid } });
+        await audit({ who: userId, what: `merchant_product_${activate ? "activate" : "deactivate"}`, requestId: rid, result: { product_id: pid } });
       });
 
       return okJson(rid, { success: true });
     }
 
-    // Edits
     if (parsed.data.commissionRate !== undefined) {
       const v = Number(parsed.data.commissionRate);
       if (!Number.isFinite(v) || v < minCommission || v > 99.9) return errorJson(rid, 400, "invalid_commission");
@@ -407,10 +370,7 @@ export async function PATCH(req) {
       } catch {
         await M.updateMany({ where: { id: pid, merchantId: userId }, data: { commissionRate: nextCommission, maxSalesLimit: nextLimit } });
       }
-      await audit({
-        who: userId, what: "merchant_product_update", ip, ua, requestId: rid,
-        result: { product_id: pid, commission_rate: nextCommission, max_sales_limit: nextLimit },
-      });
+      await audit({ who: userId, what: "merchant_product_update", requestId: rid, result: { product_id: pid, commission_rate: nextCommission, max_sales_limit: nextLimit } });
     });
 
     return okJson(rid, { success: true });

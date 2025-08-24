@@ -2,6 +2,7 @@
 
 /**
  * Merchant Dashboard — add/edit/deactivate products with secure mutations
+ * - image_url: http(s) **veya** data:image/*;base64,… (≤ 2MB) kabul edilir
  */
 
 import { useEffect, useRef, useState, useMemo } from "react";
@@ -24,12 +25,22 @@ function getQuotaStatus(product) {
   return null;
 }
 function isHttpUrl(v) {
-  try {
-    const u = new URL(v);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
+  try { const u = new URL(v); return u.protocol === "http:" || u.protocol === "https:"; }
+  catch { return false; }
+}
+
+/** data:image/*;base64 doğrulayıcı (yaklaşık boyut ≤ maxBytes) */
+function isDataImage(v, maxBytes = 2 * 1024 * 1024) {
+  if (!/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(v || "")) return false;
+  const b64 = v.split(",")[1] || "";
+  const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  const size = Math.floor((b64.length * 3) / 4) - pad;
+  return size > 0 && size <= maxBytes;
+}
+function isAcceptedImageUrl(v) {
+  if (!v) return false;
+  if (v.startsWith("data:image/")) return isDataImage(v);
+  return isHttpUrl(v);
 }
 
 export default function MerchantDashboardPage() {
@@ -57,7 +68,7 @@ export default function MerchantDashboardPage() {
   });
   const [submitted, setSubmitted] = useState(false);
   const [errors, setErrors] = useState({});
-  const [minCommission, setMinCommission] = useState(5); // API’den geliyor
+  const [minCommission, setMinCommission] = useState(5);
   const [showCode, setShowCode] = useState({});
   const [copyMsg, setCopyMsg] = useState({});
   const [editingProductId, setEditingProductId] = useState(null);
@@ -75,8 +86,13 @@ export default function MerchantDashboardPage() {
     () => (data) => {
       const e = {};
       if (!data.name.trim()) e.name = t("validation_required");
+
       if (!isHttpUrl(data.merchant_url)) e.merchant_url = t("validation_url");
-      if (!isHttpUrl(data.image_url)) e.image_url = t("validation_imageUrlHttp");
+
+      // ACCEPT: https:// or data:image/*;base64 (≤2MB)
+      if (!isAcceptedImageUrl(data.image_url)) {
+        e.image_url = t("validation_imageUrl") || t("validation_imageUrlHttp") || "Invalid image URL";
+      }
 
       const price = Number(data.price);
       if (!Number.isFinite(price) || price <= 0) e.price = t("validation_price");
@@ -138,14 +154,8 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return;
-      }
-      if (res.status === 403) {
-        router.replace("/unauthorized");
-        return;
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return; }
+      if (res.status === 403) { router.replace("/unauthorized"); return; }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
@@ -201,30 +211,15 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return;
-      }
-      if (res.status === 403) {
-        setNotice({ type: "error", text: t("forbidden") });
-        closeNoticeSoon();
-        return;
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return; }
+      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return; }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setFormVisible(false);
         setSubmitted(false);
         setErrors({});
-        setForm({
-          name: "",
-          description: "",
-          image_url: "",
-          price: "",
-          commissionRate: "",
-          merchant_url: "",
-          max_sales_limit: "",
-        });
+        setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
         await fetchProducts();
         setNotice({ type: "success", text: t("productReviewMsg") });
         closeNoticeSoon();
@@ -259,15 +254,8 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) {
-        router.replace("/merchant/login");
-        return { ok: false };
-      }
-      if (res.status === 403) {
-        setNotice({ type: "error", text: t("forbidden") });
-        closeNoticeSoon();
-        return { ok: false };
-      }
+      if (res.status === 401) { router.replace("/merchant/login"); return { ok: false }; }
+      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return { ok: false }; }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -290,7 +278,6 @@ export default function MerchantDashboardPage() {
     setLoading(false);
   };
 
-  const remainingQuota = (limit, sold) => Math.max(0, Number(limit) - Number(sold));
   const toggleShowCode = (productId) => setShowCode((prev) => ({ ...prev, [productId]: !prev[productId] }));
   const copyProductCode = async (productId, code) => {
     try {
@@ -305,10 +292,7 @@ export default function MerchantDashboardPage() {
 
   const startEditing = (product) => {
     setEditingProductId(product.productId);
-    setEditValues({
-      commissionRate: product.commissionRate,
-      max_sales_limit: product.max_sales_limit,
-    });
+    setEditValues({ commissionRate: product.commissionRate, max_sales_limit: product.max_sales_limit });
   };
   const handleEditChange = (field, value) => setEditValues((prev) => ({ ...prev, [field]: value }));
 
@@ -322,10 +306,8 @@ export default function MerchantDashboardPage() {
     setLoading(true);
     const res = await mutate({
       productId: editingProductId,
-      commissionRate:
-        editValues.commissionRate === "" ? undefined : Number(editValues.commissionRate),
-      max_sales_limit:
-        editValues.max_sales_limit === "" ? undefined : Number(editValues.max_sales_limit),
+      commissionRate: editValues.commissionRate === "" ? undefined : Number(editValues.commissionRate),
+      max_sales_limit: editValues.max_sales_limit === "" ? undefined : Number(editValues.max_sales_limit),
     });
     if (res.ok) {
       setEditingProductId(null);
@@ -344,6 +326,10 @@ export default function MerchantDashboardPage() {
   const ringErr = "focus:ring-red-400 border-red-500";
   const ringOk = "focus:ring-[#81d742]";
 
+  const imgHint = String(locale).toLowerCase().startsWith("tr")
+    ? "HTTPS görsel linki veya data:image/*;base64,… (≤ 2 MB) kabul edilir."
+    : "HTTPS image URL or data:image/*;base64,… (≤ 2 MB) is accepted.";
+
   return (
     <MerchantLayout>
       <section className="flex flex-col md:flex-row md:justify-between md:items-center mb-8 gap-4">
@@ -359,18 +345,12 @@ export default function MerchantDashboardPage() {
       {notice.text ? (
         <div
           className={`mb-6 flex items-center gap-2 text-sm font-semibold px-4 py-3 rounded-md shadow border ${
-            notice.type === "error"
-              ? "text-white bg-[#2a1f1f] border-[#3a2a2a]"
-              : "text-white bg-[#222624] border-[#303d33]"
+            notice.type === "error" ? "text-white bg-[#2a1f1f] border-[#3a2a2a]" : "text-white bg-[#222624] border-[#303d33]"
           }`}
           role="status"
           aria-live="polite"
         >
-          {notice.type === "error" ? (
-            <XCircle size={18} className="text-red-400" />
-          ) : (
-            <CheckCircle size={18} className="text-green-400" />
-          )}
+          {notice.type === "error" ? <XCircle size={18} className="text-red-400" /> : <CheckCircle size={18} className="text-green-400" />}
           {notice.text}
         </div>
       ) : null}
@@ -382,13 +362,11 @@ export default function MerchantDashboardPage() {
           noValidate
           className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto"
         >
-          {/* top info bar: minimum commission */}
           <div className="text-xs font-mono text-[#c8f7c8] bg-[#1b2519] border border-[#2b3b2a] rounded px-3 py-2 mb-2">
             {t("formHintCommission")} — <b>{t("minLabel")} {minCommission}%</b>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* name */}
             <div>
               <input
                 type="text"
@@ -400,12 +378,9 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.name && (
-                <p className="mt-1 text-xs text-red-400">{errors.name}</p>
-              )}
+              {submitted && errors.name && <p className="mt-1 text-xs text-red-400">{errors.name}</p>}
             </div>
 
-            {/* product url */}
             <div>
               <input
                 type="url"
@@ -417,15 +392,13 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.merchant_url && (
-                <p className="mt-1 text-xs text-red-400">{errors.merchant_url}</p>
-              )}
+              {submitted && errors.merchant_url && <p className="mt-1 text-xs text-red-400">{errors.merchant_url}</p>}
             </div>
 
-            {/* image url */}
+            {/* image url: url yerine text — data: şeması için gerekli */}
             <div className="md:col-span-2">
               <input
-                type="url"
+                type="text"
                 className={`${inputBase} ${submitted && errors.image_url ? ringErr : ringOk}`}
                 placeholder={t("productImage")}
                 value={form.image_url}
@@ -434,15 +407,10 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              <p className="mt-1 text-[11px] text-gray-500">
-                {t("imageHint")} {/* Only https:// links; base64 data: URLs are not allowed */}
-              </p>
-              {submitted && errors.image_url && (
-                <p className="mt-1 text-xs text-red-400">{errors.image_url}</p>
-              )}
+              <p className="mt-1 text-[11px] text-gray-500">{imgHint}</p>
+              {submitted && errors.image_url && <p className="mt-1 text-xs text-red-400">{errors.image_url}</p>}
             </div>
 
-            {/* price */}
             <div>
               <input
                 type="number"
@@ -456,12 +424,9 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.price && (
-                <p className="mt-1 text-xs text-red-400">{errors.price}</p>
-              )}
+              {submitted && errors.price && <p className="mt-1 text-xs text-red-400">{errors.price}</p>}
             </div>
 
-            {/* commission */}
             <div>
               <input
                 type="number"
@@ -479,12 +444,9 @@ export default function MerchantDashboardPage() {
               <div className="mt-1 text-[11px] text-gray-400">
                 {t("minLabel")} {minCommission}% — {t("commissionTip")}
               </div>
-              {submitted && errors.commissionRate && (
-                <p className="mt-1 text-xs text-red-400">{errors.commissionRate}</p>
-              )}
+              {submitted && errors.commissionRate && <p className="mt-1 text-xs text-red-400">{errors.commissionRate}</p>}
             </div>
 
-            {/* max sales limit */}
             <div>
               <input
                 type="number"
@@ -498,9 +460,7 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.max_sales_limit && (
-                <p className="mt-1 text-xs text-red-400">{errors.max_sales_limit}</p>
-              )}
+              {submitted && errors.max_sales_limit && <p className="mt-1 text-xs text-red-400">{errors.max_sales_limit}</p>}
             </div>
           </div>
 
@@ -522,17 +482,14 @@ export default function MerchantDashboardPage() {
         </form>
       )}
 
-      {/* --- PRODUCT CARDS --- */}
-      {/* (kartlar aynı; sadece küçük metin iyileştirmeleri) */}
+      {/* ---- PRODUCT CARDS ---- */}
       <div className="grid gap-x-10 gap-y-14 md:grid-cols-2 xl:grid-cols-3">
         {products.map((p) => {
           const status = getQuotaStatus(p);
           return (
             <div
               key={p.productId}
-              className={`relative bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col shadow-lg hover:shadow-2xl transition-all duration-300 min-h[490px] max-w-lg mx-auto group ${
-                status ? "opacity-60 grayscale" : ""
-              }`}
+              className={`relative bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col shadow-lg hover:shadow-2xl transition-all duration-300 min-h[490px] max-w-lg mx-auto group ${status ? "opacity-60 grayscale" : ""}`}
             >
               {status === "inactive" && (
                 <span className="absolute left-5 top-5 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
@@ -557,97 +514,45 @@ export default function MerchantDashboardPage() {
               <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
 
               <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
-                <span>
-                  <span className="text-gray-500">{t("price")}</span>:{" "}
-                  <span className="font-bold">${Number(p.price).toFixed(2)}</span>
-                </span>
-                <span>
-                  <span className="text-gray-500">{t("commission")}</span>:{" "}
-                  <span className="font-bold text-green-300">
-                    {Number(p.commissionRate).toFixed(2)}%
-                  </span>
-                </span>
+                <span><span className="text-gray-500">{t("price")}</span>: <span className="font-bold">${Number(p.price).toFixed(2)}</span></span>
+                <span><span className="text-gray-500">{t("commission")}</span>: <span className="font-bold text-green-300">{Number(p.commissionRate).toFixed(2)}%</span></span>
               </div>
 
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>
-                  {t("clicks")}: <b>{p.totalClicks}</b>
-                </span>
-                <span>
-                  {t("sales")}: <b>{p.total_purchases}</b>
-                </span>
-                <span>
-                  {t("quotaLeft")}: <b>{Math.max(0, Number(p.max_sales_limit) - Number(p.total_purchases))}</b>
-                </span>
+                <span>{t("clicks")}: <b>{p.totalClicks}</b></span>
+                <span>{t("sales")}: <b>{p.total_purchases}</b></span>
+                <span>{t("quotaLeft")}: <b>{Math.max(0, Number(p.max_sales_limit) - Number(p.total_purchases))}</b></span>
               </div>
 
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>
-                  {t("affiliates")}: <b>{p.link_count}</b>
-                </span>
+                <span>{t("affiliates")}: <b>{p.link_count}</b></span>
                 <span>Product ID: {p.productId}</span>
               </div>
 
-              {/* code show/copy … (değişmedi) */}
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-xs text-gray-400">{t("productCode")}:</span>
                 {showCode[p.productId] ? (
                   <>
-                    <span className="font-mono text-green-300 text-xs select-all">
-                      {p.productCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => copyProductCode(p.productId, p.productCode)}
-                      className="ml-1 text-[#81d742] hover:text-green-200 transition"
-                      title={t("copyCode")}
-                    >
-                      <Copy size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleShowCode(p.productId)}
-                      className="text-gray-400 hover:text-gray-200 transition"
-                      title={t("hide")}
-                    >
-                      <EyeOff size={15} />
-                    </button>
-                    {copyMsg[p.productId] && (
-                      <span className="ml-2 text-green-400 font-mono text-xs">
-                        {copyMsg[p.productId]}
-                      </span>
-                    )}
+                    <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
+                    <button type="button" onClick={() => copyProductCode(p.productId, p.productCode)} className="ml-1 text-[#81d742] hover:text-green-200 transition" title={t("copyCode")}><Copy size={15} /></button>
+                    <button type="button" onClick={() => toggleShowCode(p.productId)} className="text-gray-400 hover:text-gray-200 transition" title={t("hide")}><EyeOff size={15} /></button>
+                    {copyMsg[p.productId] && <span className="ml-2 text-green-400 font-mono text-xs">{copyMsg[p.productId]}</span>}
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => toggleShowCode(p.productId)}
-                    className="flex items-center gap-1 text-gray-400 hover:text-[#81d742] font-mono text-xs bg-[#161616] rounded px-2 py-1 ml-1"
-                    title={t("showCode")}
-                  >
-                    <Eye size={14} /> {t("show")}
-                  </button>
+                  <button type="button" onClick={() => toggleShowCode(p.productId)} className="flex items-center gap-1 text-gray-400 hover:text-[#81d742] font-mono text-xs bg-[#161616] rounded px-2 py-1 ml-1" title={t("showCode")}><Eye size={14} /> {t("show")}</button>
                 )}
               </div>
 
-              <div
-                className={`mt-4 text-xs font-semibold ${
-                  p.activated_by_admin ? "text-green-500" : "text-yellow-400"
-                }`}
-              >
+              <div className={`mt-4 text-xs font-semibold ${p.activated_by_admin ? "text-green-500" : "text-yellow-400"}`}>
                 {p.activated_by_admin ? t("approvedByAdmin") : t("waitingApproval")}
               </div>
 
               <div className="flex flex-col gap-2 mt-auto pt-4">
                 {editingProductId === p.productId ? (
                   <div className="flex flex-col gap-2">
-                    <div className="mb-3 bg-yellow-900/70 border border-yellow-600 text-yellow-100 px-3 py-2 rounded text-xs font-mono font-bold">
-                      ⚠️ {t("adminApprovalWarn")}
-                    </div>
+                    <div className="mb-3 bg-yellow-900/70 border border-yellow-600 text-yellow-100 px-3 py-2 rounded text-xs font-mono font-bold">⚠️ {t("adminApprovalWarn")}</div>
                     <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">
-                        {t("commissionShort")}
-                      </label>
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("commissionShort")}</label>
                       <input
                         type="number"
                         step="0.1"
@@ -655,22 +560,13 @@ export default function MerchantDashboardPage() {
                         max={99}
                         value={editValues.commissionRate}
                         onChange={(e) => handleEditChange("commissionRate", e.target.value)}
-                        className={`${inputBase} w-24 ${ringOk} ${
-                          editValues.commissionRate !== "" &&
-                          Number(editValues.commissionRate) < minCommission
-                            ? ringErr
-                            : ""
-                        } text-green-300`}
+                        className={`${inputBase} w-24 ${ringOk} ${editValues.commissionRate !== "" && Number(editValues.commissionRate) < minCommission ? ringErr : ""} text-green-300`}
                         placeholder={t("commissionShort")}
                       />
-                      <span className="ml-2 text-xs text-gray-400">
-                        (min: {minCommission}%)
-                      </span>
+                      <span className="ml-2 text-xs text-gray-400">(min: {minCommission}%)</span>
                     </div>
                     <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">
-                        {t("maxSales")}
-                      </label>
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("maxSales")}</label>
                       <input
                         type="number"
                         min={Math.max(1, Number(p.total_purchases))}
@@ -680,42 +576,19 @@ export default function MerchantDashboardPage() {
                         className={`${inputBase} w-28 ${ringOk} text-blue-300`}
                         placeholder={t("maxSales")}
                       />
-                      <span className="ml-2 text-xs text-gray-400">
-                        ({t("sold")}: {p.total_purchases})
-                      </span>
+                      <span className="ml-2 text-xs text-gray-400">({t("sold")}: {p.total_purchases})</span>
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <button
-                        onClick={() => saveEdits(p)}
-                        disabled={loading}
-                        className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs"
-                      >
-                        {t("save")}
-                      </button>
-                      <button
-                        onClick={cancelEdits}
-                        disabled={loading}
-                        className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs"
-                      >
-                        {t("cancel")}
-                      </button>
+                      <button onClick={() => saveEdits(p)} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">{t("save")}</button>
+                      <button onClick={cancelEdits} disabled={loading} className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs">{t("cancel")}</button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex gap-2">
+                    <button onClick={() => startEditing(p)} className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition">{t("edit")}</button>
                     <button
-                      onClick={() => startEditing(p)}
-                      className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition"
-                    >
-                      {t("edit")}
-                    </button>
-                    <button
-                      onClick={() =>
-                        handleToggleActive(p.productId, p.isActive ? "deactivate" : "activate")
-                      }
-                      className={`${
-                        p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"
-                      } text-white py-2 rounded text-sm flex-1`}
+                      onClick={() => handleToggleActive(p.productId, p.isActive ? "deactivate" : "activate")}
+                      className={`${p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"} text-white py-2 rounded text-sm flex-1`}
                     >
                       {p.isActive ? t("deactivate") : t("activate")}
                     </button>
