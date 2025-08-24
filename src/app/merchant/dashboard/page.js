@@ -2,11 +2,6 @@
 
 /**
  * Merchant Dashboard — add/edit/deactivate products with secure mutations
- * Security Docblock (Cabo PROD):
- * - Soft-guard sadece UX: gerçek yetki API tarafında (requireMerchant).
- * - GET 60/dk; POST/PATCH 10/dk (backend). 429'da tek backoff retry.
- * - Mutasyonlarda CSRF header'ı apiFetch tarafından otomatik eklenir.
- * - Origin/Host/Referer ve X-Requested-With kontrolü backend’de var.
  */
 
 import { useEffect, useRef, useState, useMemo } from "react";
@@ -29,18 +24,21 @@ function getQuotaStatus(product) {
   return null;
 }
 function isHttpUrl(v) {
-  try { const u = new URL(v); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; }
+  try {
+    const u = new URL(v);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 export default function MerchantDashboardPage() {
   const router = useRouter();
   const { user, ready } = useUser();
 
-  // i18n (merkezi locales + DB preference)
   const t = useTranslation();
   const locale = t.locale || "en";
 
-  // UX soft-guard (gerçek RBAC API’da)
   useEffect(() => {
     if (!ready) return;
     if (user?.role && user.role !== "merchant") router.replace("/unauthorized");
@@ -59,14 +57,13 @@ export default function MerchantDashboardPage() {
   });
   const [submitted, setSubmitted] = useState(false);
   const [errors, setErrors] = useState({});
-  const [minCommission, setMinCommission] = useState(5);
+  const [minCommission, setMinCommission] = useState(5); // API’den geliyor
   const [showCode, setShowCode] = useState({});
   const [copyMsg, setCopyMsg] = useState({});
   const [editingProductId, setEditingProductId] = useState(null);
   const [editValues, setEditValues] = useState({ commissionRate: "", max_sales_limit: "" });
   const [loading, setLoading] = useState(false);
 
-  // notice: { type: "success" | "error", text: string }
   const [notice, setNotice] = useState({ type: null, text: "" });
   const closeNoticeSoon = () => setTimeout(() => setNotice({ type: null, text: "" }), 3500);
 
@@ -74,40 +71,48 @@ export default function MerchantDashboardPage() {
   const abortRef = useRef(null);
 
   // ---- Validators ----
-  const validateCreate = useMemo(() => (data) => {
-    const e = {};
-    if (!data.name.trim()) e.name = true;
-    if (!isHttpUrl(data.merchant_url)) e.merchant_url = true;
-    if (!isHttpUrl(data.image_url)) e.image_url = true;
+  const validateCreate = useMemo(
+    () => (data) => {
+      const e = {};
+      if (!data.name.trim()) e.name = t("validation_required");
+      if (!isHttpUrl(data.merchant_url)) e.merchant_url = t("validation_url");
+      if (!isHttpUrl(data.image_url)) e.image_url = t("validation_imageUrlHttp");
 
-    const price = Number(data.price);
-    if (!Number.isFinite(price) || price <= 0) e.price = true;
+      const price = Number(data.price);
+      if (!Number.isFinite(price) || price <= 0) e.price = t("validation_price");
 
-    const cr = Number(data.commissionRate);
-    if (!Number.isFinite(cr) || cr < minCommission || cr > 99.9) e.commissionRate = true;
+      const cr = Number(data.commissionRate);
+      if (!Number.isFinite(cr) || cr < minCommission || cr > 99.9) {
+        e.commissionRate = t("validation_commission", { min: minCommission });
+      }
 
-    // REQUIRED & >= 1 (boş string Number("")==0 hilesini engelle)
-    const rawMax = String(data.max_sales_limit ?? "").trim();
-    const maxL = Math.floor(Number(rawMax));
-    if (!rawMax || !Number.isInteger(maxL) || maxL < 1) e.max_sales_limit = true;
+      const rawMax = String(data.max_sales_limit ?? "").trim();
+      const maxL = Math.floor(Number(rawMax));
+      if (!rawMax || !Number.isInteger(maxL) || maxL < 1) e.max_sales_limit = t("validation_maxLimit");
 
-    return e;
-  }, [minCommission]);
+      return e;
+    },
+    [minCommission, t]
+  );
 
   const validateEdit = (vals, sold) => {
     const e = {};
-    if (vals.commissionRate !== "" && (!Number.isFinite(Number(vals.commissionRate)) ||
-        Number(vals.commissionRate) < minCommission || Number(vals.commissionRate) > 99.9)) {
-      e.commissionRate = true;
+    if (
+      vals.commissionRate !== "" &&
+      (!Number.isFinite(Number(vals.commissionRate)) ||
+        Number(vals.commissionRate) < minCommission ||
+        Number(vals.commissionRate) > 99.9)
+    ) {
+      e.commissionRate = t("validation_commission", { min: minCommission });
     }
     if (vals.max_sales_limit !== "") {
       const v = Math.floor(Number(vals.max_sales_limit));
-      if (!Number.isInteger(v) || v < 1 || v < Number(sold)) e.max_sales_limit = true;
+      if (!Number.isInteger(v) || v < 1 || v < Number(sold)) e.max_sales_limit = t("validation_maxLimitEdit");
     }
     return e;
   };
 
-  // ---- PRODUCTS FETCH (GET) ----
+  // ---- PRODUCTS FETCH ----
   const fetchProducts = async () => {
     if (inflight.current) return;
     inflight.current = true;
@@ -123,7 +128,6 @@ export default function MerchantDashboardPage() {
         headers: { "accept-language": locale },
       });
 
-      // 429: tek backoff sonra tekrar dene
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -134,8 +138,14 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) { router.replace("/merchant/login"); return; }
-      if (res.status === 403) { router.replace("/unauthorized"); return; }
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return;
+      }
+      if (res.status === 403) {
+        router.replace("/unauthorized");
+        return;
+      }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
@@ -147,7 +157,6 @@ export default function MerchantDashboardPage() {
         closeNoticeSoon();
       }
     } catch (err) {
-      // AbortError ise uyarı göstermeyelim (ilk render/route değişimi vs.)
       if (err?.name !== "AbortError") {
         setProducts([]);
         setNotice({ type: "error", text: t("serverError") });
@@ -162,9 +171,9 @@ export default function MerchantDashboardPage() {
     fetchProducts();
     return () => abortRef.current?.abort?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale]); // dil değişince metin + veriyi tazele
+  }, [locale]);
 
-  // ---- FORM SUBMIT (POST) ----
+  // ---- SUBMIT ----
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitted(true);
@@ -179,7 +188,7 @@ export default function MerchantDashboardPage() {
       let res = await apiFetch("/api/merchant_dashboard", {
         method: "POST",
         headers: { "accept-language": locale },
-        body: form, // apiFetch → JSON + CSRF ekler
+        body: form,
       });
 
       if (res.status === 429) {
@@ -192,15 +201,30 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) { router.replace("/merchant/login"); return; }
-      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return; }
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return;
+      }
+      if (res.status === 403) {
+        setNotice({ type: "error", text: t("forbidden") });
+        closeNoticeSoon();
+        return;
+      }
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setFormVisible(false);
         setSubmitted(false);
         setErrors({});
-        setForm({ name: "", description: "", image_url: "", price: "", commissionRate: "", merchant_url: "", max_sales_limit: "" });
+        setForm({
+          name: "",
+          description: "",
+          image_url: "",
+          price: "",
+          commissionRate: "",
+          merchant_url: "",
+          max_sales_limit: "",
+        });
         await fetchProducts();
         setNotice({ type: "success", text: t("productReviewMsg") });
         closeNoticeSoon();
@@ -216,7 +240,7 @@ export default function MerchantDashboardPage() {
     }
   };
 
-  // ---- PATCH (activate/deactivate or edits) ----
+  // ---- PATCH ----
   const mutate = async (payload) => {
     try {
       let res = await apiFetch("/api/merchant_dashboard", {
@@ -235,8 +259,15 @@ export default function MerchantDashboardPage() {
         });
       }
 
-      if (res.status === 401) { router.replace("/merchant/login"); return { ok: false }; }
-      if (res.status === 403) { setNotice({ type: "error", text: t("forbidden") }); closeNoticeSoon(); return { ok: false }; }
+      if (res.status === 401) {
+        router.replace("/merchant/login");
+        return { ok: false };
+      }
+      if (res.status === 403) {
+        setNotice({ type: "error", text: t("forbidden") });
+        closeNoticeSoon();
+        return { ok: false };
+      }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -283,12 +314,18 @@ export default function MerchantDashboardPage() {
 
   const saveEdits = async (product) => {
     const errs = validateEdit(editValues, product.total_purchases);
-    if (Object.keys(errs).length) { setNotice({ type: "error", text: t("serverError") }); closeNoticeSoon(); return; }
+    if (Object.keys(errs).length) {
+      setNotice({ type: "error", text: Object.values(errs)[0] || t("serverError") });
+      closeNoticeSoon();
+      return;
+    }
     setLoading(true);
     const res = await mutate({
       productId: editingProductId,
-      commissionRate: editValues.commissionRate === "" ? undefined : Number(editValues.commissionRate),
-      max_sales_limit: editValues.max_sales_limit === "" ? undefined : Number(editValues.max_sales_limit),
+      commissionRate:
+        editValues.commissionRate === "" ? undefined : Number(editValues.commissionRate),
+      max_sales_limit:
+        editValues.max_sales_limit === "" ? undefined : Number(editValues.max_sales_limit),
     });
     if (res.ok) {
       setEditingProductId(null);
@@ -319,7 +356,6 @@ export default function MerchantDashboardPage() {
         </button>
       </section>
 
-      {/* notice bar */}
       {notice.text ? (
         <div
           className={`mb-6 flex items-center gap-2 text-sm font-semibold px-4 py-3 rounded-md shadow border ${
@@ -330,7 +366,11 @@ export default function MerchantDashboardPage() {
           role="status"
           aria-live="polite"
         >
-          {notice.type === "error" ? <XCircle size={18} className="text-red-400" /> : <CheckCircle size={18} className="text-green-400" />}
+          {notice.type === "error" ? (
+            <XCircle size={18} className="text-red-400" />
+          ) : (
+            <CheckCircle size={18} className="text-green-400" />
+          )}
           {notice.text}
         </div>
       ) : null}
@@ -342,67 +382,126 @@ export default function MerchantDashboardPage() {
           noValidate
           className="bg-[#191c1b] border border-[#272e29] p-6 rounded-2xl mb-10 space-y-4 shadow-2xl max-w-2xl mx-auto"
         >
+          {/* top info bar: minimum commission */}
+          <div className="text-xs font-mono text-[#c8f7c8] bg-[#1b2519] border border-[#2b3b2a] rounded px-3 py-2 mb-2">
+            {t("formHintCommission")} — <b>{t("minLabel")} {minCommission}%</b>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input
-              type="text"
-              className={`${inputBase} ${submitted && errors.name ? ringErr : ringOk}`}
-              placeholder={t("productTitle")}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              aria-invalid={submitted && !!errors.name}
-              autoComplete="off"
-            />
-            <input
-              type="text"
-              className={`${inputBase} ${submitted && errors.merchant_url ? ringErr : ringOk}`}
-              placeholder={t("productUrl")}
-              value={form.merchant_url}
-              onChange={(e) => setForm({ ...form, merchant_url: e.target.value })}
-              aria-invalid={submitted && !!errors.merchant_url}
-              autoComplete="off"
-            />
-            <input
-              type="text"
-              className={`${inputBase} ${submitted && errors.image_url ? ringErr : ringOk}`}
-              placeholder={t("productImage")}
-              value={form.image_url}
-              onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-              aria-invalid={submitted && !!errors.image_url}
-              autoComplete="off"
-            />
-            <input
-              type="number"
-              step="0.01"
-              className={`${inputBase} ${submitted && errors.price ? ringErr : ringOk}`}
-              placeholder={t("productPrice")}
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-              aria-invalid={submitted && !!errors.price}
-              autoComplete="off"
-            />
-            <input
-              type="number"
-              step="0.1"
-              min={minCommission}
-              max={99.9}
-              className={`${inputBase} ${submitted && errors.commissionRate ? ringErr : ringOk}`}
-              placeholder={t("commissionRate")}
-              value={form.commissionRate}
-              onChange={(e) => setForm({ ...form, commissionRate: e.target.value })}
-              aria-invalid={submitted && !!errors.commissionRate}
-              autoComplete="off"
-            />
-            <input
-              type="number"
-              min={1}
-              step={1}
-              className={`${inputBase} ${submitted && errors.max_sales_limit ? ringErr : ringOk}`}
-              placeholder={t("maxSalesLimit")}
-              value={form.max_sales_limit}
-              onChange={(e) => setForm({ ...form, max_sales_limit: e.target.value })}
-              aria-invalid={submitted && !!errors.max_sales_limit}
-              autoComplete="off"
-            />
+            {/* name */}
+            <div>
+              <input
+                type="text"
+                className={`${inputBase} ${submitted && errors.name ? ringErr : ringOk}`}
+                placeholder={t("productTitle")}
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                aria-invalid={submitted && !!errors.name}
+                required
+                autoComplete="off"
+              />
+              {submitted && errors.name && (
+                <p className="mt-1 text-xs text-red-400">{errors.name}</p>
+              )}
+            </div>
+
+            {/* product url */}
+            <div>
+              <input
+                type="url"
+                className={`${inputBase} ${submitted && errors.merchant_url ? ringErr : ringOk}`}
+                placeholder={t("productUrl")}
+                value={form.merchant_url}
+                onChange={(e) => setForm({ ...form, merchant_url: e.target.value })}
+                aria-invalid={submitted && !!errors.merchant_url}
+                required
+                autoComplete="off"
+              />
+              {submitted && errors.merchant_url && (
+                <p className="mt-1 text-xs text-red-400">{errors.merchant_url}</p>
+              )}
+            </div>
+
+            {/* image url */}
+            <div className="md:col-span-2">
+              <input
+                type="url"
+                className={`${inputBase} ${submitted && errors.image_url ? ringErr : ringOk}`}
+                placeholder={t("productImage")}
+                value={form.image_url}
+                onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                aria-invalid={submitted && !!errors.image_url}
+                required
+                autoComplete="off"
+              />
+              <p className="mt-1 text-[11px] text-gray-500">
+                {t("imageHint")} {/* Only https:// links; base64 data: URLs are not allowed */}
+              </p>
+              {submitted && errors.image_url && (
+                <p className="mt-1 text-xs text-red-400">{errors.image_url}</p>
+              )}
+            </div>
+
+            {/* price */}
+            <div>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                className={`${inputBase} ${submitted && errors.price ? ringErr : ringOk}`}
+                placeholder={t("productPrice")}
+                value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                aria-invalid={submitted && !!errors.price}
+                required
+                autoComplete="off"
+              />
+              {submitted && errors.price && (
+                <p className="mt-1 text-xs text-red-400">{errors.price}</p>
+              )}
+            </div>
+
+            {/* commission */}
+            <div>
+              <input
+                type="number"
+                step="0.1"
+                min={minCommission}
+                max={99.9}
+                className={`${inputBase} ${submitted && errors.commissionRate ? ringErr : ringOk}`}
+                placeholder={t("commissionRate")}
+                value={form.commissionRate}
+                onChange={(e) => setForm({ ...form, commissionRate: e.target.value })}
+                aria-invalid={submitted && !!errors.commissionRate}
+                required
+                autoComplete="off"
+              />
+              <div className="mt-1 text-[11px] text-gray-400">
+                {t("minLabel")} {minCommission}% — {t("commissionTip")}
+              </div>
+              {submitted && errors.commissionRate && (
+                <p className="mt-1 text-xs text-red-400">{errors.commissionRate}</p>
+              )}
+            </div>
+
+            {/* max sales limit */}
+            <div>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                className={`${inputBase} ${submitted && errors.max_sales_limit ? ringErr : ringOk}`}
+                placeholder={t("maxSalesLimit")}
+                value={form.max_sales_limit}
+                onChange={(e) => setForm({ ...form, max_sales_limit: e.target.value })}
+                aria-invalid={submitted && !!errors.max_sales_limit}
+                required
+                autoComplete="off"
+              />
+              {submitted && errors.max_sales_limit && (
+                <p className="mt-1 text-xs text-red-400">{errors.max_sales_limit}</p>
+              )}
+            </div>
           </div>
 
           <textarea
@@ -413,7 +512,6 @@ export default function MerchantDashboardPage() {
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
 
-          <p className="text-xs text-gray-500 font-mono -mt-2">{t("formHintCommission")}</p>
           <button
             type="submit"
             disabled={loading}
@@ -425,6 +523,7 @@ export default function MerchantDashboardPage() {
       )}
 
       {/* --- PRODUCT CARDS --- */}
+      {/* (kartlar aynı; sadece küçük metin iyileştirmeleri) */}
       <div className="grid gap-x-10 gap-y-14 md:grid-cols-2 xl:grid-cols-3">
         {products.map((p) => {
           const status = getQuotaStatus(p);
@@ -435,7 +534,6 @@ export default function MerchantDashboardPage() {
                 status ? "opacity-60 grayscale" : ""
               }`}
             >
-              {/* status BADGES */}
               {status === "inactive" && (
                 <span className="absolute left-5 top-5 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
                   <Ban size={13} /> {t("inactive")}
@@ -447,7 +545,6 @@ export default function MerchantDashboardPage() {
                 </span>
               )}
 
-              {/* Product IMAGE */}
               <img
                 src={p.image_url || PLACEHOLDER}
                 onError={handleImgError}
@@ -461,38 +558,65 @@ export default function MerchantDashboardPage() {
 
               <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
                 <span>
-                  <span className="text-gray-500">{t("price")}</span>: <span className="font-bold">${Number(p.price).toFixed(2)}</span>
+                  <span className="text-gray-500">{t("price")}</span>:{" "}
+                  <span className="font-bold">${Number(p.price).toFixed(2)}</span>
                 </span>
                 <span>
                   <span className="text-gray-500">{t("commission")}</span>:{" "}
-                  <span className="font-bold text-green-300">{Number(p.commissionRate).toFixed(2)}%</span>
+                  <span className="font-bold text-green-300">
+                    {Number(p.commissionRate).toFixed(2)}%
+                  </span>
                 </span>
               </div>
 
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>{t("clicks")}: <b>{p.totalClicks}</b></span>
-                <span>{t("sales")}: <b>{p.total_purchases}</b></span>
-                <span>{t("quotaLeft")}: <b>{remainingQuota(p.max_sales_limit, p.total_purchases)}</b></span>
+                <span>
+                  {t("clicks")}: <b>{p.totalClicks}</b>
+                </span>
+                <span>
+                  {t("sales")}: <b>{p.total_purchases}</b>
+                </span>
+                <span>
+                  {t("quotaLeft")}: <b>{Math.max(0, Number(p.max_sales_limit) - Number(p.total_purchases))}</b>
+                </span>
               </div>
 
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
-                <span>{t("affiliates")}: <b>{p.link_count}</b></span>
+                <span>
+                  {t("affiliates")}: <b>{p.link_count}</b>
+                </span>
                 <span>Product ID: {p.productId}</span>
               </div>
 
-              {/* Product Code */}
+              {/* code show/copy … (değişmedi) */}
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-xs text-gray-400">{t("productCode")}:</span>
                 {showCode[p.productId] ? (
                   <>
-                    <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
-                    <button type="button" onClick={() => copyProductCode(p.productId, p.productCode)} className="ml-1 text-[#81d742] hover:text-green-200 transition" title={t("copyCode")}>
+                    <span className="font-mono text-green-300 text-xs select-all">
+                      {p.productCode}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyProductCode(p.productId, p.productCode)}
+                      className="ml-1 text-[#81d742] hover:text-green-200 transition"
+                      title={t("copyCode")}
+                    >
                       <Copy size={15} />
                     </button>
-                    <button type="button" onClick={() => toggleShowCode(p.productId)} className="text-gray-400 hover:text-gray-200 transition" title={t("hide")}>
+                    <button
+                      type="button"
+                      onClick={() => toggleShowCode(p.productId)}
+                      className="text-gray-400 hover:text-gray-200 transition"
+                      title={t("hide")}
+                    >
                       <EyeOff size={15} />
                     </button>
-                    {copyMsg[p.productId] && <span className="ml-2 text-green-400 font-mono text-xs">{copyMsg[p.productId]}</span>}
+                    {copyMsg[p.productId] && (
+                      <span className="ml-2 text-green-400 font-mono text-xs">
+                        {copyMsg[p.productId]}
+                      </span>
+                    )}
                   </>
                 ) : (
                   <button
@@ -506,11 +630,14 @@ export default function MerchantDashboardPage() {
                 )}
               </div>
 
-              <div className={`mt-4 text-xs font-semibold ${p.activated_by_admin ? "text-green-500" : "text-yellow-400"}`}>
+              <div
+                className={`mt-4 text-xs font-semibold ${
+                  p.activated_by_admin ? "text-green-500" : "text-yellow-400"
+                }`}
+              >
                 {p.activated_by_admin ? t("approvedByAdmin") : t("waitingApproval")}
               </div>
 
-              {/* Edit & Activate/Deactivate */}
               <div className="flex flex-col gap-2 mt-auto pt-4">
                 {editingProductId === p.productId ? (
                   <div className="flex flex-col gap-2">
@@ -518,7 +645,9 @@ export default function MerchantDashboardPage() {
                       ⚠️ {t("adminApprovalWarn")}
                     </div>
                     <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("commissionShort")}</label>
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">
+                        {t("commissionShort")}
+                      </label>
                       <input
                         type="number"
                         step="0.1"
@@ -526,41 +655,67 @@ export default function MerchantDashboardPage() {
                         max={99}
                         value={editValues.commissionRate}
                         onChange={(e) => handleEditChange("commissionRate", e.target.value)}
-                        className={`${inputBase} w-24 ${ringOk} ${editValues.commissionRate !== "" && Number(editValues.commissionRate) < minCommission ? ringErr : ""} text-green-300`}
+                        className={`${inputBase} w-24 ${ringOk} ${
+                          editValues.commissionRate !== "" &&
+                          Number(editValues.commissionRate) < minCommission
+                            ? ringErr
+                            : ""
+                        } text-green-300`}
                         placeholder={t("commissionShort")}
                       />
-                      <span className="ml-2 text-xs text-gray-400">(min: {minCommission})</span>
+                      <span className="ml-2 text-xs text-gray-400">
+                        (min: {minCommission}%)
+                      </span>
                     </div>
                     <div className="flex gap-3 items-center">
-                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">{t("maxSales")}</label>
+                      <label className="text-xs text-[#d1ffd0] font-mono mr-1 w-24">
+                        {t("maxSales")}
+                      </label>
                       <input
                         type="number"
                         min={Math.max(1, Number(p.total_purchases))}
                         step={1}
                         value={editValues.max_sales_limit}
                         onChange={(e) => handleEditChange("max_sales_limit", e.target.value)}
-                        className={`${inputBase} w-28 ${ringOk} ${submitted && errors.max_sales_limit ? ringErr : ""} text-blue-300`}
+                        className={`${inputBase} w-28 ${ringOk} text-blue-300`}
                         placeholder={t("maxSales")}
                       />
-                      <span className="ml-2 text-xs text-gray-400">({t("sold")}: {p.total_purchases})</span>
+                      <span className="ml-2 text-xs text-gray-400">
+                        ({t("sold")}: {p.total_purchases})
+                      </span>
                     </div>
                     <div className="flex gap-2 mt-2">
-                      <button onClick={() => saveEdits(p)} disabled={loading} className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs">
+                      <button
+                        onClick={() => saveEdits(p)}
+                        disabled={loading}
+                        className="bg-[#81d742] px-3 py-1 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-xs"
+                      >
                         {t("save")}
                       </button>
-                      <button onClick={cancelEdits} disabled={loading} className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs">
+                      <button
+                        onClick={cancelEdits}
+                        disabled={loading}
+                        className="bg-[#a94a4a] px-3 py-1 rounded font-semibold hover:bg-[#ff6a6a] text-xs"
+                      >
                         {t("cancel")}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex gap-2">
-                    <button onClick={() => startEditing(p)} className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition">
+                    <button
+                      onClick={() => startEditing(p)}
+                      className="bg-[#262f24] hover:bg-[#273427] text-[#d1ffd0] py-2 rounded text-sm flex-1 transition"
+                    >
                       {t("edit")}
                     </button>
                     <button
-                      onClick={() => handleToggleActive(p.productId, p.isActive ? "deactivate" : "activate")}
-                      className={`${p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"} text-white py-2 rounded text-sm flex-1`}
+                      onClick={() =>
+                        handleToggleActive(p.productId, p.isActive ? "deactivate" : "activate")
+                      }
+                      className={`${
+                        p.isActive ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"
+                      } text-white py-2 rounded text-sm flex-1`}
                     >
                       {p.isActive ? t("deactivate") : t("activate")}
                     </button>
@@ -575,5 +730,4 @@ export default function MerchantDashboardPage() {
   );
 }
 
-// build çakışmalarını önlemek için burada "dynamic" export YOK.
 export const runtime = "nodejs";
