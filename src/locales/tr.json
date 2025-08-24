@@ -416,6 +416,9 @@
   "validation_commission": "Komisyon {min}% ile 99,9% arasında olmalıdır.",
   "validation_maxLimit": "Maksimum satış limiti 1 veya daha büyük tam sayı olmalıdır.",
   "validation_maxLimitEdit": "Maksimum satış limiti 1 veya daha büyük olmalı ve satılan adetten küçük olamaz.",
-  "imageHint": "HTTPS görsel linki veya data:image/*;base64,… (≤ 2 MB) kabul edilir."
+  "imageHint": "HTTPS görsel linki veya data:image/*;base64,… (≤ 2 MB) kabul edilir.",
+
+  "Post Logs": "Webhook Kayıtları"
+
 }
 

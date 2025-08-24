@@ -403,7 +403,11 @@
   "validation_commission": "Commission must be between {min}% and 99.9%.",
   "validation_maxLimit": "Max sales limit must be an integer ≥ 1.",
   "validation_maxLimitEdit": "Max sales limit must be an integer ≥ 1 and cannot be less than the sold count.",
-  "imageHint": "HTTPS image URL or data:image/*;base64,… (≤ 2 MB) is accepted."
+  "imageHint": "HTTPS image URL or data:image/*;base64,… (≤ 2 MB) is accepted.",
+
+
+  "Post Logs": "Post Logs"
+
 }
 
 

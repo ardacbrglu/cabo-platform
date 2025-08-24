@@ -14,15 +14,35 @@
 let _csrf = { token: "", ts: 0 };
 const CSRF_TTL = 10 * 60 * 1000; // 10 dk
 
+function getCookie(name) {
+  if (typeof document === "undefined") return "";
+  const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 async function getCsrfToken() {
   if (typeof window === "undefined") return ""; // SSR/Route handler'da isteme
+
+  // 1) Çerezden hızlı okuma (NextAuth her iki ismi de kullanabiliyor)
+  const cookieRaw =
+    getCookie("__Host-next-auth.csrf-token") || getCookie("next-auth.csrf-token");
+  if (cookieRaw) {
+    const token = cookieRaw.split("|")[0] || cookieRaw;
+    _csrf = { token, ts: Date.now() };
+    return token;
+  }
+
+  // 2) Cache taze ise onu ver
   const fresh = _csrf.token && Date.now() - _csrf.ts < CSRF_TTL;
   if (fresh) return _csrf.token;
 
+  // 3) Endpoint'ten çek
   try {
     const r = await fetch("/api/auth/csrf", {
+      method: "GET",
       credentials: "include",
       cache: "no-store",
+      headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json" },
     });
     const j = await r.json().catch(() => ({}));
     const token = j?.csrfToken || "";
@@ -54,12 +74,25 @@ export async function apiFetch(input, init = {}) {
   headers.set("X-Requested-With", "XMLHttpRequest");
   if (!headers.has("X-Request-Id")) headers.set("X-Request-Id", makeRequestId());
 
-  // Body'yi otomatik JSON'a çevir (FormData ise dokunma)
+  // Body -> JSON (FormData ise dokunma)
   let body = init.body;
-  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
-  if (body != null && typeof body !== "string" && !isFormData) {
-    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    try { body = JSON.stringify(body); } catch { /* noop */ }
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
+
+  if (method === "GET" || method === "HEAD") {
+    body = undefined; // safety
+  } else if (body != null && typeof body !== "string" && !isFormData) {
+    if (!headers.has("Content-Type"))
+      headers.set("Content-Type", "application/json");
+    try {
+      body = JSON.stringify(body);
+    } catch {
+      // JSON.stringify patlarsa ham stringe düşme
+      body = String(body);
+    }
+  } else if (isFormData) {
+    // FormData ise Content-Type'ı fetch kendi set eder; varsa silelim
+    if (headers.has("Content-Type")) headers.delete("Content-Type");
   }
 
   // CSRF (yalnızca client + mutasyon + header yoksa)
@@ -95,16 +128,18 @@ export async function apiFetch(input, init = {}) {
 
   // 401/403 → doğru login’e yönlendir (opsiyonel kapatma bayrağı ile)
   const noAuthRedirect = !!init.noAuthRedirect;
-  if (typeof window !== "undefined" && (res.status === 401 || res.status === 403) && !noAuthRedirect) {
+  if (
+    typeof window !== "undefined" &&
+    (res.status === 401 || res.status === 403) &&
+    !noAuthRedirect
+  ) {
     const path = window.location?.pathname || "";
     const isMerchantArea =
       path.startsWith("/merchant") ||
       (typeof input === "string" && /\/api\/merchant_/i.test(input));
-
     const to = isMerchantArea ? "/merchant/login" : "/login";
     const url = new URL(to, window.location.origin);
     url.searchParams.set("callbackUrl", window.location.href);
-
     try {
       window.location.replace(url.toString());
     } catch {
