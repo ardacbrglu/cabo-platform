@@ -1,7 +1,17 @@
+// src/app/api/register/route.js
 /**
- * Affiliate register:
- * - flow=manual  → kullanıcı oluştur + aktivasyon e-postası (token 1g).
- * - flow=google  → precheck (terms+captcha), 10 dk imzalı cookie → NextAuth Google.
+ * Affiliate register API (manual only)
+ *
+ * Security Docblock (Cabo PROD):
+ * - requireOrigin + requireAjax + requireRequestId
+ * - Ratelimit: 8/min (IP+UA)
+ * - Validation: Zod + sanitize
+ * - CAPTCHA: verify on all flows
+ * - Email activation: single-use token (1 day)
+ * - JSON error contract: { success:false, error, message, request_id }
+ * - Audit: success/error events with requestId
+ * - DB: Prisma only (no raw SQL)
+ * - NOTE: Google registration is DISABLED (returns 403)
  */
 
 import { NextResponse } from "next/server";
@@ -34,7 +44,8 @@ const ManualSchema = z.object({
   password: z.string().min(8).regex(/[A-Za-z]/).regex(/\d/),
 });
 
-const GooglePrecheckSchema = z.object({
+// 🚫 Google kaydı devre dışı. Payload gelse bile 403 vereceğiz.
+const GoogleDisabledSchema = z.object({
   flow: z.literal("google"),
   termsAccepted: z.literal(true),
   captcha: z.string().min(1),
@@ -52,6 +63,7 @@ const messages = {
     captcha: "Captcha verification failed. Please try again.",
     success: "Registration successful! Please check your email to activate your account.",
     googleReg: "This email is registered with Google. Please sign in with Google.",
+    googleDisabled: "Google sign-in is temporarily disabled.",
     limitExceeded: "Activation email already sent 3 times today. Please try again tomorrow.",
     alreadyActive: "This email is already registered and activated. Try logging in or resetting your password.",
     mailfail: "Activation email could not be sent. Please try again later.",
@@ -68,6 +80,7 @@ const messages = {
     captcha: "Doğrulama başarısız. Lütfen tekrar deneyin.",
     success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et.",
     googleReg: "Bu e-posta Google ile kayıtlı. Lütfen Google ile giriş yapın.",
+    googleDisabled: "Google ile kayıt geçici olarak devre dışı.",
     limitExceeded: "Aktivasyon e-postası bugün 3 kez gönderildi. Yarın tekrar deneyin.",
     alreadyActive: "Bu e-posta zaten kayıtlı ve aktif. Giriş yapabilir veya şifreni sıfırlayabilirsin.",
     mailfail: "Aktivasyon e-postası gönderilemedi. Lütfen sonra tekrar deneyin.",
@@ -91,11 +104,7 @@ export async function POST(req) {
     );
   }
 
-  const locale = (req.headers.get("accept-language") || "")
-    .toLowerCase()
-    .startsWith("tr")
-    ? "tr"
-    : "en";
+  const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
   const t = (k) => messages[locale][k] ?? k;
 
   // RL 8/dk (IP+UA)
@@ -128,51 +137,27 @@ export async function POST(req) {
     );
   }
 
-  // ---- Google precheck
+  // ---- Google (DEVRE DIŞI)
   if (bodyRaw?.flow === "google") {
-    let data;
+    // Şema yine de doğrulansın ki CAPTCHA gibi bilgiler boş gelmesin
     try {
-      data = GooglePrecheckSchema.parse(bodyRaw);
+      GoogleDisabledSchema.parse(bodyRaw);
     } catch {
-      return withHeaders(
-        NextResponse.json(
-          { success: false, error: "invalid_payload", message: t("required"), request_id: requestId },
-          { status: 400 }
-        )
-      );
+      // Şema hatası ⇒ yine de 403 döndür.
     }
-
-    const cap = await verifyRecaptcha(data.captcha);
-    if (!cap.ok) {
-      return withHeaders(
-        NextResponse.json(
-          { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
-          { status: 400 }
-        )
-      );
-    }
-
-    // 10 dk imzalı precheck cookie
-    const preToken = jwt.sign(
-      { scope: "google_registration_precheck" },
-      process.env.NEXTAUTH_SECRET,
-      { expiresIn: "10m" }
+    // CAPTCHA doğrulaması yapılır ama kayıt açılmaz.
+    try {
+      if (bodyRaw?.captcha) {
+        await verifyRecaptcha(bodyRaw.captcha).catch(() => ({}));
+      }
+    } catch {}
+    audit({ evt: "register.google.disabled", requestId });
+    return withHeaders(
+      NextResponse.json(
+        { success: false, error: "google_disabled", message: t("googleDisabled"), request_id: requestId },
+        { status: 403 }
+      )
     );
-    const res = NextResponse.json({
-      success: true,
-      precheck: true,
-      message: t("ok"),
-      request_id: requestId,
-    });
-    res.cookies.set("google_reg_precheck", preToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 600,
-    });
-    audit({ evt: "register.google.precheck.ok", requestId });
-    return withHeaders(res);
   }
 
   // ---- Manual
@@ -255,7 +240,6 @@ export async function POST(req) {
         lastActivationRequestAt: now,
         activationRequestedCount: count + 1,
         termsAccepted: true,
-        // dil & para birimini istersen Accept-Language'a göre güncelleyebilirsin:
         languagePreference: existing.languagePreference || locale,
       },
     });
@@ -290,7 +274,7 @@ export async function POST(req) {
       activationToken,
       activationRequestedCount: 1,
       lastActivationRequestAt: new Date(),
-      languagePreference: locale, // ilk dil tercihi
+      languagePreference: locale,
       currencyCode: "TRY",
     },
   });

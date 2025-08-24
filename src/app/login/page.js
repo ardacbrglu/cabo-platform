@@ -1,17 +1,20 @@
+// src/app/login/page.js
 "use client";
 
 /**
- * Affiliate Login (Credentials + Google)
- * - Hatalı girişte sayfa yenileme yok, inputlar korunur
- * - CSRF preload; /api/login’e JSON; başarıda sadece client-side yönlendirme
- * - Çift tıklama korunur (AbortController)
+ * Affiliate Login (Credentials only) — Google disabled
+ *
+ * Security Docblock (Cabo PROD):
+ * - No page reload on errors; inputs preserved
+ * - CSRF preload; POST /api/login (JSON); client-side redirect on success
+ * - Double-click safe via AbortController
+ * - Accessibility: aria-live messages; focus first invalid
+ * - UI: Google button disabled (grayed), explanatory label; mobile responsive
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
-import { signIn } from "next-auth/react";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { apiFetch } from "@/lib/apiFetch";
@@ -39,7 +42,7 @@ const translations = {
     registerHere: "Register here",
     or: "or",
     googleBtn: "Sign in with Google",
-    googleSignInError: "Google sign-in failed.",
+    googleSoon: "Google sign-in — coming soon",
     serverError: "Server error. Please try again later.",
     activatedBanner: "Your account has been activated! You can now log in.",
     csrfWait: "Preparing a secure session… Please wait a moment.",
@@ -66,7 +69,7 @@ const translations = {
     registerHere: "Buradan kaydol",
     or: "veya",
     googleBtn: "Google ile giriş yap",
-    googleSignInError: "Google ile giriş başarısız oldu.",
+    googleSoon: "Google ile giriş — yakında",
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
     activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
     csrfWait: "Güvenli oturum hazırlanıyor… Lütfen bekleyin.",
@@ -78,7 +81,7 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
 
-  // locale → 'en'/'tr' normalize + güvenli sözlük fallback
+  // locale → 'en'/'tr'
   const { t } = useMemo(() => {
     const norm =
       String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
@@ -88,7 +91,7 @@ export default function LoginPage() {
     };
   }, [locale]);
 
-  // next-auth bazen callbackUrl ile döner → biz sadece "from" paramını dikkate alıyoruz
+  // redirect target
   const rawFrom = searchParams?.get("from");
   const callbackUrl = useMemo(() => {
     const f = rawFrom || "/dashboard";
@@ -111,18 +114,16 @@ export default function LoginPage() {
 
   const [justActivated, setJustActivated] = useState(false);
 
-  // minimal-hint
+  // hints
   const [submitted, setSubmitted] = useState(false);
   const [hintsVisible, setHintsVisible] = useState(false);
   const firstInvalidRef = useRef(null);
   const programmaticFocusRef = useRef(false);
 
-  // inflight iptal (çift tıklama / yarış)
+  // inflight cancel
   const abortRef = useRef(null);
   function cancelInflight() {
-    try {
-      abortRef.current?.abort();
-    } catch {}
+    try { abortRef.current?.abort(); } catch {}
     abortRef.current = null;
   }
 
@@ -156,7 +157,7 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
-  // validasyon
+  // validation
   const validate = () => {
     const errs = {};
     if (!email) errs.email = t("errorFill");
@@ -233,24 +234,12 @@ export default function LoginPage() {
     }
   }
 
-  async function onGoogle() {
-    setError("");
-    setLoading(true);
-    try {
-      await signIn("google", { callbackUrl, redirect: true });
-      setLoading(false);
-    } catch {
-      setError(t("googleSignInError"));
-      setLoading(false);
-    }
-  }
-
   if (!mounted || !ready) return null;
 
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* SOL BİLGİ */}
+        {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
@@ -406,18 +395,18 @@ export default function LoginPage() {
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
 
+            {/* Google disabled notice + disabled button */}
+            <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
+              {t("googleSoon")}
+            </div>
             <button
               type="button"
-              onClick={onGoogle}
-              disabled={loading}
-              className="flex items-center justify-center gap-2 bg-white hover:bg-[#e0ffe0] text-[#111] font-bold py-3 rounded-lg border border-[#eee] shadow transition w-full disabled:opacity-60"
-              aria-label={t("googleBtn")}
+              disabled
+              aria-disabled="true"
+              className="flex items-center justify-center gap-2 bg-[#eceff3] text-[#8a8f98] font-bold py-3 rounded-lg border border-[#d7dbe0] shadow-none w-full cursor-not-allowed select-none"
             >
-              <span
-                className="w-6 h-6 mr-1 inline-block align-middle"
-                aria-hidden="true"
-              >
-                <Image src="/google.svg" width={24} height={24} alt="" priority />
+              <span className="w-6 h-6 mr-1 inline-block align-middle opacity-60" aria-hidden="true">
+                <img src="/google.svg" width="24" height="24" alt="" />
               </span>
               {t("googleBtn")}
             </button>
@@ -438,12 +427,8 @@ export default function LoginPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem !important;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 1rem !important;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem !important; }
+          .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
         }
       `}</style>
     </PublicLayout>

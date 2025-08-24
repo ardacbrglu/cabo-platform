@@ -1,9 +1,9 @@
-// src/app/register/page.js
 "use client";
 
 /**
- * Affiliate Register (manual + Google precheck)
- * - Terms & Privacy linkleri ayrı sayfalara gider (/terms, /privacy), lang paramı eklenir.
+ * Affiliate Register (manual only, Google disabled)
+ * - Terms & Privacy links go to /terms and /privacy with ?lang=tr|en
+ * - a11y: first invalid focus, aria-live messages
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,9 +12,8 @@ import { useRouter } from "next/navigation";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import NextDynamic from "next/dynamic";
-import { signIn } from "next-auth/react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { apiFetch } from "@/lib/apiFetch";
-import { AlertTriangle } from "lucide-react";
 
 const Captcha = NextDynamic(() => import("@/components/Captcha"), { ssr: false });
 
@@ -46,8 +45,8 @@ const translations = {
     loginLink: "Log in",
     or: "or",
     googleBtn: "Sign up with Google",
-    success:
-      "Registration successful! Please check your email to activate your account.",
+    googleSoon: "Google sign-up — coming soon",
+    success: "Registration successful! Please check your email to activate your account.",
     failed: "Registration failed.",
     server: "Server error. Please try again later.",
     // Field-level
@@ -59,6 +58,7 @@ const translations = {
     invalidEmail: "Invalid email address.",
     invalidName: "3–32 chars; letters, digits, _ only.",
     weakPassword: "At least 8 chars and include letters and numbers.",
+    registering: "Registering...",
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -87,6 +87,7 @@ const translations = {
     loginLink: "Giriş yap",
     or: "veya",
     googleBtn: "Google ile kayıt ol",
+    googleSoon: "Google ile kayıt — yakında",
     success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et.",
     failed: "Kayıt başarısız.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
@@ -99,6 +100,7 @@ const translations = {
     invalidEmail: "Geçersiz e-posta.",
     invalidName: "3–32 karakter; harf, rakam, _.",
     weakPassword: "En az 8 karakter; harf ve rakam içermeli.",
+    registering: "Kaydediliyor...",
   },
 };
 
@@ -153,7 +155,7 @@ function TermsLabel({ locale }) {
 export default function RegisterPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const dict = useMemo(() => translations[locale] ?? translations.en, [locale]);
+  const dict = useMemo(() => (String(locale).toLowerCase().startsWith("tr") ? translations.tr : translations.en), [locale]);
   const t = (k) => dict[k] ?? k;
 
   const [name, setName] = useState("");
@@ -167,14 +169,10 @@ export default function RegisterPage() {
   const [serverError, setServerError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Tooltip state (SADECE TERMS için)
+  // tooltip for terms
   const [submitted, setSubmitted] = useState(false);
   const [termsHintVisible, setTermsHintVisible] = useState(false);
   const firstInvalidRef = useRef(null);
-
-  // 👇 Google akışına özgü CAPTCHA uyarısı için state
-  const [captchaError, setCaptchaError] = useState("");
-  const captchaWrapRef = useRef(null);
 
   useEffect(() => {
     if (!termsHintVisible) return;
@@ -189,26 +187,23 @@ export default function RegisterPage() {
 
   if (!ready) return null;
 
-  // Validation (manuel akış için)
   const validate = () => {
     const errs = {};
     if (!name) errs.name = t("req_name");
     else if (!/^[A-Za-z0-9_]{3,32}$/.test(name)) errs.name = t("invalidName");
-
     if (!email) errs.email = t("req_email");
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = t("invalidEmail");
-
     if (!password) errs.password = t("req_password");
     else if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))
       errs.password = t("weakPassword");
-
     if (!terms) errs.terms = t("req_terms");
     if (!captcha) errs.captcha = t("req_captcha");
     return errs;
   };
 
   const errors = submitted ? validate() : {};
-  const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
+  const captchaClientError = submitted && errors.captcha ? errors.captcha : "";
+  const needsRef = (key) => submitted && errors[key] && !firstInvalidRef.current;
 
   const inputBase =
     "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
@@ -220,7 +215,6 @@ export default function RegisterPage() {
     setSubmitted(true);
     setServerError("");
     setSuccess("");
-    setCaptchaError("");
     firstInvalidRef.current = null;
 
     const errs = validate();
@@ -228,10 +222,8 @@ export default function RegisterPage() {
 
     if (Object.keys(errs).length) {
       const order = ["name", "email", "password", "terms", "captcha"];
-      const firstKey = order.find((k) => errs[k]);
-      if (firstKey && firstKey !== "terms") {
-        requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
-      }
+      const firstKey = order.find((k) => errs[k] && k !== "terms");
+      if (firstKey) requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
       return;
     }
 
@@ -267,65 +259,10 @@ export default function RegisterPage() {
     }
   }
 
-  async function onGoogle() {
-    setSubmitted(true);
-    setServerError("");
-    setSuccess("");
-
-    // Sadece terms + captcha kontrol edilecek
-    let hasError = false;
-
-    if (!terms) {
-      setTermsHintVisible(true);
-      hasError = true;
-    } else {
-      setTermsHintVisible(false);
-    }
-
-    if (!captcha) {
-      setCaptchaError(t("req_captcha"));
-      hasError = true;
-      // Kaptcha alanını görünür alana kaydır
-      try {
-        captchaWrapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } catch {}
-    } else {
-      setCaptchaError("");
-    }
-
-    if (hasError) return;
-
-    setLoading(true);
-    try {
-      const res = await apiFetch("/api/register", {
-        method: "POST",
-        headers: { "accept-language": locale || "en" },
-        body: { flow: "google", termsAccepted: true, captcha },
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        setServerError(data?.message || t("failed"));
-        setCaptcha("");
-        setCaptchaResetKey((k) => k + 1);
-        setLoading(false);
-        return;
-      }
-
-      // precheck cookie set edildi → Google'a yönlendir
-      await signIn("google", { callbackUrl: "/dashboard", redirect: true });
-    } catch {
-      setServerError(String(locale).toLowerCase().startsWith("tr")
-        ? "Google ile giriş başarısız oldu."
-        : "Google sign-in failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
     <PublicLayout>
       <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* SOL BİLGİ */}
+        {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
             <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
@@ -346,14 +283,14 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        {/* FORM */}
+        {/* FORM CARD */}
         <form
           onSubmit={onSubmit}
           className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
           autoComplete="off"
           noValidate
         >
-          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-4">{t("title")}</h3>
+          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-2">{t("title")}</h3>
 
           {/* Username */}
           <div className="w-full">
@@ -374,6 +311,7 @@ export default function RegisterPage() {
               required
               className={`${inputBase} ${errors.name ? ringErr : ringOk}`}
             />
+            {submitted && errors.name && <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.name}</p>}
           </div>
 
           {/* Email */}
@@ -393,6 +331,7 @@ export default function RegisterPage() {
               required
               className={`${inputBase} ${errors.email ? ringErr : ringOk}`}
             />
+            {submitted && errors.email && <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.email}</p>}
           </div>
 
           {/* Password */}
@@ -412,9 +351,10 @@ export default function RegisterPage() {
               required
               className={`${inputBase} ${errors.password ? ringErr : ringOk}`}
             />
+            {submitted && errors.password && <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.password}</p>}
           </div>
 
-          {/* Terms (tooltip burada) */}
+          {/* Terms (tooltip near checkbox) */}
           <div className="relative flex items-center gap-2 w-full">
             <input
               id="terms"
@@ -430,69 +370,72 @@ export default function RegisterPage() {
             <TermsHint show={termsHintVisible} message={errors.terms} />
           </div>
 
-          {/* CAPTCHA (Google akışında görsel uyarı destekli) */}
+          {/* CAPTCHA + inline error (TR/EN) */}
           <div
-            ref={captchaWrapRef}
-            className={`w-full ${captchaError ? "ring-2 ring-red-400 rounded-md p-2" : ""}`}
-            aria-invalid={captchaError ? "true" : "false"}
+            className={`w-full ${captchaClientError ? "ring-2 ring-red-400 rounded-md p-2" : ""}`}
+            aria-invalid={captchaClientError ? "true" : "false"}
           >
             <Captcha
               onChange={(val) => {
-                setCaptcha(val);
-                if (val) setCaptchaError("");
+                setCaptcha(val || "");
               }}
               lang={locale}
               resetKey={captchaResetKey}
             />
-            {captchaError && (
+            {captchaClientError && (
               <p className="mt-2 text-sm text-red-400" role="alert" aria-live="assertive">
-                {captchaError}
+                {captchaClientError}
               </p>
             )}
           </div>
 
           {/* Server messages */}
           {serverError && (
-            <div className="text-red-500 text-base md:text-lg text-center" role="alert">
+            <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
               {serverError}
             </div>
           )}
           {success && (
-            <div className="text-green-400 text-base md:text-lg text-center" role="status">
+            <div className="text-green-400 text-base text-center" role="status" aria-live="polite">
               {success}
             </div>
           )}
 
-          {/* Manual submit */}
+          {/* Submit */}
           <button
             type="submit"
             disabled={loading}
             className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition disabled:opacity-60"
           >
-            {loading
-              ? (String(locale).toLowerCase().startsWith("tr") ? "Kaydediliyor..." : "Registering...")
-              : t("registerBtn")}
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="animate-spin" size={18} /> {t("registerBtn")}
+              </span>
+            ) : t("registerBtn")}
           </button>
 
           {/* Divider */}
-          <div className="w-full flex items-center justify-between my-3">
+          <div className="w-full flex items-center justify-between my-2">
             <span className="flex-1 h-px bg-[#232323]" />
             <span className="px-2 text-gray-400 text-sm">{t("or")}</span>
             <span className="flex-1 h-px bg-[#232323]" />
           </div>
 
-          {/* Google */}
+          {/* Disabled Google sign-up (same UX as login) */}
+          <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
+            {t("googleSoon")}
+          </div>
           <button
             type="button"
-            onClick={onGoogle}
-            disabled={loading}
-            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-white text-[#111] rounded-lg hover:bg-[#e0ffe0] border border-[#232323] transition flex items-center justify-center gap-2 disabled:opacity-60"
+            disabled
+            aria-disabled="true"
+            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#eceff3] text-[#8a8f98] rounded-lg border border-[#d7dbe0] shadow-none cursor-not-allowed select-none flex items-center justify-center gap-2"
           >
-            <img src="/google.svg" alt="Google" className="w-6 h-6 mr-1" />
+            <img src="/google.svg" alt="" className="w-6 h-6 mr-1 opacity-60" />
             {t("googleBtn")}
           </button>
 
-          <div className="text-sm md:text-base text-gray-400 text-center">
+          <div className="text-sm md:text-base text-gray-400 text-center pt-4">
             {t("already")}{" "}
             <Link href="/login" className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t("loginLink")}

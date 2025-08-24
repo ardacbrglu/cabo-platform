@@ -1,4 +1,3 @@
-// src/app/api/merchant/payments/details/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -84,13 +83,11 @@ export async function POST(req) {
     if (!parsed.success) return j({ error: "Invalid payload" }, { status: 400 });
     const ids = parsed.data.itemIds;
 
-    // İlgili merchant’a ait item’lar (camel + snake uyumlu)
+    // İlgili merchant’a ait item’lar (camelCase Prisma)
     const items = await prisma.payoutRequestItem.findMany({
       where: {
-        AND: [
-          { merchantId: user.id },
-          { itemId: { in: ids } },
-        ],
+        merchantId: user.id,
+        itemId: { in: ids },
       },
       select: {
         itemId: true,
@@ -101,12 +98,9 @@ export async function POST(req) {
       },
     });
 
-    // Eğer şemanız snake_case ise yukarıdaki where/select’te alan adlarını
-    // `merchant_id`, `item_id`, `source_sale_ids`, `requested_at` olarak değiştirin.
-
     if (!items.length) return j({ error: "No payout items found" }, { status: 404 });
 
-    // Satışları topla (gizli token DÖNMEZ)
+    // Satışları topla
     const sales = [];
     for (const it of items) {
       const saleIds = String(it.sourceSaleIds || "")
@@ -125,7 +119,7 @@ export async function POST(req) {
           status: true,
           convertedAt: true,
           productId: true,
-          affiliateLinkId: true, // sadece var/yok bilgisi için
+          affiliateLinkId: true,
         },
       });
 

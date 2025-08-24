@@ -11,7 +11,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 export default function MerchantLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  const t = useTranslation(); // merkezi locales + DB pref
+  const t = useTranslation();
   const isMobile = useIsMobile();
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -25,7 +25,6 @@ export default function MerchantLayout({ children }) {
     setMobileOpen(false);
   }, [currentPath]);
 
-  // ✅ /api/logout GET → server çerez temizler ve doğru login'e yönlendirir
   function handleLogout() {
     try {
       window.location.assign("/api/logout");
@@ -38,7 +37,7 @@ export default function MerchantLayout({ children }) {
     { href: "/merchant/dashboard",           label: t("Manage Products") },
     { href: "/merchant/merchant_payments",   label: t("Payments") },
     { href: "/merchant/merchant_post_logs",  label: t("Post Logs") },
-    { href: "/merchant/how_to_integrate",    label: t("How to Integrate") }, // <- FIXED
+    { href: "/merchant/how_to_integrate",    label: t("How to Integrate") },
     { href: "/merchant/merchant_support",    label: t("Support") },
     { href: "/merchant/settings",            label: t("Settings") },
   ];
@@ -50,6 +49,7 @@ export default function MerchantLayout({ children }) {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#101010] text-white font-sans tracking-tight">
+      {/* min-h-screen + flex-col: footer her zaman en altta */}
       <header className="w-full bg-[#111] shadow-sm">
         <div className="max-w-7xl mx-auto px-6 md:px-12 py-4 flex items-center justify-between">
           <h1
@@ -118,11 +118,15 @@ export default function MerchantLayout({ children }) {
         )}
       </header>
 
-      <main className="max-w-5xl w-full mx-auto mt-8 px-2 pb-24 flex-grow flex flex-col">
+      {/* pb-* yok; tek paddingBottom → çakışma/uyarı yok */}
+      <main
+        className="max-w-5xl w-full mx-auto mt-8 px-2 flex-1 flex flex-col"
+        style={{ paddingBottom: "max(8rem, env(safe-area-inset-bottom))" }}
+      >
         {children}
       </main>
 
-      <footer className="text-center py-5 bg-[#111] text-gray-500 text-xs mt-auto">
+      <footer className="mt-auto text-center py-5 bg-[#111] text-gray-500 text-xs">
         &copy; 2025 Cabo Affiliate | Built by Arda Cabaroğlu
       </footer>
     </div>

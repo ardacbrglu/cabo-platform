@@ -59,9 +59,7 @@ export default function MerchantPaymentsPage() {
   // Listeyi çek
   async function loadList(p = page) {
     try {
-      const res = await apiFetch(`/api/merchant/payments?page=${p}&limit=${ROWS_PER_PAGE}`, {
-        method: "GET",
-      });
+      const res = await apiFetch(`/api/merchant/payments?page=${p}&limit=${ROWS_PER_PAGE}`, { method: "GET" });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.items) {
         setItems(data.items);
@@ -81,7 +79,7 @@ export default function MerchantPaymentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // Manual refresh (ikonlu buton)
+  // Manual refresh
   async function handleRefresh() {
     setReloading(true);
     setSelected([]);
@@ -123,9 +121,7 @@ export default function MerchantPaymentsPage() {
         body: { itemIds: selected },
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || "Payment update failed");
-      }
+      if (!res.ok || !data?.success) throw new Error(data?.error || "Payment update failed");
       setShowPayPopup(false);
       setSelected([]);
       setSelectAll(false);
@@ -190,12 +186,14 @@ export default function MerchantPaymentsPage() {
   function handleExport() {
     const csv = [["Affiliate", "Amount", "Requested At", "Status"].join(",")];
     for (const item of items) {
-      csv.push([
-        `"${item.affiliate_name}"`,
-        `"${formatAmount(item.amount)}"`,
-        `"${item.requested_at}"`,
-        `"${statusLabels[item.status] || item.status}"`,
-      ].join(","));
+      csv.push(
+        [
+          `"${item.affiliate_name}"`,
+          `"${formatAmount(item.amount)}"`,
+          `"${item.requested_at}"`,
+          `"${statusLabels[item.status] || item.status}"`,
+        ].join(",")
+      );
     }
     const blob = new Blob([csv.join("\n")], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);

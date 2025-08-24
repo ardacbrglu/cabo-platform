@@ -59,14 +59,14 @@ model User {
 model PasswordResetToken {
   id        Int      @id @default(autoincrement())
   userId    Int
-  token     String   @unique            // <— tekil
+  token     String   @unique // <— tekil
   used      Boolean  @default(false)
   expiresAt DateTime
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, used])              // aktif/temizleme sorguları hızlı
-  @@index([expiresAt])                 // cron temizliği kolay
+  @@index([userId, used]) // aktif/temizleme sorguları hızlı
+  @@index([expiresAt]) // cron temizliği kolay
   @@map("password_reset_tokens")
 }
 
@@ -113,16 +113,16 @@ model VerificationToken {
 }
 
 model AffiliateLink {
-  linkId             Int                 @id @default(autoincrement())
-  userId             Int
-  productId          Int
+  linkId    Int @id @default(autoincrement())
+  userId    Int
+  productId Int
 
   // Uygulama 8 byte -> 16 hex üretse de ileride esneme payı için 64
-  token              String              @unique @db.VarChar(64)
+  token String @unique @db.VarChar(64)
 
-  createdAt          DateTime            @default(now()) @db.DateTime(0)
-  isVisible          Boolean             @default(true)
-  expiresAt          DateTime?
+  createdAt DateTime  @default(now()) @db.DateTime(0)
+  isVisible Boolean   @default(true)
+  expiresAt DateTime?
 
   // İlişkiler
   affiliateUserSales AffiliateUserSale[] @relation("LinkSales")
@@ -132,15 +132,12 @@ model AffiliateLink {
 
   // Aynı user aynı ürünü bir kez “sahiplenebilsin”
   @@unique([userId, productId], map: "uniq_user_product_link")
-
   // Sık sorgular
   @@index([userId])
   @@index([productId])
   @@index([expiresAt])
-
   @@map("affiliateLinks")
 }
-
 
 model AffiliateUserSale {
   saleId              Int                     @id @default(autoincrement())
@@ -238,8 +235,7 @@ model Notification {
   isDeleted Boolean          @default(false)
   user      User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
 
-  @@unique([userId, link], map: "uniq_user_link")
-  
+  @@unique([userId, link], map: "uniq_user_link") // ✅ aynı user+link tekrar yazılamaz
   @@index([userId])
   @@map("notifications")
 }

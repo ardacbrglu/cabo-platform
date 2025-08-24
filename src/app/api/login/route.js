@@ -1,11 +1,17 @@
+// src/app/api/login/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Credentials Login Proxy (NextAuth callback)
- * - JSON giriş/çıkış; yönlendirme yok (başarıyı client yapar)
- * - Rate limit + hesap kilidi; RBAC: merchant giremez
- * - Set-Cookie başlıklarını forward eder
+ * Credentials Login Proxy (NextAuth callback) — Google login disabled
+ *
+ * Security Docblock (Cabo PROD):
+ * - requireOrigin + requireAjax + requireRequestId
+ * - Ratelimit: 5/min (IP+UA) + account lock after 5 failed attempts (15m)
+ * - RBAC: merchants cannot log in here
+ * - JSON-only I/O; no redirects (client handles navigation)
+ * - Forwards Set-Cookie headers from NextAuth credentials callback
+ * - Prisma only; audit all important events
  */
 
 import { NextResponse } from "next/server";
@@ -26,7 +32,7 @@ const MESSAGES = {
     fill: "Please enter your email and password.",
     invalid: "Incorrect email or password.",
     merchant: "Merchants cannot log in here.",
-    google: "You signed up with Google. Please use Google login.",
+    google: "Google sign-in is temporarily disabled.",
     inactive: "Your account has not been activated yet.",
     locked: "Too many failed attempts. Please try again later.",
     success: "Login successful!",
@@ -37,7 +43,7 @@ const MESSAGES = {
     fill: "Lütfen e-posta ve şifrenizi girin.",
     invalid: "E-posta veya şifre yanlış.",
     merchant: "Satıcı hesapları buradan giriş yapamaz.",
-    google: "Google ile kayıt oldunuz. Lütfen Google ile giriş yapın.",
+    google: "Google ile giriş geçici olarak devre dışı.",
     inactive: "Hesabınız henüz aktifleştirilmedi.",
     locked: "Çok fazla hatalı deneme. Lütfen daha sonra tekrar deneyin.",
     success: "Giriş başarılı!",
@@ -184,6 +190,8 @@ export async function POST(req) {
           { status: 403 }
         )
       );
+
+    // Google-only hesaplar login edilemez (Google kapalı)
     const isGoogleOnly =
       !user.passwordHash && user.accounts?.some?.((a) => a.provider === "google");
     if (isGoogleOnly)
@@ -193,6 +201,7 @@ export async function POST(req) {
           { status: 403 }
         )
       );
+
     if (user.status !== "active")
       return withHeaders(
         NextResponse.json(
@@ -318,7 +327,6 @@ export async function POST(req) {
     audit({ evt: "login.ok", userId: user.id, requestId });
     return res;
   } catch (e) {
-    // Örn. Prisma P1001, ağ sorunları vs. → kontrollü yanıt
     audit({ evt: "login.server_error", error: String(e?.message || e), requestId });
     return withHeaders(
       NextResponse.json(

@@ -1,6 +1,11 @@
+// src/app/api/merchant_dashboard/route.js
 /**
- * Merchant Dashboard API (GET list, POST create, PATCH update/activate)
- * - image_url: http(s) **veya** data:image/*;base64,… (≤ 2MB)
+ * Security Docblock
+ * - requireSession; requireStatus('active'); requireRole('merchant')
+ * - GET: 60/min (IP+userId); PATCH/POST: 10/min
+ * - Mutations: Origin/Host/Referer match + X-Requested-With + X-Request-Id (+ optional X-CSRF-Token)
+ * - Audit all mutations; JSON contract {error, request_id, retry_after?}
+ * - Prisma only; no raw SQL
  */
 
 import { NextResponse } from "next/server";
@@ -10,7 +15,6 @@ import { audit } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { sanitize } from "@/lib/validation";
 import { requireMerchant } from "@/lib/guards";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +22,7 @@ export const runtime = "nodejs";
 
 const DEV = process.env.NODE_ENV !== "production";
 
-/* ────────── utils ────────── */
+/* ───────── utils ───────── */
 const ridOf = (req) =>
   req.headers.get("x-request-id")?.slice(0, 128) || crypto.randomUUID();
 const withSec = (res, rid) => {
@@ -28,19 +32,20 @@ const withSec = (res, rid) => {
   return res;
 };
 const errorJson = (rid, status, message, extra = {}) =>
-  withSec(
-    NextResponse.json({ error: message, request_id: rid, ...extra }, { status }),
-    rid
-  );
-const okJson = (rid, data, init = {}) =>
-  withSec(NextResponse.json(data, init), rid);
+  withSec(NextResponse.json({ error: message, request_id: rid, ...extra }, { status }), rid);
+const okJson = (rid, data, init = {}) => withSec(NextResponse.json(data, init), rid);
 
+const sanitizeText = (v) =>
+  (typeof v === "string" ? v : String(v ?? ""))
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim();
+
+// CSRF optional — if header absent it's considered OK, otherwise must match cookie
 function validateNextAuthCsrf(req) {
-  const headerToken =
-    req.headers.get("x-csrf-token") || req.headers.get("X-CSRF-Token");
-  if (!headerToken) return false;
-  const cookie = req.headers.get("cookie") || "";
-  const m = cookie.match(
+  const headerToken = req.headers.get("x-csrf-token") || req.headers.get("X-CSRF-Token");
+  if (!headerToken) return true;
+  const m = (req.headers.get("cookie") || "").match(
     /(?:^|;\s*)(?:__Host-)?next-auth\.csrf-token=([^;]+)/i
   );
   if (!m) return false;
@@ -51,6 +56,7 @@ function enforceOrigin(req) {
   if (req.method === "GET" || req.method === "HEAD") return true;
   const xrw = (req.headers.get("x-requested-with") || "").toLowerCase();
   if (xrw !== "xmlhttprequest") return false;
+
   const host = req.headers.get("host");
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
@@ -90,15 +96,9 @@ async function rateLimitAnyShape({ key, limit, windowMs }) {
 }
 async function enforceRate(req, rid, userId, limitPerMin) {
   const fwd = req.headers.get("x-forwarded-for") || "";
-  const ip =
-    (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() ||
-    "0.0.0.0";
+  const ip = (fwd.split(",")[0] || req.headers.get("x-real-ip") || "").trim() || "0.0.0.0";
   const key = `api:merchant_dashboard:${req.method}:${userId || "anon"}:${ip}`;
-  const { ok, resetMs } = await rateLimitAnyShape({
-    key,
-    limit: limitPerMin,
-    windowMs: 60_000,
-  });
+  const { ok, resetMs } = await rateLimitAnyShape({ key, limit: limitPerMin, windowMs: 60_000 });
   if (!ok) {
     const retry = Math.ceil((resetMs || 60_000) / 1000);
     const res = errorJson(rid, 429, "rate_limited", { retry_after: retry });
@@ -108,27 +108,20 @@ async function enforceRate(req, rid, userId, limitPerMin) {
   return { blocked: false };
 }
 
-/* ────────── request body parser (her content-type için güvenli) ────────── */
 async function parseBody(req) {
   const ctype = (req.headers.get("content-type") || "").toLowerCase();
   try {
-    if (ctype.includes("application/json")) {
-      return (await req.json()) ?? {};
-    }
+    if (ctype.includes("application/json")) return (await req.json()) ?? {};
     if (ctype.includes("application/x-www-form-urlencoded")) {
       const form = await req.formData();
       return Object.fromEntries(form.entries());
     }
     if (ctype.includes("multipart/form-data")) {
       const form = await req.formData();
-      // Bu API JSON bekliyor; en azından string alanları çekelim
       const obj = {};
-      for (const [k, v] of form.entries()) {
-        obj[k] = typeof v === "string" ? v : (v?.name || "blob");
-      }
+      for (const [k, v] of form.entries()) obj[k] = typeof v === "string" ? v : (v?.name || "blob");
       return obj;
     }
-    // Plain text ya da content-type boşsa
     const txt = await req.text();
     try {
       return JSON.parse(txt);
@@ -140,7 +133,7 @@ async function parseBody(req) {
   }
 }
 
-/* ────────── prisma helpers ────────── */
+/* ───────── prisma helpers ───────── */
 function resolveModel(client, candidates, methods = ["findMany"]) {
   for (const n of candidates) {
     const m = client?.[n];
@@ -148,11 +141,10 @@ function resolveModel(client, candidates, methods = ["findMany"]) {
   }
   return null;
 }
-
 async function findProductsForMerchant(Product, userId) {
   const tries = [
     { where: { merchantId: userId }, orderBy: { createdAt: "desc" } },
-    { where: { ownerId: userId }, orderBy: { createdAt: "desc" } }, // olası eski şema
+    { where: { ownerId: userId }, orderBy: { createdAt: "desc" } },
   ];
   for (const t of tries) {
     try {
@@ -165,14 +157,12 @@ async function findProductsForMerchant(Product, userId) {
     return [];
   }
 }
-
 async function countLinksByProduct(prismaClient, ids) {
   if (!ids.length) return new Map();
   const Link =
     resolveModel(prismaClient, ["affiliateLink", "affiliateLinks"]) ||
     resolveModel(prismaClient, ["AffiliateLink", "AffiliateLinks"]);
   if (!Link) return new Map();
-
   try {
     const g = await Link.groupBy({
       by: ["productId"],
@@ -181,7 +171,6 @@ async function countLinksByProduct(prismaClient, ids) {
     });
     return new Map(g.map((row) => [row.productId, row._count.productId]));
   } catch {}
-  // kaba ama güvenli fallback
   try {
     const r = await Link.findMany({
       where: { productId: { in: ids } },
@@ -193,8 +182,6 @@ async function countLinksByProduct(prismaClient, ids) {
   } catch {}
   return new Map();
 }
-
-/** Şema: PlatformConfig { keyName, value } */
 async function getMinCommission() {
   try {
     const row = await prisma.platformConfig.findFirst({
@@ -206,7 +193,6 @@ async function getMinCommission() {
   } catch {}
   return 5;
 }
-
 const pidOf = (p) => p?.productId ?? p?.product_id ?? p?.id;
 
 function mapProductRow(p, linkCount) {
@@ -229,13 +215,11 @@ function mapProductRow(p, linkCount) {
   };
 }
 
-/* ────────── image_url validator ────────── */
+/* ───────── validators ───────── */
 function isSafeImageUrl(s, maxBytes = 2 * 1024 * 1024) {
   if (!s) return false;
   if (s.startsWith("data:image/")) {
-    const m = s.match(
-      /^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)$/i
-    );
+    const m = s.match(/^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)$/i);
     if (!m) return false;
     try {
       const buf = Buffer.from(m[2], "base64");
@@ -251,8 +235,6 @@ function isSafeImageUrl(s, maxBytes = 2 * 1024 * 1024) {
     return false;
   }
 }
-
-/* ────────── zod schemas ────────── */
 const httpUrl = z
   .string()
   .min(6)
@@ -270,11 +252,7 @@ const CreateSchema = z
   .object({
     name: z.string().min(3).max(120),
     description: z.string().max(2000).optional().default(""),
-    image_url: z
-      .string()
-      .min(10)
-      .max(5_000)
-      .refine((v) => isSafeImageUrl(v), "invalid_image_url"),
+    image_url: z.string().min(10).refine((v) => isSafeImageUrl(v), "invalid_image_url"),
     merchant_url: httpUrl,
     price: z.union([z.string(), z.number()]),
     commissionRate: z.union([z.string(), z.number()]),
@@ -286,17 +264,21 @@ const PatchSchema = z
   .object({
     productId: z.union([z.string(), z.number()]),
     action: z.enum(["activate", "deactivate"]).optional(),
+    name: z.string().min(3).max(120).optional(),
+    description: z.string().max(2000).optional(),
+    image_url: z.string().refine((v) => isSafeImageUrl(v), "invalid_image_url").optional(),
+    merchant_url: httpUrl.optional(),
+    price: z.union([z.string(), z.number()]).optional(),
     commissionRate: z.union([z.string(), z.number()]).optional(),
     max_sales_limit: z.union([z.string(), z.number()]).optional(),
   })
   .strict();
 
-/* ────────── GET ────────── */
+/* ───────── GET ───────── */
 export async function GET(req) {
   const rid = ridOf(req);
   try {
     const { userId } = await requireMerchant();
-
     const rl = await enforceRate(req, rid, userId, 60);
     if (rl.blocked) return rl.res;
 
@@ -314,7 +296,6 @@ export async function GET(req) {
 
     const products = rows.map((r) => mapProductRow(r, counts.get(pidOf(r)) || 0));
     const minCommission = await getMinCommission();
-
     return okJson(rid, { success: true, products, minCommission });
   } catch (e) {
     if (DEV) console.error("[merchant_dashboard][GET]", e);
@@ -329,7 +310,7 @@ export async function GET(req) {
   }
 }
 
-/* ────────── POST ────────── */
+/* ───────── POST ───────── */
 export async function POST(req) {
   const rid = ridOf(req);
   try {
@@ -355,36 +336,28 @@ export async function POST(req) {
 
     const minCommission = await getMinCommission();
 
-    const name = sanitize.text((parsed.data.name || "").trim());
-    const description = sanitize.text((parsed.data.description || "").trim());
-    const image_url = sanitize.text((parsed.data.image_url || "").trim());
-    const merchant_url = sanitize.text((parsed.data.merchant_url || "").trim());
+    const name = sanitizeText(parsed.data.name || "");
+    const description = sanitizeText(parsed.data.description || "");
+    const image_url = sanitizeText(parsed.data.image_url || "");
+    const merchant_url = sanitizeText(parsed.data.merchant_url || "");
     const price = Number(parsed.data.price);
     const commissionRate = Number(parsed.data.commissionRate);
-    const max_sales_limit = Math.floor(
-      Number(String(parsed.data.max_sales_limit ?? "").trim())
-    );
+    const max_sales_limit = Math.floor(Number(String(parsed.data.max_sales_limit ?? "").trim()));
 
-    if (!Number.isFinite(price) || price <= 0)
-      return errorJson(rid, 400, "invalid_price");
-    if (
-      !Number.isFinite(commissionRate) ||
-      commissionRate < minCommission ||
-      commissionRate > 99.9
-    )
+    if (!Number.isFinite(price) || price <= 0) return errorJson(rid, 400, "invalid_price");
+    if (!Number.isFinite(commissionRate) || commissionRate < minCommission || commissionRate > 99.9)
       return errorJson(rid, 400, "invalid_commission");
     if (!Number.isInteger(max_sales_limit) || max_sales_limit < 1)
       return errorJson(rid, 400, "invalid_limit");
-    if (!isSafeImageUrl(image_url))
-      return errorJson(rid, 400, "invalid_image_url");
+    if (!isSafeImageUrl(image_url)) return errorJson(rid, 400, "invalid_image_url");
 
     const created = await prisma.$transaction(async (tx) => {
       const M =
         resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
         resolveModel(tx, ["MerchantProduct", "Product"]);
-
-      async function createCamel() {
-        return await M.create({
+      let product;
+      try {
+        product = await M.create({
           data: {
             merchantId: userId,
             name,
@@ -401,15 +374,14 @@ export async function POST(req) {
             productCode: crypto.randomUUID(),
           },
         });
-      }
-      async function createSnake() {
-        return await M.create({
+      } catch {
+        product = await M.create({
           data: {
             merchant_id: userId,
             name,
             description,
-            image_url: image_url,
-            merchant_url: merchant_url,
+            image_url,
+            merchant_url,
             price,
             commission_rate: commissionRate,
             is_active: true,
@@ -421,14 +393,6 @@ export async function POST(req) {
           },
         });
       }
-
-      let product;
-      try {
-        product = await createCamel();
-      } catch {
-        product = await createSnake();
-      }
-
       await audit({
         who: userId,
         what: "merchant_product_create",
@@ -452,7 +416,7 @@ export async function POST(req) {
   }
 }
 
-/* ────────── PATCH ────────── */
+/* ───────── PATCH ───────── */
 export async function PATCH(req) {
   const rid = ridOf(req);
   try {
@@ -477,112 +441,137 @@ export async function PATCH(req) {
     if (!Product) return errorJson(rid, 500, "server_error");
 
     const pid = Number(parsed.data.productId);
-    if (!Number.isFinite(pid) || pid <= 0)
-      return errorJson(rid, 400, "invalid_product_id");
+    if (!Number.isFinite(pid) || pid <= 0) return errorJson(rid, 400, "invalid_product_id");
 
-    // mevcut kayıt (birkaç olası alan adı ile dene)
+    // current row
     let current = null;
     try {
-      current = await Product.findFirst({
-        where: { AND: [{ productId: pid }, { merchantId: userId }] },
-      });
+      current = await Product.findFirst({ where: { AND: [{ productId: pid }, { merchantId: userId }] } });
     } catch {}
     if (!current) {
       try {
-        current = await Product.findFirst({
-          where: { AND: [{ product_id: pid }, { merchant_id: userId }] },
-        });
+        current = await Product.findFirst({ where: { AND: [{ product_id: pid }, { merchant_id: userId }] } });
       } catch {}
     }
     if (!current) return errorJson(rid, 404, "not_found");
 
-    const sold = current.totalPurchases ?? current.total_purchases ?? 0;
-    let nextCommission = current.commissionRate ?? current.commission_rate;
-    let nextLimit = current.maxSalesLimit ?? current.max_sales_limit;
-
-    const minCommission = await getMinCommission();
-
-    // Activate/Deactivate
+    // ACTIVATE/DEACTIVATE
     if (parsed.data.action) {
       const activate = parsed.data.action === "activate";
-      if (activate && sold >= nextLimit)
-        return errorJson(rid, 400, "quota_reached");
+      const sold = current.totalPurchases ?? current.total_purchases ?? 0;
+      const limit = current.maxSalesLimit ?? current.max_sales_limit ?? 0;
+      if (activate && sold >= limit) return errorJson(rid, 400, "quota_reached");
 
-      await prisma.$transaction(async (tx) => {
-        const M =
-          resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
-          resolveModel(tx, ["MerchantProduct", "Product"]);
-        try {
-          await M.updateMany({
-            where: { productId: pid, merchantId: userId },
-            data: { isActive: activate },
-          });
-        } catch {
-          await M.updateMany({
-            where: { product_id: pid, merchant_id: userId },
-            data: { is_active: activate },
-          });
-        }
-        await audit({
-          who: userId,
-          what: `merchant_product_${activate ? "activate" : "deactivate"}`,
-          requestId: rid,
-          result: { product_id: pid },
-        });
+      const camelWhere = { productId: pid, merchantId: userId };
+      const snakeWhere = { product_id: pid, merchant_id: userId };
+      let updated = 0;
+      try {
+        const r = await Product.updateMany({ where: camelWhere, data: { isActive: activate } });
+        updated = r?.count ?? 0;
+      } catch {
+        const r = await Product.updateMany({ where: snakeWhere, data: { is_active: activate } });
+        updated = r?.count ?? 0;
+      }
+      await audit({
+        who: userId,
+        what: `merchant_product_${activate ? "activate" : "deactivate"}`,
+        requestId: rid,
+        result: { product_id: pid, updated },
       });
-
       return okJson(rid, { success: true });
     }
 
-    // Edits
+    const minCommission = await getMinCommission();
+
+    const curr = {
+      name: current.name,
+      description: current.description || "",
+      image_url: current.imageUrl ?? current.image_url,
+      merchant_url: current.merchantUrl ?? current.merchant_url,
+      price: Number(current.price),
+      commissionRate: Number(current.commissionRate ?? current.commission_rate),
+      max_sales_limit: Number(current.maxSalesLimit ?? current.max_sales_limit),
+      sold: Number(current.totalPurchases ?? current.total_purchases ?? 0),
+    };
+
+    const updates = {};
+    const updatesSnake = {};
+    const pushBoth = (camelKey, snakeKey, val) => {
+      updates[camelKey] = val;
+      updatesSnake[snakeKey] = val;
+    };
+
+    if (parsed.data.name !== undefined) {
+      const v = sanitizeText(parsed.data.name);
+      if (v.length < 3 || v.length > 120) return errorJson(rid, 400, "invalid_name");
+      pushBoth("name", "name", v);
+    }
+    if (parsed.data.description !== undefined) {
+      const v = sanitizeText(parsed.data.description);
+      if (v.length > 2000) return errorJson(rid, 400, "invalid_description");
+      pushBoth("description", "description", v);
+    }
+    if (parsed.data.image_url !== undefined) {
+      const v = sanitizeText(parsed.data.image_url);
+      if (!isSafeImageUrl(v)) return errorJson(rid, 400, "invalid_image_url");
+      pushBoth("imageUrl", "image_url", v);
+    }
+    if (parsed.data.merchant_url !== undefined) {
+      const v = sanitizeText(parsed.data.merchant_url);
+      try {
+        const u = new URL(v);
+        if (!["http:", "https:"].includes(u.protocol)) throw new Error();
+      } catch {
+        return errorJson(rid, 400, "invalid_url");
+      }
+      pushBoth("merchantUrl", "merchant_url", v);
+    }
+    if (parsed.data.price !== undefined) {
+      const v = Number(parsed.data.price);
+      if (!Number.isFinite(v) || v <= 0) return errorJson(rid, 400, "invalid_price");
+      pushBoth("price", "price", v);
+    }
+
+    let approvalReset = false;
     if (parsed.data.commissionRate !== undefined) {
       const v = Number(parsed.data.commissionRate);
       if (!Number.isFinite(v) || v < minCommission || v > 99.9)
         return errorJson(rid, 400, "invalid_commission");
-      nextCommission = v;
+      if (v !== curr.commissionRate) approvalReset = true;
+      pushBoth("commissionRate", "commission_rate", v);
     }
     if (parsed.data.max_sales_limit !== undefined) {
       const v = Math.floor(Number(parsed.data.max_sales_limit));
-      if (!Number.isInteger(v) || v < 1)
-        return errorJson(rid, 400, "invalid_limit");
-      if (v < sold) return errorJson(rid, 400, "limit_lt_sold");
-      nextLimit = v;
+      if (!Number.isInteger(v) || v < 1) return errorJson(rid, 400, "invalid_limit");
+      if (v < curr.sold) return errorJson(rid, 400, "limit_lt_sold");
+      if (v !== curr.max_sales_limit) approvalReset = true;
+      pushBoth("maxSalesLimit", "max_sales_limit", v);
     }
 
-    await prisma.$transaction(async (tx) => {
-      const M =
-        resolveModel(tx, ["merchantProduct", "product", "merchantProducts", "products"]) ||
-        resolveModel(tx, ["MerchantProduct", "Product"]);
-      try {
-        await M.updateMany({
-          where: { productId: pid, merchantId: userId },
-          data: {
-            commissionRate: nextCommission,
-            maxSalesLimit: nextLimit,
-          },
-        });
-      } catch {
-        await M.updateMany({
-          where: { product_id: pid, merchant_id: userId },
-          data: {
-            commission_rate: nextCommission,
-            max_sales_limit: nextLimit,
-          },
-        });
-      }
-      await audit({
-        who: userId,
-        what: "merchant_product_update",
-        requestId: rid,
-        result: {
-          product_id: pid,
-          commission_rate: nextCommission,
-          max_sales_limit: nextLimit,
-        },
-      });
+    if (Object.keys(updates).length === 0) return okJson(rid, { success: true, noop: true });
+
+    if (approvalReset) {
+      updates.activatedByAdmin = false;
+      updatesSnake.activated_by_admin = false;
+      updates.isActive = false;
+      updatesSnake.is_active = false;
+    }
+
+    const camelWhere = { productId: pid, merchantId: userId };
+    const snakeWhere = { product_id: pid, merchant_id: userId };
+    try {
+      await Product.updateMany({ where: camelWhere, data: updates });
+    } catch {
+      await Product.updateMany({ where: snakeWhere, data: updatesSnake });
+    }
+    await audit({
+      who: userId,
+      what: "merchant_product_update",
+      requestId: rid,
+      result: { product_id: pid, approval_reset: approvalReset, updates: Object.keys(updates) },
     });
 
-    return okJson(rid, { success: true });
+    return okJson(rid, { success: true, approval_reset: approvalReset });
   } catch (e) {
     if (DEV) console.error("[merchant_dashboard][PATCH]", e);
     await audit({

@@ -1,9 +1,8 @@
-// src/app/api/merchant/payments/route.js
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Merchant Payouts API
+ * Merchant Payouts API (camelCase Prisma schema)
  * GET   -> grouped list (by requestId+affiliate)
  * PATCH -> mark selected payout items as merchant_paid
  * Security: requireMerchant(), NextAuth CSRF (double submit) for PATCH, origin check,
@@ -67,14 +66,6 @@ function enforceOrigin(req) {
   return okh(origin) && okh(referer);
 }
 
-/* prisma helpers (snake/camel tolerant) */
-function resolveModel(client, candidates, methods = ["findMany"]) {
-  for (const n of candidates) {
-    const m = client?.[n];
-    if (m && methods.every((fn) => typeof m[fn] === "function")) return m;
-  }
-  return null;
-}
 const statusPriority = {
   platform_confirmed: 3,
   merchant_paid: 2,
@@ -102,57 +93,43 @@ export async function GET(req) {
 
     // pagination
     const { searchParams } = new URL(req.url);
-    const page = Math.max(
-      1,
-      parseInt(searchParams.get("page") || "1", 10) || 1
-    );
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
     const limit = Math.max(
       1,
       Math.min(100, parseInt(searchParams.get("limit") || "100", 10) || 100)
     );
     const offset = (page - 1) * limit;
 
-    const Pri =
-      resolveModel(prisma, ["payoutRequestItem", "PayoutRequestItem"]) ||
-      resolveModel(prisma, ["payout_request_item", "payout_request_items"]);
-
-    if (!Pri) return ok(rid, { items: [], total: 0, page, pageCount: 0 });
-
-    const items = await Pri.findMany({
+    // ✅ Prisma şeması camelCase: yalnız camel alanları kullan
+    const rows = await prisma.payoutRequestItem.findMany({
       where: {
-        OR: [{ merchantId: userId }, { merchant_id: userId }],
+        merchantId: userId,
         status: {
           in: ["pending", "merchant_paid", "platform_confirmed", "rejected"],
         },
       },
       select: {
         itemId: true,
-        item_id: true,
         requestId: true,
-        request_id: true,
         amount: true,
         status: true,
         createdAt: true,
-        created_at: true,
         payoutRequest: {
           select: {
             userId: true,
-            user_id: true,
             realUserFullname: true,
-            real_user_fullname: true,
             requestedAt: true,
-            requested_at: true,
           },
         },
       },
-      orderBy: [{ createdAt: "desc" }].filter(Boolean),
+      orderBy: { createdAt: "desc" },
     });
 
     // group by affiliate+request
     const grouped = new Map();
-    for (const it of items) {
-      const reqId = it.requestId ?? it.request_id;
-      const affId = it.payoutRequest?.userId ?? it.payoutRequest?.user_id;
+    for (const it of rows) {
+      const reqId = it.requestId;
+      const affId = it.payoutRequest?.userId;
       const key = `${affId}_${reqId}`;
       const amount = Number(it.amount || 0);
       const status = String(it.status || "pending");
@@ -162,20 +139,14 @@ export async function GET(req) {
           itemIds: [],
           requestId: reqId,
           affiliate_id: affId,
-          affiliate_name:
-            it.payoutRequest?.realUserFullname ??
-            it.payoutRequest?.real_user_fullname ??
-            "",
+          affiliate_name: it.payoutRequest?.realUserFullname || "",
           amount: 0,
           status: "pending",
-          requested_at:
-            it.payoutRequest?.requestedAt ??
-            it.payoutRequest?.requested_at ??
-            null,
+          requested_at: it.payoutRequest?.requestedAt || null, // UI snake bekliyor
         });
       }
       const g = grouped.get(key);
-      g.itemIds.push(it.itemId ?? it.item_id);
+      g.itemIds.push(it.itemId);
       g.amount += amount;
       if (statusPriority[status] > statusPriority[g.status]) g.status = status;
     }
@@ -197,7 +168,6 @@ export async function GET(req) {
 }
 
 /* ───────────── PATCH: mark as paid ───────────── */
-/* DEĞİŞTİ: action zorunluluğu kaldırıldı; yalnız { itemIds } beklenir */
 const PatchSchema = z
   .object({
     itemIds: z
@@ -238,67 +208,34 @@ export async function PATCH(req) {
     if (!parsed.success) return err(rid, 400, "invalid_payload");
     const ids = parsed.data.itemIds;
 
-    const Pri =
-      resolveModel(prisma, ["payoutRequestItem", "PayoutRequestItem"]) ||
-      resolveModel(prisma, ["payout_request_item", "payout_request_items"]);
-    const Log =
-      resolveModel(
-        prisma,
-        ["payoutRequestLog", "PayoutRequestLog", "payout_request_log", "payout_request_logs"],
-        ["createMany"]
-      ) || null;
-
-    if (!Pri) return err(rid, 500, "server_error");
-
-    // eligible items (merchant-owned + pending + parent request pending)
-    const eligible = await Pri.findMany({
+    // ✅ sadece camelCase alanlar
+    const eligible = await prisma.payoutRequestItem.findMany({
       where: {
-        AND: [
-          { OR: [{ merchantId: userId }, { merchant_id: userId }] },
-          { status: "pending" },
-          { OR: [{ itemId: { in: ids } }, { item_id: { in: ids } }] },
-          { payoutRequest: { status: "pending" } },
-        ],
+        merchantId: userId,
+        status: "pending",
+        itemId: { in: ids },
+        payoutRequest: { status: "pending" },
       },
-      select: { itemId: true, item_id: true, requestId: true, request_id: true },
+      select: { itemId: true, requestId: true },
     });
 
     if (!eligible.length) return err(rid, 400, "no_valid_items");
 
-    const itemIds = eligible.map((e) => e.itemId ?? e.item_id);
+    const itemIds = eligible.map((e) => e.itemId);
     const now = new Date();
 
     await prisma.$transaction(async (tx) => {
-      const TPri =
-        resolveModel(tx, ["payoutRequestItem", "PayoutRequestItem"]) ||
-        resolveModel(tx, ["payout_request_item", "payout_request_items"]);
-      const TLog =
-        resolveModel(
-          tx,
-          ["payoutRequestLog", "PayoutRequestLog", "payout_request_log", "payout_request_logs"],
-          ["createMany"]
-        ) || null;
+      await tx.payoutRequestItem.updateMany({
+        where: { itemId: { in: itemIds } },
+        data: { status: "merchant_paid", paidAt: now },
+      });
 
-      // update status
+      // log tablosu varsa yaz, yoksa geç
       try {
-        await TPri.updateMany({
-          where: { itemId: { in: itemIds } },
-          data: { status: "merchant_paid", paidAt: now },
-        });
-      } catch {
-        await TPri.updateMany({
-          where: { item_id: { in: itemIds } },
-          data: { status: "merchant_paid", paid_at: now },
-        });
-      }
-
-      if (TLog) {
-        await TLog.createMany({
+        await tx.payoutRequestLog.createMany({
           data: eligible.map((e) => ({
-            itemId: e.itemId ?? undefined,
-            item_id: e.item_id ?? undefined,
-            requestId: e.requestId ?? undefined,
-            request_id: e.request_id ?? undefined,
+            itemId: e.itemId,
+            requestId: e.requestId,
             action: "merchant_paid",
             oldStatus: "pending",
             newStatus: "merchant_paid",
@@ -306,13 +243,14 @@ export async function PATCH(req) {
             createdAt: now,
           })),
         });
+      } catch {
+        // optional
       }
     });
 
     return ok(rid, { success: true, updated: itemIds, count: itemIds.length });
   } catch (e) {
     if (DEV) console.error("[payouts][PATCH]", e);
-    const code = e?.code === 401 ? 401 : e?.code === 403 ? 403 : 500;
-    return err(rid, code, "server_error");
+    return err(rid, 500, "server_error");
   }
 }
