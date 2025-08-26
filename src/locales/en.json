@@ -118,7 +118,7 @@
   "method": "Method",
   "bank": "Bank",
   "cancel": "Cancel",
-  "details": "Details",
+  "details": "Edit",
   "payoutHistory": "Payout History",
   "productYourTotalEarnings": "Your Total Earnings",
   "page": "Page",
@@ -410,9 +410,16 @@
   "imageHint": "HTTPS image URL or data:image/*;base64,… (≤ 2 MB) is accepted.",
 
 
-  "Post Logs": "Post Logs"
+  "Post Logs": "Post Logs",
 
+
+  "platformCommissionShort": "Platform commission",
+  "netPayable": "Net payable",
+  "minThresholdNotMet": "Minimum payout not reached",
+  "deleteRejectedConfirm": "Delete the rejected payout request?",
+  "pendingNet": "Pending (net)"
 }
+
 
 
 

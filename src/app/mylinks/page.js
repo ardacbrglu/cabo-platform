@@ -146,7 +146,7 @@ export default function MyLinksPage() {
           {t("myLinksSubtitle")}
         </p>
 
-        {/* Refresh */}
+        {/* Refresh
         <button
           onClick={doRefresh}
           className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] text-[#caffb6] hover:bg-[#222] transition disabled:opacity-60"
@@ -156,7 +156,8 @@ export default function MyLinksPage() {
         >
           <RotateCcw size={18} className={loading ? "animate-spin" : ""} />
           <span className="text-sm">{loading ? t("processing") : t("postlogs.refresh")}</span>
-        </button>
+        </button> */}
+
       </div>
 
       <div className="w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1">

@@ -1,3 +1,5 @@
+// prisma/schema.prisma — DB ile eşleşir, eksik snapshot sütunları da içerir
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,33 +10,34 @@ datasource db {
 }
 
 model User {
-  id                 Int        @id @default(autoincrement())
-  name               String     @db.VarChar(100)
-  email              String     @unique @db.VarChar(255)
-  companyName        String?    @db.VarChar(150)
-  emailVerified      DateTime?  @db.DateTime(0)
-  passwordHash       String?    @db.VarChar(255)
-  role               Role       @default(affiliate)
-  languagePreference String     @default("en") @db.VarChar(10)
-  currencyCode       String     @default("TRY") @db.Char(3)
-  createdAt          DateTime   @default(now()) @db.DateTime(0)
-  bankName           String?    @db.VarChar(100)
-  iban               String?    @db.VarChar(34)
-  phoneNumber        String?    @db.VarChar(25)
-  image              String?    @db.Text
-  status             Userstatus @default(pending)
-  failedAttempts     Int        @default(0)
-  lockUntil          DateTime?
-  isFlagged          Boolean    @default(false)
-  flagReason         String?    @db.VarChar(255)
-  realUserFullname   String?    @db.VarChar(100)
-  termsAccepted      Boolean    @default(false)
+  id                 Int       @id @default(autoincrement())
+  name               String    @db.VarChar(100)
+  email              String    @unique @db.VarChar(255)
+  companyName        String?   @db.VarChar(150)
+  emailVerified      DateTime? @db.DateTime(0)
+  passwordHash       String?   @db.VarChar(255)
+  role               Role      @default(affiliate)
+  languagePreference String    @default("en") @db.VarChar(10)
+  currencyCode       String    @default("TRY") @db.Char(3)
+  createdAt          DateTime  @default(now()) @db.DateTime(0)
 
-  activationToken          String?              @db.VarChar(255)
-  activationRequestedCount Int                  @default(0)
-  lastActivationRequestAt  DateTime?
-  passwordResetTokens      PasswordResetToken[]
+  bankName         String?    @db.VarChar(120)
+  iban             String?    @db.VarChar(34)
+  phoneNumber      String?    @db.VarChar(25)
+  image            String?    @db.Text
+  status           Userstatus @default(pending)
+  failedAttempts   Int        @default(0)
+  lockUntil        DateTime?  @db.DateTime(3)
+  isFlagged        Boolean    @default(false)
+  flagReason       String?    @db.VarChar(255)
+  realUserFullname String?    @db.VarChar(120)
+  termsAccepted    Boolean    @default(false)
 
+  activationToken          String?   @db.VarChar(255)
+  activationRequestedCount Int       @default(0)
+  lastActivationRequestAt  DateTime? @db.DateTime(3)
+
+  passwordResetTokens PasswordResetToken[]
   salesAsMerchant    AffiliateUserSale[] @relation("AffiliateUserSale_merchantIdToUsers")
   salesAsAffiliate   AffiliateUserSale[] @relation("AffiliateUserSale_userIdToUsers")
   affiliateLinks     AffiliateLink[]
@@ -46,27 +49,26 @@ model User {
   accounts           Account[]
   sessions           Session[]
 
-  // 👇 Opsiyonel back-relations (raporlama/sorgu için güzel)
-  webhookLogsAsMerchant  WebhookRequestLog[]   @relation("WebhookLogMerchant")
-  webhookLogsAsAffiliate WebhookRequestLog[]   @relation("WebhookLogAffiliate")
+  webhookLogsAsMerchant  WebhookRequestLog[] @relation("WebhookLogMerchant")
+  webhookLogsAsAffiliate WebhookRequestLog[] @relation("WebhookLogAffiliate")
   MerchantIntegration    MerchantIntegration[]
 
-  @@index([activationToken, status])
-  @@index([role, companyName]) // admin panelde arama/filtre kolaylığı (opsiyonel)
+  @@index([activationToken, status], name: "users_activationToken_status_idx")
+  @@index([role, companyName],      name: "users_role_companyName_idx")
   @@map("users")
 }
 
 model PasswordResetToken {
   id        Int      @id @default(autoincrement())
   userId    Int
-  token     String   @unique // <— tekil
+  token     String   @unique
   used      Boolean  @default(false)
-  expiresAt DateTime
+  expiresAt DateTime @db.DateTime(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, used]) // aktif/temizleme sorguları hızlı
-  @@index([expiresAt]) // cron temizliği kolay
+  @@index([userId, used], name: "password_reset_tokens_userId_used_idx")
+  @@index([expiresAt],    name: "password_reset_tokens_expiresAt_idx")
   @@map("password_reset_tokens")
 }
 
@@ -85,7 +87,8 @@ model Account {
   sessionState      String?
   oauthTokenSecret  String? @db.Text
   oauthToken        String? @db.Text
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@index([userId])
@@ -96,8 +99,9 @@ model Session {
   id           Int      @id @default(autoincrement())
   sessionToken String   @unique @db.VarChar(255)
   userId       Int
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
@@ -106,33 +110,27 @@ model Session {
 model VerificationToken {
   identifier String   @db.VarChar(255)
   token      String   @db.VarChar(255)
-  expires    DateTime
+  expires    DateTime @db.DateTime(3)
 
   @@unique([identifier, token])
   @@map("verification_tokens")
 }
 
 model AffiliateLink {
-  linkId    Int @id @default(autoincrement())
+  linkId    Int       @id @default(autoincrement())
   userId    Int
   productId Int
-
-  // Uygulama 8 byte -> 16 hex üretse de ileride esneme payı için 64
-  token String @unique @db.VarChar(64)
-
+  token     String    @unique @db.VarChar(64)
   createdAt DateTime  @default(now()) @db.DateTime(0)
   isVisible Boolean   @default(true)
-  expiresAt DateTime?
+  expiresAt DateTime? @db.DateTime(3)
 
-  // İlişkiler
   affiliateUserSales AffiliateUserSale[] @relation("LinkSales")
   product            MerchantProduct     @relation(fields: [productId], references: [productId])
   user               User                @relation(fields: [userId], references: [id])
   clicks             Click[]
 
-  // Aynı user aynı ürünü bir kez “sahiplenebilsin”
   @@unique([userId, productId], map: "uniq_user_product_link")
-  // Sık sorgular
   @@index([userId])
   @@index([productId])
   @@index([expiresAt])
@@ -140,21 +138,22 @@ model AffiliateLink {
 }
 
 model AffiliateUserSale {
-  saleId              Int                     @id @default(autoincrement())
-  orderId             String                  @db.VarChar(100)
+  saleId              Int     @id @default(autoincrement())
+  orderId             String  @db.VarChar(100)
   userId              Int
   merchantId          Int
   productId           Int
-  amount              Decimal                 @db.Decimal(19, 4)
-  quantity            Int                     @default(1)
-  commissionAffiliate Decimal                 @db.Decimal(19, 4)
-  commissionPlatform  Decimal                 @db.Decimal(19, 4)
+  amount              Decimal @db.Decimal(19, 4)
+  quantity            Int     @default(1)
+  commissionAffiliate Decimal @db.Decimal(19, 4)
+  commissionPlatform  Decimal @default(5) @db.Decimal(19, 4)
   status              AffiliateUserSalestatus @default(pending)
-  convertedAt         DateTime                @default(now()) @db.DateTime(0)
-  payoutItemId        Int?
-  updatedAt           DateTime?               @default(now()) @db.DateTime(0)
-  affiliateLinkId     Int?
-  webhookLogId        Int?
+  convertedAt         DateTime @default(now()) @db.DateTime(0)
+
+  payoutItemId  Int?
+  updatedAt     DateTime? @default(now()) @db.DateTime(0)
+  affiliateLinkId Int?
+  webhookLogId    Int?
 
   affiliateLink     AffiliateLink?     @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
   merchantProduct   MerchantProduct    @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
@@ -163,23 +162,28 @@ model AffiliateUserSale {
   webhookRequestLog WebhookRequestLog? @relation("WebhookToSales", fields: [webhookLogId], references: [id])
   platformEarnings  PlatformEarning[]
 
+  // FK’yi DB’ye ekleyince bu ilişki birebir oturur
+  payoutItem PayoutRequestItem? @relation("SalePayoutItem", fields: [payoutItemId], references: [itemId])
+
   @@unique([orderId, productId], map: "order_product_unique")
   @@index([userId])
   @@index([merchantId])
   @@index([productId])
   @@index([payoutItemId])
   @@index([affiliateLinkId], map: "idx_affiliateLinkId")
-  @@index([webhookLogId], map: "idx_webhookLogId")
+  @@index([webhookLogId],    map: "idx_webhookLogId")
+  @@index([userId, status, convertedAt], name: "idx_AffiliateUserSale_userId_status_convAt")
   @@map("AffiliateUserSale")
 }
 
 model Click {
-  clickId       Int           @id @default(autoincrement())
-  linkId        Int
-  ipAddress     String?       @db.VarChar(45)
-  userAgent     String?       @db.Text
-  referrer      String?       @db.Text
-  clickedAt     DateTime      @default(now()) @db.DateTime(0)
+  clickId   Int      @id @default(autoincrement())
+  linkId    Int
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.Text
+  referrer  String?  @db.Text
+  clickedAt DateTime @default(now()) @db.DateTime(0)
+
   affiliateLink AffiliateLink @relation(fields: [linkId], references: [linkId], map: "clicks_ibfk_1")
 
   @@index([linkId])
@@ -193,28 +197,30 @@ model ContactMessage {
   email       String?  @db.VarChar(255)
   message     String   @db.Text
   submittedAt DateTime @default(now()) @db.DateTime(0)
-  user        User?    @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
+
+  user User? @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
 
   @@index([userId])
   @@map("contactMessages")
 }
 
 model MerchantProduct {
-  productId          Int                 @id @default(autoincrement())
+  productId          Int      @id @default(autoincrement())
   merchantId         Int
-  name               String              @db.VarChar(255)
-  description        String?             @db.Text
-  imageUrl           String              @db.Text
-  merchantUrl        String              @db.Text
-  commissionRate     Decimal             @db.Decimal(5, 2)
-  isActive           Boolean             @default(true)
-  totalClicks        Int                 @default(0)
-  totalPurchases     Int                 @default(0)
-  createdAt          DateTime            @default(now()) @db.DateTime(0)
-  price              Decimal?            @default(20.00) @db.Decimal(10, 2)
-  activatedByAdmin   Boolean             @default(false)
-  maxSalesLimit      Int?                @default(100)
-  productCode        String              @unique @db.VarChar(64)
+  name               String   @db.VarChar(255)
+  description        String?  @db.Text
+  imageUrl           String   @db.Text
+  merchantUrl        String   @db.Text
+  commissionRate     Decimal  @db.Decimal(5, 2)
+  isActive           Boolean  @default(true)
+  totalClicks        Int      @default(0)
+  totalPurchases     Int      @default(0)
+  createdAt          DateTime @default(now()) @db.DateTime(0)
+  price              Decimal? @default(20.00) @db.Decimal(10, 2)
+  activatedByAdmin   Boolean  @default(false)
+  maxSalesLimit      Int?     @default(100)
+  productCode        String   @unique @db.VarChar(64)
+
   affiliateUserSales AffiliateUserSale[]
   affiliateLinks     AffiliateLink[]
   merchant           User                @relation("MerchantProducts", fields: [merchantId], references: [id], map: "merchantProducts_ibfk_1")
@@ -233,62 +239,83 @@ model Notification {
   createdAt DateTime         @default(now()) @db.DateTime(0)
   read      Boolean          @default(false)
   isDeleted Boolean          @default(false)
-  user      User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
 
-  @@unique([userId, link], map: "uniq_user_link") // ✅ aynı user+link tekrar yazılamaz
+  user User @relation(fields: [userId], references: [id], map: "fk_notification_user")
+
+  @@unique([userId, link], map: "uniq_user_link")
+  @@index([userId, read, isDeleted, createdAt], name: "idx_notifications_user_read_deleted_created")
   @@index([userId])
   @@map("notifications")
 }
 
 model PayoutRequest {
-  requestId        Int          @id @default(autoincrement())
-  userId           Int
-  amountTotal      Decimal      @db.Decimal(19, 4)
-  status           Payoutstatus @default(pending)
-  requestedAt      DateTime?    @default(now()) @db.DateTime(0)
-  paidAt           DateTime?    @db.DateTime(0)
-  bankName         String?      @db.VarChar(100)
-  iban             String?      @db.VarChar(34)
-  platformPaid     Boolean      @default(false)
-  platformPaidAt   DateTime?    @db.DateTime(0)
-  realUserFullname String?      @db.VarChar(100)
-  rejectedReason   String?      @db.VarChar(255)
-  updatedAt        DateTime?    @default(now()) @db.DateTime(0)
-  idempotencyKey   String?      @db.VarChar(100)
+  requestId   Int          @id @default(autoincrement())
+  userId      Int
+  amountTotal Decimal      @db.Decimal(19, 4)
+
+  
+  platformCommissionPercent Decimal? @db.Decimal(5, 2)
+  platformCommissionTotal   Decimal? @db.Decimal(19, 4)
+  netPayable                Decimal? @db.Decimal(19, 4)
+
+  status      Payoutstatus @default(pending)
+  requestedAt DateTime?    @default(now()) @db.DateTime(0)
+  paidAt      DateTime?    @db.DateTime(0)
+
+  bankName         String?   @db.VarChar(120)
+  iban             String?   @db.VarChar(34)
+  platformPaid     Boolean   @default(false)
+  platformPaidAt   DateTime? @db.DateTime(0)
+  realUserFullname String?   @db.VarChar(120)
+
+  rejectedReason String?   @db.VarChar(255)
+  updatedAt      DateTime? @default(now()) @db.DateTime(0)
+  idempotencyKey String?   @db.VarChar(100)
 
   payoutRequestItems PayoutRequestItem[]
-  user               User                @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
+  user               User @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
 
   @@unique([userId, idempotencyKey], map: "uniq_user_idempotencyKey")
   @@index([userId])
+  @@index([userId, requestedAt], name: "idx_payoutRequests_userId_requestedAt")
+  @@index([userId, status],      name: "idx_payoutRequests_userId_status")
   @@map("payoutRequests")
 }
 
 model PayoutRequestItem {
-  itemId              Int                      @id @default(autoincrement())
-  requestId           Int
-  merchantId          Int
-  amount              Decimal                  @db.Decimal(19, 4)
-  sourceSaleIds       String?                  @db.Text
-  createdAt           DateTime?                @default(now()) @db.DateTime(0)
-  paidAt              DateTime?                @db.DateTime(0)
+  itemId     Int     @id @default(autoincrement())
+  requestId  Int
+  merchantId Int
+  amount     Decimal @db.Decimal(19, 4)
+
+
+  platformCommissionAmount Decimal? @db.Decimal(19, 4)
+  netPayable               Decimal? @db.Decimal(19, 4)
+
+  sourceSaleIds       String?   @db.Text
+  createdAt           DateTime? @default(now()) @db.DateTime(0)
+  paidAt              DateTime? @db.DateTime(0)
   paidBy              Int?
-  platformConfirmedAt DateTime?                @db.DateTime(0)
+  platformConfirmedAt DateTime? @db.DateTime(0)
   productId           Int?
-  rejectedReason      String?                  @db.VarChar(255)
+  rejectedReason      String?   @db.VarChar(255)
   status              PayoutRequestItemstatus? @default(pending)
-  transactionId       String?                  @db.VarChar(100)
-  updatedAt           DateTime?                @default(now()) @db.DateTime(0)
-  idempotencyKey      String?                  @db.VarChar(100)
+  transactionId       String?   @db.VarChar(100)
+  updatedAt           DateTime? @default(now()) @db.DateTime(0)
+  idempotencyKey      String?   @db.VarChar(100)
 
   payoutRequest   PayoutRequest    @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
   user            User             @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
   merchantProduct MerchantProduct? @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
 
+  affiliateSales AffiliateUserSale[] @relation("SalePayoutItem")
+
   @@unique([merchantId, idempotencyKey], map: "uniq_merchant_idempotencyKey")
-  @@index([merchantId])
-  @@index([requestId])
-  @@index([productId])
+  @@index([merchantId],        name: "PayoutRequestItem_merchantId_idx")
+  @@index([requestId],         name: "PayoutRequestItem_requestId_idx")
+  @@index([productId],         name: "PayoutRequestItem_productId_idx")
+  @@index([requestId, status], name: "idx_PayoutRequestItem_requestId_status")
+  @@map("PayoutRequestItem") // <-- DB'deki gerçek tablo adı
 }
 
 model PayoutRequestLog {
@@ -301,13 +328,20 @@ model PayoutRequestLog {
   userId    Int?
   note      String?   @db.Text
   createdAt DateTime? @default(now()) @db.DateTime(0)
+
+  @@index([requestId], name: "idx_PayoutRequestLog_requestId")
+  @@index([itemId],    name: "idx_PayoutRequestLog_itemId")
+  @@index([userId],    name: "idx_PayoutRequestLog_userId")
+  @@index([createdAt], name: "idx_PayoutRequestLog_createdAt")
+  @@map("PayoutRequestLog")
 }
 
 model Currency {
-  code             String            @id @db.Char(3)
-  symbol           String            @db.VarChar(5)
-  minorUnit        Int
-  updatedAt        DateTime          @default(now()) @db.DateTime(0)
+  code      String   @id @db.Char(3)
+  symbol    String   @db.VarChar(5)
+  minorUnit Int
+  updatedAt DateTime @default(now()) @db.DateTime(0)
+
   baseRates        ExchangeRate[]    @relation("baseCurrency")
   targetRates      ExchangeRate[]    @relation("targetCurrency")
   platformEarnings PlatformEarning[]
@@ -316,11 +350,12 @@ model Currency {
 }
 
 model ExchangeRate {
-  baseCurrency      String   @db.Char(3)
-  targetCurrency    String   @db.Char(3)
-  rate              Decimal  @db.Decimal(18, 8)
-  validFrom         DateTime @db.DateTime(0)
-  validTo           DateTime @db.DateTime(0)
+  baseCurrency   String   @db.Char(3)
+  targetCurrency String   @db.Char(3)
+  rate           Decimal  @db.Decimal(18, 8)
+  validFrom      DateTime @db.DateTime(0)
+  validTo        DateTime @db.DateTime(0)
+
   baseCurrencyRel   Currency @relation("baseCurrency", fields: [baseCurrency], references: [code], map: "exchange_rates_ibfk_1")
   targetCurrencyRel Currency @relation("targetCurrency", fields: [targetCurrency], references: [code], map: "exchange_rates_ibfk_2")
 
@@ -330,22 +365,26 @@ model ExchangeRate {
 }
 
 model PlatformEarning {
-  earningId         Int               @id @default(autoincrement())
-  saleId            Int
-  amount            Decimal           @db.Decimal(19, 4)
-  currencyCode      String            @default("TRY") @db.Char(3)
-  loggedAt          DateTime          @default(now()) @db.DateTime(0)
+  earningId    Int      @id @default(autoincrement())
+  saleId       Int
+  amount       Decimal  @db.Decimal(19, 4)
+  currencyCode String   @default("TRY") @db.Char(3)
+  loggedAt     DateTime @default(now()) @db.DateTime(0)
+
   affiliateUserSale AffiliateUserSale @relation(fields: [saleId], references: [saleId], map: "platform_earnings_ibfk_1")
   currency          Currency          @relation(fields: [currencyCode], references: [code], map: "platform_earnings_ibfk_2")
 
-  @@index([currencyCode])
-  @@index([saleId])
+  @@index([currencyCode], name: "PlatformEarning_currencyCode_idx")
+  @@index([saleId],       name: "PlatformEarning_saleId_idx")
+  @@map("PlatformEarning")
 }
 
 model PlatformConfig {
   keyName   String    @id @db.VarChar(100)
   value     String    @db.Text
   updatedAt DateTime? @default(now()) @db.DateTime(0)
+
+  @@map("PlatformConfig")
 }
 
 model MerchantIntegration {
@@ -356,34 +395,33 @@ model MerchantIntegration {
   webhookIpAllowlist String?   @db.Text
   isActive           Boolean   @default(true)
   createdAt          DateTime  @default(now()) @db.DateTime(0)
-  rotatedAt          DateTime?
+  rotatedAt          DateTime? @db.DateTime(3)
 
   merchant User @relation(fields: [merchantId], references: [id])
 
   @@index([merchantId])
+  @@map("MerchantIntegration")
 }
 
 model WebhookRequestLog {
-  id          Int           @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   merchantId  Int
-  affiliateId Int? // token -> AffiliateLink -> userId çözümlenirse
-  requestId   String        @unique @db.VarChar(100) // X-Request-Id
-  nonce       String        @unique @db.VarChar(100) // X-Nonce
-  sentAt      DateTime
-  receivedAt  DateTime      @default(now()) @db.DateTime(0)
-  hmac        String        @db.VarChar(255) // X-Signature (geldiği gibi)
-  ip          String        @db.VarChar(45)
-  ua          String?       @db.Text
+  affiliateId Int?
+  requestId   String   @unique @db.VarChar(100)
+  nonce       String   @unique @db.VarChar(100)
+  sentAt      DateTime @db.DateTime(3)
+  receivedAt  DateTime @default(now()) @db.DateTime(0)
+  hmac        String   @db.VarChar(255)
+  ip          String   @db.VarChar(45)
+  ua          String?  @db.Text
   status      WebhookStatus
-  error       String?       @db.Text
+  error       String?  @db.Text
 
-  // İçerik (kanıt ve debug için):
-  rawBody    String @db.LongText // imza doğrulaması için "aynen gelen" gövde
-  headers    Json? // X-Key-Id, X-Timestamp vb.
-  parsedBody Json? // { orderId, items:[{productCode, quantity, unitPrice, currency, ...}], token, ... }
+  rawBody    String @db.LongText
+  headers    Json?
+  parsedBody Json?
   itemsCount Int?
 
-  // 👇 İsimlendirilmiş ilişkiler (ambiguous relation fix)
   merchant  User  @relation("WebhookLogMerchant", fields: [merchantId], references: [id])
   affiliate User? @relation("WebhookLogAffiliate", fields: [affiliateId], references: [id])
 
@@ -394,7 +432,17 @@ model WebhookRequestLog {
   @@map("webhookRequestLogs")
 }
 
-// ENUMS
+model ApiLog {
+  id        Int      @id @default(autoincrement())
+  endpoint  String
+  ip        String
+  ua        String
+  event     String
+  email     String?
+  error     String?
+  createdAt DateTime @default(now()) @db.DateTime(3)
+}
+
 enum Role {
   admin
   merchant
@@ -441,15 +489,4 @@ enum WebhookStatus {
   invalid_product
   unauthorized
   error
-}
-
-model ApiLog {
-  id        Int      @id @default(autoincrement())
-  endpoint  String
-  ip        String
-  ua        String
-  event     String
-  email     String?
-  error     String?
-  createdAt DateTime @default(now())
 }

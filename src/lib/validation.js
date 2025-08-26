@@ -1,37 +1,49 @@
-// src/lib/validation.js
-// Merkezi input doğrulama & sanitize yardımcıları (prod-ready)
-// Bu dosya yalnızca server tarafında kullanılmalıdır.
+// Server-only input validation & sanitization helpers (prod-ready)
 import "server-only";
 import { z } from "zod";
 import sanitizeHtmlLib from "sanitize-html";
 
-/**
- * HTML'i düz metne indirger + görünmez karakterleri temizler + NFKC normalize eder.
- * XSS ve homoglyph/zero-width kaçaklarına karşı daha güvenli.
- */
+/* ───────── Sanitize helpers ───────── */
+
+/** HTML'i temizler, görünmez/BiDi kontrol karakterlerini atar, NFKC normalize eder. */
 export function sanitizeText(input) {
   const raw = String(input ?? "");
   const stripped = sanitizeHtmlLib(raw, { allowedTags: [], allowedAttributes: {} });
-  // Zero-width ve BOM karakterleri temizle
-  const noInvisible = stripped.replace(/[\u200B-\u200D\uFEFF]/g, "");
+
+  // Zero-width, BiDi, BOM & kontrol karakterleri (DEL dahil)
+  const INVISIBLE_AND_BIDI =
+    /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u0000-\u001F\u007F]/g;
+
+  const noInvisible = stripped.replace(INVISIBLE_AND_BIDI, "");
   return noInvisible.normalize("NFKC").trim();
 }
 
-/** Geriye uyum için alias */
-export function sanitizeHtml(input) {
-  return sanitizeText(input);
+// okunurluk için alias
+export const sanitizeHtml = sanitizeText;
+
+/** TR IBAN için: tüm unicode boşluk/sepatörleri normal boşluğa çevir, sonra alfasayısal dışını at, uppercase. */
+export function normalizeIban(v) {
+  return String(v ?? "")
+    .toUpperCase()
+    .replace(/[\u00A0\u1680\u180E\u2000-\u200F\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]/g, " ")
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-/**
- * TR IBAN doğrulaması (format + MOD97)
- * - TR + 24 rakam (toplam 26)
- * - IBAN checksum: mod97 === 1
- */
+export function normalizeRealName(v) {
+  return sanitizeText(v).replace(/\s+/g, " ");
+}
+
+export function normalizeBankName(v) {
+  return sanitizeText(v);
+}
+
+/** ISO 13616 mod-97-10 ile sıkı TR IBAN doğrulaması. */
 export function isIbanTR(ibanRaw) {
   if (!ibanRaw || typeof ibanRaw !== "string") return false;
-  const iban = ibanRaw.replace(/\s+/g, "").toUpperCase();
+  const iban = normalizeIban(ibanRaw);
   if (!/^TR\d{24}$/.test(iban)) return false;
 
+  // İlk 4 karakteri sona taşı, A=10..Z=35'e çevir, mod 97 akış hesapla
   const rearranged = iban.slice(4) + iban.slice(0, 4);
   const expanded = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
 
@@ -44,7 +56,7 @@ export function isIbanTR(ibanRaw) {
   return remainder === 1;
 }
 
-/* ───────── Primitive alan şemaları ───────── */
+/* ───────── Primitive / reusable field schemas ───────── */
 
 export const usernameSchema = z
   .string()
@@ -56,85 +68,53 @@ export const emailSchema = z.string().email();
 
 export const strongPasswordSchema = z
   .string()
-  .min(8)
+  .min(8, "At least 8 characters")
   .refine((v) => /[a-z]/.test(v), "At least one lowercase letter")
   .refine((v) => /[A-Z]/.test(v), "At least one uppercase letter")
   .refine((v) => /\d/.test(v), "At least one number");
 
-/* ───────── Kompozit şemalar (endpoint bazlı) ───────── */
+export const ibanSchema = z
+  .preprocess((v) => normalizeIban(v), z.string())
+  .refine(isIbanTR, "Invalid TR IBAN");
 
-/**
- * /api/register
- * Not: Captcha doğruluğu backend’de dış serviste (Google/Turnstile) yine kontrol edilmelidir.
- */
-export const registerSchema = z.object({
-  name: usernameSchema,
-  email: emailSchema,
-  password: strongPasswordSchema,
-  captcha: z.string().min(10),
-});
+export const bankNameSchema = z
+  .string()
+  .max(120)
+  .transform((s) => normalizeBankName(s))
+  .refine((s) => s.length >= 2, "Bank name required");
 
-/**
- * /api/settings/update
- * Diller/para birimleri DB'den dinamik geldiği için burada biçim kontrolü yapıyoruz,
- * "desteklenen değer mi" kontrolünü route tarafında (DB/Config'e göre) yapın.
- */
-export const userSettingsSchema = z.object({
-  displayName: z
-    .string()
-    .max(80)
-    .transform((s) => sanitizeText(s))
-    .refine((s) => s.length >= 2, "Name too short"),
-  languagePreference: z.string().min(2).max(5).optional(), // örn: "tr", "en", "en-US"
-  currencyCode: z.string().length(3).optional(), // ISO3: TRY, USD, EUR...
-});
+export const realNameSchema = z
+  .string()
+  .max(120)
+  .transform((s) => normalizeRealName(s))
+  .refine((s) => s.split(/\s+/).length >= 2, "Full legal name required");
 
-/**
- * /api/wallet bank info
- * Backend’deki limitlerle hizalı (max 120).
- */
+/* ───────── Composite schemas (endpoint level) ───────── */
+
 export const bankInfoSchema = z.object({
-  iban: z.string().refine(isIbanTR, "Invalid TR IBAN"),
-  bankName: z
-    .string()
-    .min(2)
-    .max(120)
-    .transform((s) => sanitizeText(s))
-    .refine((s) => s.length >= 2, "Bank name required"),
-  realName: z
-    .string()
-    .min(4)
-    .max(120)
-    .transform((s) => sanitizeText(s).replace(/\s+/g, " "))
-    .refine((s) => s.split(/\s+/).length >= 2, "Full legal name required"),
+  iban: ibanSchema,
+  bankName: bankNameSchema,
+  realName: realNameSchema,
 });
 
-/**
- * /api/payout_request_details, cancel vs.
- */
 export const payoutRequestIdSchema = z.object({
   requestId: z.coerce.number().int().positive(),
 });
 
-/**
- * Basit sayfalama (page, limit)
- */
-export const paginationSchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+export const updateRequestBankSchema = payoutRequestIdSchema.extend({
+  updateRequestBank: z.literal(true),
+  iban: ibanSchema,
+  bankName: bankNameSchema,
+  realName: realNameSchema,
 });
 
-/* ───────── Yardımcı: güvenli parse ───────── */
-
-/**
- * Zod safeParse sarmalayıcısı: ilk hatayı HTTP 400 fırlatır.
- * try/catch içinde kullanın; err.status mevcut olur.
- */
+/* (opsiyonel) güvenli parse helper'ı */
 export function safeParse(schema, data) {
   const r = schema.safeParse(data);
   if (!r.success) {
-    const msg = r.error.issues?.[0]?.message || "Validation error";
-    const path = r.error.issues?.[0]?.path?.join(".") || "";
+    const issue = r.error.issues?.[0];
+    const msg = issue?.message || "Validation error";
+    const path = issue?.path?.join(".") || "";
     const err = new Error(path ? `${msg} (${path})` : msg);
     err.status = 400;
     throw err;

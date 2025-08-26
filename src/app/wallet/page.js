@@ -1,4 +1,12 @@
 "use client";
+
+/**
+ * Security Docblock (UI)
+ * - All network calls use apiFetch wrapper (credentials: include, X-Requested-With, X-Request-Id).
+ * - CSRF: apiFetch adds NextAuth csrf header when present.
+ * - Errors are handled gracefully in UI; no sensitive details leaked.
+ */
+
 import { useState, useEffect, useMemo } from "react";
 import Layout from "@/components/Layout";
 import {
@@ -12,7 +20,6 @@ import apiFetch from "@/lib/apiFetch";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
-/* === IBAN doğrulama: TR + MOD97 (frontend, backend ile birebir) === */
 function isIbanTRClient(raw) {
   if (!raw) return false;
   const iban = String(raw).replace(/\s+/g, "").toUpperCase();
@@ -27,9 +34,14 @@ function isIbanTRClient(raw) {
   }
   return remainder === 1;
 }
-function normalizeIban(raw) {
-  return String(raw || "").replace(/\s+/g, "").toUpperCase();
+const normalizeIban = (raw) =>
+  String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+function formatIbanGroups(raw) {
+  const only = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const trimmed = only.slice(0, 26);
+  return trimmed.replace(/(.{4})/g, "$1 ").trim();
 }
+const f2 = (n) => Number(n || 0).toFixed(2);
 
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max, 0.0001)) * 100, 100);
@@ -54,16 +66,27 @@ function exportToCSV(sales, date, t) {
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const header = [t("orderId"), t("product"), t("amount"), t("commission"), t("quantity"), t("date")].join(",") + "\n";
+  const header = [
+    t("orderId"),
+    t("product"),
+    t("amount"),
+    t("commission"),
+    `${t("platform")} (%)`,
+    t("quantity"),
+    t("date"),
+  ].join(",") + "\n";
   const rows = (Array.isArray(sales) ? sales : [])
-    .map((s) => [s.orderId, s.product, s.amount, s.commission, s.quantity, s.convertedAt].map(esc).join(","))
+    .map((s) =>
+      [s.orderId, s.product, f2(s.amount), f2(s.commission), f2(s.platformFee), s.quantity, s.convertedAt]
+        .map(esc).join(",")
+    )
     .join("\n");
   const csv = header + rows;
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `payout_details_${date}.csv`;
+  link.download = `payout_details_${(date || "").slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -77,6 +100,7 @@ export default function WalletPage() {
   const [pending, setPending] = useState(0);
   const [confirmed, setConfirmed] = useState(0);
   const [minPayout, setMinPayout] = useState(100);
+  const [platformCommissionPercent, setPlatformCommissionPercent] = useState(0);
   const [iban, setIban] = useState("");
   const [bankName, setBankName] = useState("");
   const [realName, setRealName] = useState("");
@@ -87,13 +111,37 @@ export default function WalletPage() {
   const [history, setHistory] = useState([]);
   const [payoutState, setPayoutState] = useState({ status: "", message: "" });
 
+  const [activeRequestCount, setActiveRequestCount] = useState(0);
+
   const [detailsModal, setDetailsModal] = useState({
-    open: false, sales: [], total: 0, status: "", date: "",
-    paid_at: null, rejectedReason: "", updatedAt: null,
-    bankName: "", iban: "", realName: "", platform_paid: false, platformPaidAt: null,
-    page: 1, totalPages: 1, requestId: null, canEditBank: false,
-    editIban: "", editBankName: "", editRealName: "", editing: false, editError: "", editSaving: false,
+    open: false,
+    sales: [],
+    amountTotal: 0,
+    platformCommissionTotal: 0,
+    netPayable: 0,
+    platformCommissionPercent: 0,
+    status: "",
+    date: "",
+    paid_at: null,
+    rejectedReason: "",
+    updatedAt: null,
+    bankName: "",
+    iban: "",
+    realName: "",
+    platform_paid: false,
+    platformPaidAt: null,
+    page: 1,
+    totalPages: 1,
+    requestId: null,
+    canEditBank: false,
+    editIban: "",
+    editBankName: "",
+    editRealName: "",
+    editing: false,
+    editError: "",
+    editSaving: false,
     cancelUntil: "",
+    lockAt: "",
   });
 
   const [ibanMissing, setIbanMissing] = useState(true);
@@ -134,15 +182,17 @@ export default function WalletPage() {
       })
       .then((data) => {
         setBalance(Number(data.balance) || 0);
-        setPending(Number(data.pending) || 0);
+        setPending(Number(data.pendingAmount) || 0);
         setConfirmed(Number(data.confirmed) || 0);
         setMinPayout(Number(data.minPayout) || 100);
-        setIban(data.iban || "");
+        setPlatformCommissionPercent(Number(data.platformCommissionPercent) || 0);
+        setIban(formatIbanGroups(data.iban || ""));
         setBankName(data.bankName || "");
         setRealName(data.realName || "");
         setIbanMissing(!!data.ibanMissing);
         setBankMissing(!!data.bankMissing);
         setRealNameMissing(!!data.realNameMissing);
+        setActiveRequestCount(Number(data.activeRequestCount || 0));
         setHistory(Array.isArray(data.history) ? data.history : []);
       })
       .catch(() => {})
@@ -150,9 +200,6 @@ export default function WalletPage() {
   };
   useEffect(() => { refreshData(); }, []);
 
-  function validateIban(val) {
-    return isIbanTRClient(val);
-  }
   function validateRealName(val) {
     const s = String(val || "").trim();
     return s.split(" ").length >= 2 && s.length >= 4;
@@ -163,7 +210,7 @@ export default function WalletPage() {
     setIbanError(""); setBankError(""); setRealNameError("");
 
     const ibanNorm = normalizeIban(iban);
-    if (!validateIban(ibanNorm)) {
+    if (!isIbanTRClient(ibanNorm)) {
       setIbanError(t("invalidIban"));
       return;
     }
@@ -183,18 +230,18 @@ export default function WalletPage() {
         headers: { "Content-Type": "application/json" },
         body: { iban: ibanNorm, bankName, realName },
       });
+      await res.json().catch(() => ({}));
       if (res.ok) {
         setIbanSaved(true);
         setTimeout(() => setIbanSaved(false), 2000);
+        refreshData();
       } else {
-        const data = await res.json().catch(() => ({}));
-        setIbanError(data?.error || t("unknownError"));
+        setIbanError(t("unknownError"));
       }
     } catch {
       setIbanError(t("unknownError"));
     } finally {
       setIsSubmitting(false);
-      refreshData();
     }
   }
 
@@ -211,12 +258,12 @@ export default function WalletPage() {
         },
         body: { requestPayout: true },
       });
-      const data = await res.json().catch(() => ({}));
+      await res.json().catch(() => ({}));
       if (res.ok) {
-        setPayoutState({ status: "success", message: data.message || t("payoutRequested") });
+        setPayoutState({ status: "success", message: t("payoutRequested") });
         refreshData();
       } else {
-        setPayoutState({ status: "error", message: data.error || t("unknownError") });
+        setPayoutState({ status: "error", message: t("unknownError") });
       }
     } catch {
       setPayoutState({ status: "error", message: t("unknownError") });
@@ -238,12 +285,12 @@ export default function WalletPage() {
         headers: { "Content-Type": "application/json" },
         body: { cancelRequest: true, requestId },
       });
-      const data = await res.json().catch(() => ({}));
+      await res.json().catch(() => ({}));
       if (res.ok) {
-        setPayoutState({ status: "success", message: data.message || t("cancelled") });
+        setPayoutState({ status: "success", message: t("cancelled") });
         refreshData();
       } else {
-        setPayoutState({ status: "error", message: data.error || t("unknownError") });
+        setPayoutState({ status: "error", message: t("unknownError") });
       }
     } catch {
       setPayoutState({ status: "error", message: t("unknownError") });
@@ -251,6 +298,18 @@ export default function WalletPage() {
       setIsSubmitting(false);
       setTimeout(() => setPayoutState({ status: "", message: "" }), 2500);
     }
+  }
+
+  async function handleDeleteRequest(requestId) {
+    if (!window.confirm(t("deleteRejectedConfirm") || "Reddedilmiş talebi silinsin mi?")) return;
+    try {
+      const res = await apiFetch("/api/wallet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { deleteRequest: true, requestId },
+      });
+      if (res.ok) refreshData();
+    } catch {}
   }
 
   const fetchDetails = async (requestId, pageNum = 1) => {
@@ -263,7 +322,6 @@ export default function WalletPage() {
       if (!res.ok) return;
       const data = await res.json();
 
-      const hist = history.find((h) => h.requestId === requestId);
       setDetailsModal((modal) => ({
         ...modal,
         ...data,
@@ -271,11 +329,12 @@ export default function WalletPage() {
         page: pageNum,
         totalPages: data.totalPages || 1,
         requestId,
-        canEditBank: hist?.canEditBank ?? false,
-        editIban: data.iban || "",
+        canEditBank: !!data.canEditBank,
+        editIban: formatIbanGroups(data.iban || ""),
         editBankName: data.bankName || "",
         editRealName: data.realName || "",
-        cancelUntil: hist?.lockAt || "",
+        cancelUntil: data.lockAt || "",
+        lockAt: data.lockAt || "",
         editError: "",
       }));
     } catch {}
@@ -286,14 +345,7 @@ export default function WalletPage() {
     fetchDetails(requestId, 1);
   }
   function closeDetails() {
-    setDetailsModal({
-      open: false, sales: [], total: 0, status: "", date: "",
-      paid_at: null, rejectedReason: "", updatedAt: null,
-      bankName: "", iban: "", realName: "", platform_paid: false, platformPaidAt: null,
-      page: 1, totalPages: 1, requestId: null, canEditBank: false,
-      editIban: "", editBankName: "", editRealName: "", editing: false, editError: "", editSaving: false,
-      cancelUntil: "",
-    });
+    setDetailsModal((m) => ({ ...m, open: false }));
   }
 
   async function handleUpdateRequestBank() {
@@ -316,7 +368,7 @@ export default function WalletPage() {
 
     setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
     try {
-      const res = await apiFetch("/api/wallet", {
+      const res = await apiFetch("/api/payout_request_details", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: {
@@ -332,47 +384,69 @@ export default function WalletPage() {
         setDetailsModal((m) => ({
           ...m,
           bankName: m.editBankName,
-          iban: ibanNorm,
+          iban: formatIbanGroups(ibanNorm),
           realName: m.editRealName,
           editSaving: false,
           editing: false,
           editError: "",
         }));
         refreshData();
+      } else if (data?.error === "LOCKED") {
+        setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("lockedUpdateWindowPassed") }));
       } else {
-        setDetailsModal((m) => ({ ...m, editSaving: false, editError: data?.error || t("unknownError") }));
+        setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("unknownError") }));
       }
     } catch {
       setDetailsModal((m) => ({ ...m, editSaving: false, editError: t("unknownError") }));
     }
   }
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)), [history.length]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)),
+    [history.length]
+  );
   let paginatedHistory = history.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   if (paginatedHistory.length < PAGE_SIZE) {
     paginatedHistory = [...paginatedHistory, ...Array(PAGE_SIZE - paginatedHistory.length).fill(null)];
   }
   useEffect(() => { if (page > totalPages && totalPages > 0) setPage(totalPages); }, [history, totalPages, page]);
 
-  const payoutDisabled = loading || confirmed < minPayout || ibanMissing || bankMissing || realNameMissing || isSubmitting;
+  const payoutDisabled =
+    loading ||
+    isSubmitting ||
+    ibanMissing || bankMissing || realNameMissing ||
+    confirmed < minPayout ||
+    activeRequestCount >= 2;
+
+  const disabledReason =
+    ibanMissing || bankMissing || realNameMissing
+      ? "bank"
+      : activeRequestCount >= 2
+      ? "activeLimit"
+      : confirmed < minPayout
+      ? "min"
+      : "";
+
+  const showInlineWarn = !loading && (ibanMissing || bankMissing || realNameMissing);
+  const InlineWarn = () => (
+    <div
+      className="w-full border border-red-700/70 bg-red-900/40 text-red-200 rounded-lg px-3 py-2 mb-3 text-[11px] sm:text-xs font-mono"
+      role="status"
+      aria-live="polite"
+    >
+      <b className="font-bold">{t("bankInfoMissing")}</b>{" "}
+      <span className="opacity-90">{t("bankInfoExplain")}</span>
+      <div className="mt-1 space-x-2 text-[10.5px] sm:text-[11.5px]">
+        {ibanMissing && <span>• {t("ibanMissing")}</span>}
+        {bankMissing && <span>• {t("bankNameMissing")}</span>}
+        {realNameMissing && <span>• {t("realNameMissing")}</span>}
+      </div>
+    </div>
+  );
 
   return (
     <Layout>
       <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-center mt-5 gap-8 px-1 md:px-4">
-        {/* Info Bar */}
-        {!loading && (ibanMissing || bankMissing || realNameMissing) && (
-          <div className="w-full max-w-2xl mx-auto bg-red-900/80 text-red-200 font-mono rounded-xl px-3 py-2 sm:px-6 sm:py-3 text-xs sm:text-sm text-center mb-3 border border-red-700 shadow animate-pulse">
-            <b>{t("bankInfoMissing")}</b> {t("bankInfoExplain")} <br />
-            <span className="text-xs">
-              {ibanMissing && <>• {t("ibanMissing")}&nbsp;</>}
-              {bankMissing && <>• {t("bankNameMissing")}&nbsp;</>}
-              {realNameMissing && <>• {t("realNameMissing")}&nbsp;</>}
-            </span>
-            <br />
-            <span className="text-yellow-200">{t("updateYourDetails")}</span>
-          </div>
-        )}
-
         <div className="flex flex-col md:flex-row gap-5 md:gap-8 w-full">
           {/* Wallet Balance */}
           <div className="bg-[#181818] rounded-xl shadow py-5 px-2 sm:py-7 sm:px-8 flex-1 flex flex-col items-center min-w-[240px]">
@@ -383,26 +457,29 @@ export default function WalletPage() {
             <div className="flex flex-col items-center mb-4">
               <span className="font-mono text-gray-400 text-xs">{t("confirmedBalance")}</span>
               <span className="text-xl sm:text-2xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>
-                ₺{confirmed.toFixed(2)}
+                ₺{f2(confirmed)}
               </span>
               <span className="text-xs text-gray-400 font-mono mb-1">({t("readyToWithdraw")})</span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 justify-center font-mono text-xs mb-2">
               <span className="bg-[#222] rounded px-2 py-1 text-[#e3d67d] font-bold">
-                {t("pending")}: ₺{pending.toFixed(2)}
+                {t("pending")}: ₺{f2(pending)}
               </span>
               <span className="bg-[#232323] rounded px-2 py-1 text-[#81d742]">
-                {t("total")}: ₺{balance.toFixed(2)}
+                {t("total")}: ₺{f2(balance)}
               </span>
             </div>
-            <div className="mb-3 text-xs font-mono">
+            <div className="mb-1 text-xs font-mono">
               <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
               <span className="font-bold" style={{ color: COLOR_GREEN }}> ₺{minPayout}</span>
+            </div>
+            <div className="mb-3 text-[11px] font-mono text-[#e3d67d]">
+              {t("platformCommissionShort")}: %{platformCommissionPercent}
             </div>
             <div className="mt-2 text-xs font-bold animate-pulse font-mono text-center" style={{ color: confirmed < minPayout ? "#e3d67d" : COLOR_GREEN }}>
               {confirmed < minPayout ? (
                 <>
-                  {t("earnMoreToPayout")} <span style={{ color: COLOR_CABO }}>{(minPayout - confirmed).toFixed(2)}₺</span>
+                  {t("earnMoreToPayout")} <span style={{ color: COLOR_CABO }}>{f2(minPayout - confirmed)}₺</span>
                 </>
               ) : (
                 <>{t("eligibleForPayout")}</>
@@ -422,7 +499,10 @@ export default function WalletPage() {
                 <Loader2 className="animate-spin" size={18} />
               ) : payoutDisabled ? (
                 <span className="flex items-center justify-center gap-1">
-                  <Lock size={17} className="mr-1" /> {t("walletRequirements")}
+                  <Lock size={17} className="mr-1" />
+                  {disabledReason === "bank" && t("walletRequirements")}
+                  {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
+                  {disabledReason === "min" && t("minThresholdNotMet")}
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-1">
@@ -448,26 +528,29 @@ export default function WalletPage() {
             <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
               {t("paymentDetails")}
             </div>
-            {/* native validation kapalı: noValidate */}
+
+            {showInlineWarn && <InlineWarn />}
+
             <form className="w-full" onSubmit={handleIbanSave} noValidate>
               <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("iban")}</label>
               <input
                 type="text"
-                className={`bg-[#161616] border ${ibanError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
+                className={`bg-[#161616] border ${ibanError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono tracking-wider`}
                 placeholder="TR00 0000 0000 0000 0000 0000 00"
                 value={iban}
-                onChange={(e) => {
-                  const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                  const trimmed = raw.slice(0, 26);                  // gerçek IBAN uzunluğu
-                  const grouped = trimmed.replace(/(.{4})/g, "$1 ").trim();
-                  setIban(grouped);
+                onChange={(e) => setIban(formatIbanGroups(e.target.value))}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const text = (e.clipboardData || window.clipboardData).getData("text");
+                  setIban(formatIbanGroups(text));
                 }}
                 required
-                maxLength={34} // boşluk payı
+                maxLength={34}
                 autoComplete="off"
                 inputMode="text"
+                aria-invalid={!!ibanError}
               />
-              {ibanError && <div className="text-xs text-red-400 mb-1 font-mono">{ibanError}</div>}
+              {ibanError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{ibanError}</div>}
 
               <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("bankName")}</label>
               <input
@@ -480,8 +563,9 @@ export default function WalletPage() {
                 maxLength={120}
                 autoComplete="off"
                 inputMode="text"
+                aria-invalid={!!bankError}
               />
-              {bankError && <div className="text-xs text-red-400 mb-1 font-mono">{bankError}</div>}
+              {bankError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{bankError}</div>}
 
               <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("fullRealName")}</label>
               <input
@@ -494,20 +578,21 @@ export default function WalletPage() {
                 maxLength={120}
                 autoComplete="name"
                 inputMode="text"
+                aria-invalid={!!realNameError}
               />
-              {realNameError && <div className="text-xs text-red-400 mb-1 font-mono">{realNameError}</div>}
+              {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
 
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className={`w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${
-                  isSubmitting ? "opacity-60 pointer-events-none" : ""
-                }`}
+                className={`w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
               >
                 {ibanSaved ? t("saved") : t("saveBankInfo")}
               </button>
             </form>
-            <div className="mt-3 text-xs text-gray-400 font-mono text-center">{t("bankInfoNote")}</div>
+            <div className="mt-3 text-[11px] sm:text-xs text-gray-400 font-mono text-center leading-snug">
+              {t("bankInfoNote")}
+            </div>
           </div>
         </div>
 
@@ -524,7 +609,7 @@ export default function WalletPage() {
               <thead>
                 <tr className="text-gray-400 border-b border-[#232323]">
                   <th className="py-2 px-3">{t("date")}</th>
-                  <th className="py-2 px-3">{t("amount")}</th>
+                  <th className="py-2 px-3 text-right">{t("amount")}</th>
                   <th className="py-2 px-3">{t("status")}</th>
                   <th className="py-2 px-3">{t("method")}</th>
                   <th className="py-2 px-3">{t("bank")}</th>
@@ -543,8 +628,8 @@ export default function WalletPage() {
                     item ? (
                       <tr key={i} className="border-b border-[#202020] last:border-none">
                         <td className="py-2 px-3">{item.date}</td>
-                        <td className="py-2 px-3 font-bold" style={{ color: COLOR_GREEN }}>
-                          ₺{item.amount}
+                        <td className="py-2 px-3 font-bold text-right tabular-nums" style={{ color: COLOR_GREEN }}>
+                          ₺{f2(item.amount || 0)}
                         </td>
                         <td className="py-2 px-3">
                           <span
@@ -560,23 +645,13 @@ export default function WalletPage() {
                           >
                             {t(item.status)}
                           </span>
-                          {item.status === "paid" && item.paid_at && (
-                            <span className="ml-1 text-green-400 font-mono text-xs">
-                              ({new Date(item.paid_at).toLocaleDateString()})
-                            </span>
-                          )}
-                          {item.status === "rejected" && item.rejectedReason && (
-                            <span className="ml-1 text-red-400 font-mono text-xs">({item.rejectedReason})</span>
-                          )}
                           {item.status === "pending" && item.lockAt && (
                             <span className="ml-2 text-gray-400 font-mono text-[11px]">
                               {(t("cancelUntil") || "Cancel until")}: {new Date(item.lockAt).toLocaleString()}
                             </span>
                           )}
                           {item.status === "pending" && !item.canCancel && (
-                            <span className="ml-2 text-yellow-400 text-[11px] font-mono">
-                              {(t("locked") || "Locked")}
-                            </span>
+                            <span className="ml-2 text-yellow-400 text-[11px] font-mono">{(t("locked") || "Locked")}</span>
                           )}
                         </td>
                         <td className="py-2 px-3">{item.method}</td>
@@ -591,8 +666,17 @@ export default function WalletPage() {
                               <X size={13} /> {t("cancel")}
                             </button>
                           )}
+                          {item.status === "rejected" && item.requestId && item.canDelete && (
+                            <button
+                              onClick={() => handleDeleteRequest(item.requestId)}
+                              className="text-red-400 hover:bg-red-900/30 rounded p-1 transition text-xs font-mono"
+                              title={t("delete")}
+                            >
+                              ✖
+                            </button>
+                          )}
                           <button onClick={() => openDetails(item.requestId)} className="text-blue-400 hover:underline ml-1 text-xs font-mono">
-                            {t("details")}
+                            {t("edit")}
                           </button>
                         </td>
                       </tr>
@@ -638,33 +722,28 @@ export default function WalletPage() {
               <div className="text-xs mb-3 font-mono text-gray-400">
                 {t("date")}: <span>{detailsModal.date?.slice(0, 10)}</span> &nbsp; {t("status")}:{" "}
                 <span className="font-bold">{t(detailsModal.status)}</span> <br />
-                {t("total")}: <span style={{ color: COLOR_GREEN }}>₺{Number(detailsModal.total || 0).toFixed(2)}</span>
+                {t("total")}: <span style={{ color: COLOR_GREEN }}>₺{f2(detailsModal.amountTotal)}</span>
+                {"  •  "}
+                <span className="text-[#e3d67d]">{t("platformCommissionShort")}: ₺{f2(detailsModal.platformCommissionTotal)}</span>
+                {"  •  "}
+                <span className="text-[#d1ffd0]">{t("netPayable")}: ₺{f2(detailsModal.netPayable)}</span>
                 {detailsModal.paid_at && (
-                  <span>
-                    {" "}
-                    &middot; <span className="text-green-400">{t("paidAt")}: {new Date(detailsModal.paid_at).toLocaleDateString()}</span>
-                  </span>
+                  <span> &middot; <span className="text-green-400">{t("paidAt")}: {new Date(detailsModal.paid_at).toLocaleDateString()}</span></span>
                 )}
                 {detailsModal.rejectedReason && (
-                  <span>
-                    {" "}
-                    &middot; <span className="text-red-400">{t("reason")}: {detailsModal.rejectedReason}</span>
-                  </span>
+                  <span> &middot; <span className="text-red-400">{t("reason")}: {detailsModal.rejectedReason}</span></span>
                 )}
                 {detailsModal.updatedAt && (
-                  <span>
-                    {" "}
-                    &middot; <span className="text-gray-300">{t("updatedAt")}: {new Date(detailsModal.updatedAt).toLocaleDateString()}</span>
-                  </span>
+                  <span> &middot; <span className="text-gray-300">{t("updatedAt")}: {new Date(detailsModal.updatedAt).toLocaleDateString()}</span></span>
                 )}
                 <br />
                 {t("bankName")}: <span className="text-[#81d742]">{detailsModal.bankName || "-"}</span> &nbsp; {t("iban")}:{" "}
                 <span className="text-[#81d742]">{detailsModal.iban || "-"}</span> &nbsp; {t("name")}:{" "}
                 <span className="text-[#81d742]">{detailsModal.realName || "-"}</span>
                 <br />
-                {detailsModal.status === "pending" && detailsModal.cancelUntil && (
+                {detailsModal.status === "pending" && detailsModal.lockAt && (
                   <span className="text-gray-400">
-                    {(t("cancelUntil") || "Cancel until")}: {new Date(detailsModal.cancelUntil).toLocaleString()}
+                    {(t("cancelUntil") || "Cancel until")}: {new Date(detailsModal.lockAt).toLocaleString()}
                   </span>
                 )}
                 <br />
@@ -672,33 +751,37 @@ export default function WalletPage() {
                 {detailsModal.platformPaidAt && <span> {t("at")} {new Date(detailsModal.platformPaidAt).toLocaleDateString()}</span>}
               </div>
 
-              {/* request bank edit (within 24h & not progressed) */}
-              {detailsModal.status === "pending" && detailsModal.canEditBank && (
-                <div className="mb-3 border border-[#2a2a2a] rounded p-2">
+              {/* request bank edit (only snapshot for this request) */}
+              {detailsModal.status === "pending" && (
+                <div className={`mb-3 border rounded p-2 ${detailsModal.canEditBank ? "border-[#2a2a2a]" : "border-[#3a2a2a]"}`}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-mono text-[#d1ffd0] font-bold">{t("updateBankForThisRequest") || "Update bank for this request"}</div>
-                    {!detailsModal.editing ? (
+                    <div className="text-sm font-mono text-[#d1ffd0] font-bold">
+                      {t("updateBankForThisRequest") || "Update bank for this request"}
+                    </div>
+                    {!detailsModal.editing && detailsModal.canEditBank && (
                       <button
                         className="text-xs font-mono text-blue-300 flex items-center gap-1 hover:underline"
                         onClick={() => setDetailsModal((m) => ({ ...m, editing: true, editError: "" }))}
                       >
                         <Pencil size={14} /> {t("edit") || "Edit"}
                       </button>
-                    ) : null}
+                    )}
                   </div>
-                  {detailsModal.editing && (
+
+                  {!detailsModal.canEditBank && (
+                    <div className="text-[11px] text-yellow-300 font-mono mb-2">
+                      {t("lockedUpdateWindowPassed")}
+                    </div>
+                  )}
+
+                  {detailsModal.editing && detailsModal.canEditBank && (
                     <div className="space-y-2">
                       <div className="grid grid-cols-1 gap-2">
                         <input
-                          className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
+                          className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono tracking-wider"
                           placeholder="TR00..."
                           value={detailsModal.editIban}
-                          onChange={(e) => {
-                            const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                            const trimmed = raw.slice(0, 26);
-                            const grouped = trimmed.replace(/(.{4})/g, "$1 ").trim();
-                            setDetailsModal((m) => ({ ...m, editIban: grouped }));
-                          }}
+                          onChange={(e) => setDetailsModal((m) => ({ ...m, editIban: formatIbanGroups(e.target.value) }))}
                           maxLength={34}
                         />
                         <input
@@ -732,7 +815,7 @@ export default function WalletPage() {
                               ...m,
                               editing: false,
                               editError: "",
-                              editIban: m.iban,
+                              editIban: formatIbanGroups(m.iban),
                               editBankName: m.bankName,
                               editRealName: m.realName,
                             }))
@@ -751,30 +834,33 @@ export default function WalletPage() {
                 <table className="w-full text-xs mb-2 font-mono">
                   <thead>
                     <tr className="text-gray-400 border-b border-[#232323]">
-                      <th>{t("orderId")}</th>
-                      <th>{t("product")}</th>
-                      <th>{t("amount")}</th>
-                      <th>{t("commission")}</th>
-                      <th>{t("quantity")}</th>
-                      <th>{t("date")}</th>
+                      <th className="text-left">{t("orderId")}</th>
+                      <th className="text-left">{t("product")}</th>
+                      <th className="text-right">{t("amount")}</th>
+                      <th className="text-right">{t("commission")}</th>
+                      <th className="text-right">
+                        {t("platform")} (%{detailsModal.platformCommissionPercent || platformCommissionPercent})
+                      </th>
+                      <th className="text-right">{t("quantity")}</th>
+                      <th className="text-right">{t("date")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(detailsModal.sales || []).map((sale) => (
                       <tr key={sale.saleId} className="border-b border-[#232323]">
-                        <td>{sale.orderId}</td>
-                        <td>{sale.product}</td>
-                        <td>₺{sale.amount}</td>
-                        <td style={{ color: COLOR_GREEN }}>₺{sale.commission}</td>
-                        <td>{sale.quantity}</td>
-                        <td>{sale.convertedAt}</td>
+                        <td className="text-left">{sale.orderId}</td>
+                        <td className="text-left">{sale.product}</td>
+                        <td className="text-right tabular-nums">₺{f2(sale.amount)}</td>
+                        <td className="text-right tabular-nums" style={{ color: COLOR_GREEN }}>₺{f2(sale.commission)}</td>
+                        <td className="text-right tabular-nums text-[#e3d67d]">₺{f2(sale.platformFee)}</td>
+                        <td className="text-right">{sale.quantity}</td>
+                        <td className="text-right">{sale.convertedAt}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Details pagination & export */}
               <div className="flex justify-between items-center mt-2">
                 <button
                   onClick={() => fetchDetails(detailsModal.requestId, detailsModal.page - 1)}
@@ -806,6 +892,7 @@ export default function WalletPage() {
       </main>
 
       <style jsx global>{`
+        .tabular-nums { font-variant-numeric: tabular-nums; }
         @media (max-width: 640px) {
           .flex.flex-col.md\\:flex-row.gap-5.md\\:gap-8.w-full {
             flex-direction: column !important;
@@ -821,3 +908,5 @@ export default function WalletPage() {
     </Layout>
   );
 }
+
+
