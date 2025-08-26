@@ -21,9 +21,9 @@ function getCookie(name) {
 }
 
 async function getCsrfToken() {
-  if (typeof window === "undefined") return ""; // SSR/Route handler'da isteme
+  if (typeof window === "undefined") return ""; // SSR'de isteme
 
-  // 1) Çerezden hızlı okuma (NextAuth her iki ismi de kullanabiliyor)
+  // 1) Çerezden hızlı okuma (NextAuth iki isim de kullanabiliyor)
   const cookieRaw =
     getCookie("__Host-next-auth.csrf-token") || getCookie("next-auth.csrf-token");
   if (cookieRaw) {
@@ -32,7 +32,7 @@ async function getCsrfToken() {
     return token;
   }
 
-  // 2) Cache taze ise onu ver
+  // 2) Cache tazeyse onu ver
   const fresh = _csrf.token && Date.now() - _csrf.ts < CSRF_TTL;
   if (fresh) return _csrf.token;
 
@@ -76,18 +76,16 @@ export async function apiFetch(input, init = {}) {
 
   // Body -> JSON (FormData ise dokunma)
   let body = init.body;
-  const isFormData =
-    typeof FormData !== "undefined" && body instanceof FormData;
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
 
   if (method === "GET" || method === "HEAD") {
     body = undefined; // safety
   } else if (body != null && typeof body !== "string" && !isFormData) {
-    if (!headers.has("Content-Type"))
-      headers.set("Content-Type", "application/json");
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     try {
       body = JSON.stringify(body);
     } catch {
-      // JSON.stringify patlarsa ham stringe düşme
+      // JSON.stringify patlarsa ham stringe düş
       body = String(body);
     }
   } else if (isFormData) {
@@ -126,13 +124,9 @@ export async function apiFetch(input, init = {}) {
     res = await exec();
   }
 
-  // 401/403 → doğru login’e yönlendir (opsiyonel kapatma bayrağı ile)
+  // 401/403 → uygun login sayfasına yönlendir (opsiyonel kapatma)
   const noAuthRedirect = !!init.noAuthRedirect;
-  if (
-    typeof window !== "undefined" &&
-    (res.status === 401 || res.status === 403) &&
-    !noAuthRedirect
-  ) {
+  if (typeof window !== "undefined" && (res.status === 401 || res.status === 403) && !noAuthRedirect) {
     const path = window.location?.pathname || "";
     const isMerchantArea =
       path.startsWith("/merchant") ||

@@ -197,6 +197,7 @@
   "markAsRead": "Okundu yap",
   "performance": "Performans",
   "home": "Ana sayfa",
+
   "performance.title": "Performans",
   "performance.product": "Ürün",
   "performance.start_date": "Başlangıç Tarihi",
@@ -221,6 +222,11 @@
   "performance.prev": "Önceki",
   "performance.next": "Sonraki",
   "performance.export_csv": "CSV Dışa Aktar",
+  "performance.chart_earnings": "Kazanç",
+  "performance.leaderboard": "Sıralama",
+  "performance.cr": "CR",
+  "performance.earnings": "Kazanç",
+
   "liveStats": "Canlı İşlem",
   "liveStatsDesc": "Son satış | tıklama ",
   "noRecentActivity": "Son işlem yok.",
@@ -420,5 +426,9 @@
 
   "Post Logs": "Webhook Kayıtları"
 
+
+
+
 }
+
 

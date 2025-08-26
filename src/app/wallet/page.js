@@ -1,28 +1,9 @@
-// src/app/wallet/page.jsx
 "use client";
-/**
- * Wallet & Payout UI (final prod)
- * Güvenlik:
- * - NextAuth session cookie: fetch'lerde credentials: "include" (apiFetch yapıyor)
- * - CSRF: tüm POST isteklerinde X-CSRF-Token header'ı apiFetch tarafından otomatik eklenir
- * - Idempotency: payout oluştururken x-idempotency-key
- * - Double-submit önleme: isSubmitting
- */
 import { useState, useEffect, useMemo } from "react";
 import Layout from "@/components/Layout";
 import {
-  Wallet2,
-  BarChart2,
-  Lock,
-  Banknote,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Save,
+  Wallet2, BarChart2, Lock, Banknote, Loader2, CheckCircle,
+  XCircle, X, ChevronLeft, ChevronRight, Pencil, Save,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
@@ -31,41 +12,38 @@ import apiFetch from "@/lib/apiFetch";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
+/* === IBAN doğrulama: TR + MOD97 (frontend, backend ile birebir) === */
+function isIbanTRClient(raw) {
+  if (!raw) return false;
+  const iban = String(raw).replace(/\s+/g, "").toUpperCase();
+  if (!/^TR\d{24}$/.test(iban)) return false;
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
+  const expanded = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
+  let remainder = 0;
+  for (let i = 0; i < expanded.length; i++) {
+    const d = expanded.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return false;
+    remainder = (remainder * 10 + d) % 97;
+  }
+  return remainder === 1;
+}
+function normalizeIban(raw) {
+  return String(raw || "").replace(/\s+/g, "").toUpperCase();
+}
+
 function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max, 0.0001)) * 100, 100);
-  const radius = 46,
-    stroke = 6,
-    center = 60,
-    circumference = 2 * Math.PI * radius;
+  const radius = 46, stroke = 6, center = 60, circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - percent / 100);
   return (
     <div className="relative w-[120px] h-[120px] flex items-center justify-center mb-2 select-none">
       <svg width={120} height={120} className="absolute left-0 top-0 z-0">
         <circle cx={center} cy={center} r={radius} fill="none" stroke="#232323" strokeWidth={stroke} />
-        <circle
-          cx={center}
-          cy={center}
-          r={radius}
-          fill="none"
-          stroke={COLOR_GREEN}
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 1s" }}
-        />
+        <circle cx={center} cy={center} r={radius} fill="none" stroke={COLOR_GREEN} strokeWidth={stroke}
+          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1s" }} />
       </svg>
-      <Wallet2
-        className="absolute"
-        style={{
-          color: COLOR_CABO,
-          width: 56,
-          height: 56,
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-        }}
-      />
+      <Wallet2 className="absolute" style={{ color: COLOR_CABO, width: 56, height: 56, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
     </div>
   );
 }
@@ -76,8 +54,7 @@ function exportToCSV(sales, date, t) {
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const header =
-    [t("orderId"), t("product"), t("amount"), t("commission"), t("quantity"), t("date")].join(",") + "\n";
+  const header = [t("orderId"), t("product"), t("amount"), t("commission"), t("quantity"), t("date")].join(",") + "\n";
   const rows = (Array.isArray(sales) ? sales : [])
     .map((s) => [s.orderId, s.product, s.amount, s.commission, s.quantity, s.convertedAt].map(esc).join(","))
     .join("\n");
@@ -110,33 +87,13 @@ export default function WalletPage() {
   const [history, setHistory] = useState([]);
   const [payoutState, setPayoutState] = useState({ status: "", message: "" });
 
-  // Details modal
   const [detailsModal, setDetailsModal] = useState({
-    open: false,
-    sales: [],
-    total: 0,
-    status: "",
-    date: "",
-    paid_at: null,
-    rejectedReason: "",
-    updatedAt: null,
-    bankName: "",
-    iban: "",
-    realName: "",
-    platform_paid: false,
-    platformPaidAt: null,
-    page: 1,
-    totalPages: 1,
-    requestId: null,
-    // edit bank for this request
-    canEditBank: false,
-    editIban: "",
-    editBankName: "",
-    editRealName: "",
-    editing: false,
-    editError: "",
-    editSaving: false,
-    cancelUntil: "", // info
+    open: false, sales: [], total: 0, status: "", date: "",
+    paid_at: null, rejectedReason: "", updatedAt: null,
+    bankName: "", iban: "", realName: "", platform_paid: false, platformPaidAt: null,
+    page: 1, totalPages: 1, requestId: null, canEditBank: false,
+    editIban: "", editBankName: "", editRealName: "", editing: false, editError: "", editSaving: false,
+    cancelUntil: "",
   });
 
   const [ibanMissing, setIbanMissing] = useState(true);
@@ -144,7 +101,6 @@ export default function WalletPage() {
   const [realNameMissing, setRealNameMissing] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Pagination
   const PAGE_SIZE = 4;
   const [page, setPage] = useState(1);
 
@@ -158,13 +114,7 @@ export default function WalletPage() {
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data && data.name) {
-            setUser((u) => ({
-              ...u,
-              name: data.name,
-              email: data.email,
-              userId: data.userId || data.id,
-              role: data.role,
-            }));
+            setUser((u) => ({ ...u, name: data.name, email: data.email, userId: data.userId || data.id, role: data.role }));
           }
         })
         .catch(() => {});
@@ -198,14 +148,10 @@ export default function WalletPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   };
-  useEffect(() => {
-    refreshData();
-  }, []);
+  useEffect(() => { refreshData(); }, []);
 
-  // client validations
   function validateIban(val) {
-    const s = String(val || "").replace(/\s+/g, "").toUpperCase();
-    return s.startsWith("TR") && s.length === 26;
+    return isIbanTRClient(val);
   }
   function validateRealName(val) {
     const s = String(val || "").trim();
@@ -214,11 +160,10 @@ export default function WalletPage() {
 
   async function handleIbanSave(e) {
     e.preventDefault();
-    setIbanError("");
-    setBankError("");
-    setRealNameError("");
+    setIbanError(""); setBankError(""); setRealNameError("");
 
-    if (!validateIban(iban)) {
+    const ibanNorm = normalizeIban(iban);
+    if (!validateIban(ibanNorm)) {
       setIbanError(t("invalidIban"));
       return;
     }
@@ -236,7 +181,7 @@ export default function WalletPage() {
       const res = await apiFetch("/api/wallet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: { iban, bankName, realName },
+        body: { iban: ibanNorm, bankName, realName },
       });
       if (res.ok) {
         setIbanSaved(true);
@@ -318,7 +263,6 @@ export default function WalletPage() {
       if (!res.ok) return;
       const data = await res.json();
 
-      // history üzerinden canEditBank & lockAt da al
       const hist = history.find((h) => h.requestId === requestId);
       setDetailsModal((modal) => ({
         ...modal,
@@ -334,40 +278,20 @@ export default function WalletPage() {
         cancelUntil: hist?.lockAt || "",
         editError: "",
       }));
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   };
 
   function openDetails(requestId) {
     if (!requestId) return;
     fetchDetails(requestId, 1);
   }
-
   function closeDetails() {
     setDetailsModal({
-      open: false,
-      sales: [],
-      total: 0,
-      status: "",
-      date: "",
-      paid_at: null,
-      rejectedReason: "",
-      updatedAt: null,
-      bankName: "",
-      iban: "",
-      realName: "",
-      platform_paid: false,
-      platformPaidAt: null,
-      page: 1,
-      totalPages: 1,
-      requestId: null,
-      canEditBank: false,
-      editIban: "",
-      editBankName: "",
-      editRealName: "",
-      editing: false,
-      editError: "",
+      open: false, sales: [], total: 0, status: "", date: "",
+      paid_at: null, rejectedReason: "", updatedAt: null,
+      bankName: "", iban: "", realName: "", platform_paid: false, platformPaidAt: null,
+      page: 1, totalPages: 1, requestId: null, canEditBank: false,
+      editIban: "", editBankName: "", editRealName: "", editing: false, editError: "", editSaving: false,
       cancelUntil: "",
     });
   }
@@ -375,7 +299,8 @@ export default function WalletPage() {
   async function handleUpdateRequestBank() {
     if (!detailsModal.requestId) return;
 
-    if (!/^TR\d{24}$/.test((detailsModal.editIban || "").replace(/\s+/g, "").toUpperCase())) {
+    const ibanNorm = normalizeIban(detailsModal.editIban);
+    if (!isIbanTRClient(ibanNorm)) {
       setDetailsModal((m) => ({ ...m, editError: t("invalidIban") }));
       return;
     }
@@ -397,7 +322,7 @@ export default function WalletPage() {
         body: {
           updateRequestBank: true,
           requestId: detailsModal.requestId,
-          iban: detailsModal.editIban,
+          iban: ibanNorm,
           bankName: detailsModal.editBankName,
           realName: detailsModal.editRealName,
         },
@@ -407,7 +332,7 @@ export default function WalletPage() {
         setDetailsModal((m) => ({
           ...m,
           bankName: m.editBankName,
-          iban: m.editIban,
+          iban: ibanNorm,
           realName: m.editRealName,
           editSaving: false,
           editing: false,
@@ -422,20 +347,14 @@ export default function WalletPage() {
     }
   }
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)),
-    [history.length]
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)), [history.length]);
   let paginatedHistory = history.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   if (paginatedHistory.length < PAGE_SIZE) {
     paginatedHistory = [...paginatedHistory, ...Array(PAGE_SIZE - paginatedHistory.length).fill(null)];
   }
-  useEffect(() => {
-    if (page > totalPages && totalPages > 0) setPage(totalPages);
-  }, [history, totalPages, page]);
+  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(totalPages); }, [history, totalPages, page]);
 
-  const payoutDisabled =
-    loading || confirmed < minPayout || ibanMissing || bankMissing || realNameMissing || isSubmitting;
+  const payoutDisabled = loading || confirmed < minPayout || ibanMissing || bankMissing || realNameMissing || isSubmitting;
 
   return (
     <Layout>
@@ -529,16 +448,22 @@ export default function WalletPage() {
             <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
               {t("paymentDetails")}
             </div>
-            <form className="w-full" onSubmit={handleIbanSave}>
+            {/* native validation kapalı: noValidate */}
+            <form className="w-full" onSubmit={handleIbanSave} noValidate>
               <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("iban")}</label>
               <input
                 type="text"
                 className={`bg-[#161616] border ${ibanError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
                 placeholder="TR00 0000 0000 0000 0000 0000 00"
                 value={iban}
-                onChange={(e) => setIban(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                  const trimmed = raw.slice(0, 26);                  // gerçek IBAN uzunluğu
+                  const grouped = trimmed.replace(/(.{4})/g, "$1 ").trim();
+                  setIban(grouped);
+                }}
                 required
-                maxLength={26}
+                maxLength={34} // boşluk payı
                 autoComplete="off"
                 inputMode="text"
               />
@@ -768,8 +693,13 @@ export default function WalletPage() {
                           className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
                           placeholder="TR00..."
                           value={detailsModal.editIban}
-                          onChange={(e) => setDetailsModal((m) => ({ ...m, editIban: e.target.value.toUpperCase() }))}
-                          maxLength={26}
+                          onChange={(e) => {
+                            const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                            const trimmed = raw.slice(0, 26);
+                            const grouped = trimmed.replace(/(.{4})/g, "$1 ").trim();
+                            setDetailsModal((m) => ({ ...m, editIban: grouped }));
+                          }}
+                          maxLength={34}
                         />
                         <input
                           className="bg-[#161616] border border-[#222] rounded px-3 py-2 text-white text-xs font-mono"
@@ -802,7 +732,6 @@ export default function WalletPage() {
                               ...m,
                               editing: false,
                               editError: "",
-                              // revert edits to snapshot
                               editIban: m.iban,
                               editBankName: m.bankName,
                               editRealName: m.realName,

@@ -390,6 +390,10 @@
   "performance.prev": "Previous",
   "performance.next": "Next",
   "performance.export_csv": "Export CSV",
+  "performance.chart_earnings": "Earnings",
+  "performance.leaderboard": "Leaderboard",
+  "performance.cr": "CR",
+  "performance.earnings": "Earnings",
 
 
   "minLabel": "min",

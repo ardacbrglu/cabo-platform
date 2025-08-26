@@ -1,11 +1,22 @@
-// app/mylinks/page.js
+// src/app/mylinks/page.js
 "use client";
+
+/**
+ * File: src/app/mylinks/page.js
+ * Purpose: Affiliate “My Links” list — shows user’s visible, non-expired links as cards
+ * Security Docblock (Frontend):
+ * - Tüm istekler tek apiFetch wrapper’ı ile (credentials: 'include', X-Requested-With, X-Request-Id).
+ * - Mutasyonlar backend’de RBAC + rate-limit + Origin/Referer doğrulaması altında.
+ * - Custom CSRF/JWT yok; NextAuth kullanılır.
+ * - UI: Spotify/Soundcloud koyu temaya uyumlu; kart tasarımı korunur.
+ */
 
 import { useEffect, useState } from "react";
 import Layout from "@/components/Layout";
-import { Link2, ShoppingCart, BarChart2, Copy, X, RotateCcw } from "lucide-react";
+import { Link2, ShoppingCart, BarChart2, Copy, X, RotateCcw, Ban } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
+import { apiFetch } from "@/lib/apiFetch";
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 function handleImgError(e) { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }
@@ -36,6 +47,12 @@ function getExpiresBadge(link, t) {
   );
 }
 
+// 👇 tek satırla yeniden kullanılabilir hover/kalkma efekti
+const CARD_HOVER =
+  "will-change-transform transition-all duration-200 ease-out " +
+  "motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-[0_12px_28px_rgba(0,0,0,.35)] " +
+  "hover:border-[#2e2e2e]";
+
 export default function MyLinksPage() {
   const [links, setLinks] = useState([]);
   const [copiedToken, setCopiedToken] = useState(null);
@@ -46,22 +63,21 @@ export default function MyLinksPage() {
   const { user, setUser } = useUser();
   const { t } = useTranslation();
 
-  // Kullanıcı bilgisi
+  // Kullanıcı bilgisi (navbar senkron)
   useEffect(() => {
     if (!user?.name) {
-      fetch("/api/me", { cache: "no-store", credentials: "include" })
+      apiFetch("/api/me")
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (data && data.name) {
-            setUser((u) => ({
-              ...u,
-              name: data.name,
-              email: data.email,
-              userId: data.userId,
-              role: data.role,
-              currencyCode: data.currencyCode || "TRY",
-            }));
-          }
+          if (!data) return;
+          setUser((u) => ({
+            ...(u || {}),
+            name: data.name,
+            email: data.email,
+            userId: data.userId,
+            role: data.role,
+            currencyCode: data.currencyCode || "TRY",
+          }));
         })
         .catch(() => {});
     }
@@ -71,7 +87,7 @@ export default function MyLinksPage() {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    fetch("/api/mylinks", { cache: "no-store", credentials: "include" })
+    apiFetch("/api/mylinks", { method: "GET", cache: "no-store" })
       .then((res) => (res.ok ? res.json() : { links: [] }))
       .then((data) => { if (alive) setLinks(Array.isArray(data.links) ? data.links : []); })
       .catch(() => { if (alive) setLinks([]); })
@@ -82,11 +98,11 @@ export default function MyLinksPage() {
   const doRefresh = () => setReloadKey((k) => k + 1);
 
   const copyLink = (token) => {
-    const full = `${window.location.origin}/ref/${token}`;
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const full = `${origin}/ref/${token}`;
     if (navigator?.clipboard?.writeText) {
       navigator.clipboard.writeText(full).catch(() => {});
     } else {
-      // Fallback
       const ta = document.createElement("textarea");
       ta.value = full;
       document.body.appendChild(ta);
@@ -100,28 +116,18 @@ export default function MyLinksPage() {
 
   const removeLink = async (token) => {
     try {
-      const res = await fetch("/api/mylinks", {
+      const res = await apiFetch("/api/mylinks", {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest", // same-origin AJAX şartı
-        },
-        body: JSON.stringify({ token }),
+        body: { token },
       });
-
       if (res.ok) {
         setRemovingTokens((prev) => [...prev, token]);
         setTimeout(() => {
-          setLinks((prev) => prev.filter((link) => link.token !== token));
+          setLinks((prev) => prev.filter((l) => l.token !== token));
           setRemovingTokens((prev) => prev.filter((t) => t !== token));
         }, 300);
-      } else {
-        console.warn("Failed to hide link:", await res.text());
       }
-    } catch (err) {
-      console.error("Failed to hide link:", err);
-    }
+    } catch {}
   };
 
   return (
@@ -137,157 +143,144 @@ export default function MyLinksPage() {
           </h1>
         </div>
         <p className="mt-4 text-base md:text-lg text-gray-200 font-mono font-medium opacity-90 text-center max-w-2xl">
-          {t("myLinksSubtitle") || "Here are your claimed affiliate links with real-time stats."}
+          {t("myLinksSubtitle")}
         </p>
 
         {/* Refresh */}
         <button
           onClick={doRefresh}
           className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] text-[#caffb6] hover:bg-[#222] transition disabled:opacity-60"
-          title="Refresh"
+          title={t("postlogs.refresh")}
           type="button"
           disabled={loading}
         >
           <RotateCcw size={18} className={loading ? "animate-spin" : ""} />
-          <span className="text-sm">{loading ? (t("processing") || "Processing...") : "Refresh"}</span>
+          <span className="text-sm">{loading ? t("processing") : t("postlogs.refresh")}</span>
         </button>
       </div>
 
       <div className="w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1">
         {(!links || links.length === 0) && !loading ? (
           <div className="text-center text-gray-400 font-mono text-lg py-24">
-            {t("myLinksEmpty") || "You haven't claimed any links yet."}
+            {t("myLinksEmpty")}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-9 gap-x-6 md:gap-x-8">
             {links.map((link) => {
               const isRemoving = removingTokens.includes(link.token);
+              const p = link.product || null;
 
               // Ürün tamamen kaldırılmışsa
-              if (!link.product) {
+              if (!p) {
                 return (
                   <div
                     key={link.token}
-                    className={`bg-[#181818] border border-[#872222] rounded-xl shadow-md p-6 flex flex-col justify-between transition-all duration-300 ease-in-out ${
-                      isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""
-                    }`}
+                    className={`cabo-link-card bg-[#181818] border border-[#872222] rounded-xl shadow-md p-6 flex flex-col justify-between ${CARD_HOVER} transition-all duration-300 ease-in-out ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
                   >
                     <div className="text-red-400 font-bold mb-2">
-                      {t("myLinksRemoved") || "This product is no longer available."}
+                      {t("myLinksRemoved")}
                     </div>
                     <button
                       onClick={() => removeLink(link.token)}
                       className="mt-4 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
                     >
-                      <X size={14} /> {t("removeFromDashboard") || "Remove from dashboard"}
+                      <X size={14} /> {t("removeFromDashboard")}
                     </button>
                   </div>
                 );
               }
 
-              // Ürün aktif değilse / kota doluysa
-              if (link.product.isActive === false) {
-                return (
-                  <div
-                    key={link.token}
-                    className={`bg-[#232016] border border-[#876d0f] rounded-xl shadow-md p-6 flex flex-col justify-between opacity-70 transition-all duration-300 ease-in-out ${
-                      isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""
-                    }`}
-                  >
-                    <div className="font-bold text-yellow-400 mb-2">
-                      {t("productInactiveOrQuota") || "This product is now inactive or sales quota reached."}
-                    </div>
-                    <div className="text-gray-400 font-mono mb-2">
-                      {t("productNoCommission") || "You can't earn commission on this link anymore."}
-                    </div>
-                    <button
-                      onClick={() => removeLink(link.token)}
-                      className="mt-2 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
-                    >
-                      <X size={14} /> {t("removeFromDashboard") || "Remove from dashboard"}
-                    </button>
-                  </div>
-                );
-              }
+              // Alan uyumluluğu (API hem camel hem snake döndürüyor; yine de tedbir)
+              const imgSrc = p.imageUrl || p.image_url || PLACEHOLDER;
+              const remaining = (p.remainingSales ?? p.remaining_sales ?? null);
+              const quotaReached = typeof remaining === "number" && remaining <= 0;
+              const earnPerSale = (((p.price || 0) * (p.commissionRate || 0)) / 100).toFixed(2);
 
-              // Aktif ürün kartı
+              // Aktif / inaktif ürün kartı
               return (
                 <div
                   key={link.linkId}
-                  className={`bg-[#181818] border border-[#272727] rounded-xl shadow-md px-4 py-5 sm:p-6 flex flex-col justify-between transition-all duration-300 ease-in-out hover:shadow-lg ${
-                    isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""
-                  }`}
+                  className={`cabo-link-card relative bg-[#181818] border border-[#272727] rounded-xl shadow-md px-4 py-5 sm:p-6 flex flex-col justify-between ${CARD_HOVER} transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
                   style={{ maxWidth: "420px", width: "100%", margin: "0 auto" }}
                 >
+                  {(p.isActive === false || quotaReached) && (
+                    <div className="absolute left-4 -top-3">
+                      <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs ${p.isActive === false ? "bg-red-700/90 text-white" : "bg-yellow-700/90 text-white"}`}>
+                        <Ban size={13} />
+                        {p.isActive === false ? t("inactive") : t("quotaReached")}
+                      </span>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-4 mb-4">
                     <div className="w-16 h-16 bg-[#22262a] rounded-lg overflow-hidden border border-[#2a2e31] flex items-center justify-center">
                       <img
-                        src={link.product.image_url || PLACEHOLDER}
-                        alt={link.product.name}
+                        src={imgSrc}
+                        alt={p.name}
                         className="object-cover w-full h-full"
                         onError={handleImgError}
                       />
                     </div>
                     <div>
                       <div className="text-gray-100 font-bold text-lg flex items-center">
-                        {link.product.name}
+                        {p.name}
                         {getExpiresBadge(link, t)}
                       </div>
                       <div className="text-gray-400 text-sm font-mono mt-1">
-                        {link.product.description?.substring(0, 60)}
+                        {(p.description || "").slice(0, 60)}
                       </div>
                     </div>
                   </div>
 
                   <div className="text-sm font-mono text-gray-300 mb-1">
-                    <span className="text-gray-500">{t("productEarn") || "Earnings per sale"}:</span>{" "}
+                    <span className="text-gray-500">{t("productEarn")}:</span>{" "}
                     <span className="text-[#81d742] font-bold">
-                      {getCurrencySymbol(user?.currencyCode || "TRY")}
-                      {(((link.product.price || 20) * (link.product.commissionRate || 0)) / 100).toFixed(2)}
+                      {getCurrencySymbol(user?.currencyCode || "TRY")}{earnPerSale}
                     </span>
                   </div>
 
                   <div className="text-xs font-mono text-gray-500 mb-2 flex flex-row items-center gap-3">
                     <span>
                       <ShoppingCart size={13} className="inline mr-1" /> <b>{link.user_sales_count}</b>{" "}
-                      {t("productPurchases") || "purchases"}
+                      {t("productPurchases")}
                     </span>
                     <span>
                       <BarChart2 size={13} className="inline mr-1" /> <b>{link.user_click_count}</b>{" "}
-                      {t("productClicks") || "clicks"}
+                      {t("productClicks")}
                     </span>
                   </div>
 
                   <div className="text-xs font-mono text-gray-500 mb-2">
-                    {t("productYourTotalEarnings") || "Your earnings:"}{" "}
+                    {t("productYourTotalEarnings")}:{" "}
                     <b>
                       {getCurrencySymbol(user?.currencyCode || "TRY")}
-                      {link.user_earnings.toFixed(2)}
+                      {Number(link.user_earnings || 0).toFixed(2)}
                     </b>
                   </div>
 
                   {/* Kalan komisyon hakkı */}
-                  <div className="text-xs font-mono text-[#81d742] mb-2">
-                    {typeof link.product.remaining_sales === "number" && link.product.remaining_sales > 0 ? (
-                      <span>
-                        {t("productCanEarn")} <b>{link.product.remaining_sales}</b> {t("productMoreCommission")}
-                        {link.product.remaining_sales > 1 ? "s" : ""}!
-                      </span>
-                    ) : (
-                      <span className="text-red-400">
-                        {t("productNoMoreCommission") || "No more commission available for this product."}
-                      </span>
-                    )}
+                  <div className="text-xs font-mono mb-2">
+                    {typeof remaining === "number" ? (
+                      remaining > 0 ? (
+                        <span className="text-[#81d742]">
+                          {t("productCanEarn")} <b>{remaining}</b> {t("productMoreCommission")}
+                        </span>
+                      ) : (
+                        <span className="text-red-400">
+                          {t("productNoMoreCommission")}
+                        </span>
+                      )
+                    ) : null}
                   </div>
 
                   {/* Kopyalanabilir link */}
-                  <div className="bg-[#232323] px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-2 00 text-sm border border-[#2c2c2c]">
+                  <div className="bg-[#232323] px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-200 text-sm border border-[#2c2c2c]">
                     <span className="truncate">
-                      {typeof window !== "undefined" ? window.location.origin : ""}/ref/{link.token}
+                      {(typeof window !== "undefined" ? window.location.origin : "")}/ref/{link.token}
                     </span>
                     <button onClick={() => copyLink(link.token)} className="text-gray-400 hover:text-white transition">
                       {copiedToken === link.token ? (
-                        <span className="text-green-400 font-mono text-xs">{t("copied") || "Copied!"}</span>
+                        <span className="text-green-400 font-mono text-xs">{t("copied")}</span>
                       ) : (
                         <Copy size={16} />
                       )}
@@ -298,7 +291,7 @@ export default function MyLinksPage() {
                     onClick={() => removeLink(link.token)}
                     className="mt-4 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
                   >
-                    <X size={14} /> {t("removeFromDashboard") || "Remove from dashboard"}
+                    <X size={14} /> {t("removeFromDashboard")}
                   </button>
                 </div>
               );
@@ -308,6 +301,7 @@ export default function MyLinksPage() {
       </div>
 
       <style jsx global>{`
+        /* Mobile spacing tweaks */
         @media (max-width: 640px) {
           .grid {
             gap-y: 20px !important;
@@ -316,6 +310,17 @@ export default function MyLinksPage() {
           }
           .flex.flex-col.items-center.mt-12.mb-6.px-2.sm\\:px-0 {
             margin-bottom: 28px !important;
+          }
+        }
+        /* Hareketi istemeyen kullanıcılar için kapat */
+        @media (prefers-reduced-motion: reduce) {
+          .cabo-link-card {
+            transition: none !important;
+            transform: none !important;
+          }
+          .cabo-link-card:hover {
+            transform: none !important;
+            box-shadow: none !important;
           }
         }
       `}</style>

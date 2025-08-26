@@ -1,3 +1,4 @@
+// src/app/api/mylinks/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -56,7 +57,6 @@ export async function GET(req) {
   } catch {
     return json({ error: "bad_request" }, { status: 400 });
   }
-  // opsiyonel: request id doğrulama (zorunlu değil)
   try { requireRequestId(req); } catch {}
 
   // Auth + RBAC (only affiliate)
@@ -121,17 +121,21 @@ export async function GET(req) {
         if (p && typeof p.maxSalesLimit === "number" && typeof p.totalPurchases === "number") {
           remainingSales = Math.max(0, p.maxSalesLimit - p.totalPurchases);
         }
-        const maybeClosed = p
-          ? await checkAndDeactivateProduct({
-              ...p,
-              // checkAndDeactivateProduct beklediği alanlar zaten camelCase
-            })
+        const maybeClosed = p ? await checkAndDeactivateProduct({ ...p }) : null;
+
+        const prod = maybeClosed || p || null;
+
+        // Geriye uyum için alias’lar (snake_case)
+        const productWithAliases = prod
+          ? {
+              ...prod,
+              remainingSales,
+              remaining_sales: remainingSales,
+              image_url: prod.imageUrl,
+            }
           : null;
 
-        return {
-          ...link,
-          product: maybeClosed ? { ...p, ...maybeClosed, remainingSales } : p ? { ...p, remainingSales } : null,
-        };
+        return { ...link, product: productWithAliases };
       })
     );
 
@@ -154,9 +158,6 @@ export async function GET(req) {
       })
     );
 
-    // ── GERİYE UYUMLU ŞEKİL ──
-    // Eski frontend { links: [...] } bekliyordu → onu koruyoruz.
-    // (Ürün alanları camelCase; istersen eski snake_case alias’larını ekleyebiliriz.)
     audit({ evt: "mylinks.list.ok", who: userId });
     return json({ links: enriched }, { status: 200 });
   } catch (err) {
@@ -167,7 +168,6 @@ export async function GET(req) {
 
 /* ───────────── POST (hide) ───────────── */
 export async function POST(req) {
-  // CSRF yok; same-origin zorunluluğu
   try {
     requireOrigin(req);
     requireAjax(req);
