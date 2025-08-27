@@ -75,12 +75,24 @@ const bodySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(50).default(10),
 });
 
+/** ✅ DB'deki hem yüzde (12) hem oran (0.12) anahtarlarını destekler. */
 async function getPlatformCommissionPercent() {
-  const cfg = await prisma.platformConfig.findUnique({
-    where: { keyName: "platform_commission_percent" },
-  });
-  const n = cfg ? Number(cfg.value) : NaN;
-  return Number.isFinite(n) && n >= 0 ? n : 10;
+  const keys = [
+    "platform_commission_percent", // 12 => yüzde
+    "platform_commission_rate",    // 0.12 => oran
+    "platform_commission",         // olası legacy
+    "platformFeePercent",          // olası legacy
+  ];
+  for (const keyName of keys) {
+    const row = await prisma.platformConfig.findUnique({ where: { keyName } });
+    if (!row?.value) continue;
+    const num = Number(row.value);
+    if (!Number.isFinite(num) || num < 0) continue;
+    const pct = num <= 1 ? num * 100 : num;          // 0.12 → 12
+    const fixed = Math.round(pct * 100) / 100;       // 2 ondalık
+    if (fixed >= 0 && fixed <= 1000) return fixed;   // makul aralık
+  }
+  return 10; // fallback
 }
 
 export async function POST(req) {

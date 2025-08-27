@@ -67,12 +67,25 @@ async function getMinPayout() {
   }
   return 100;
 }
+
+/** ✅ DB'deki hem yüzde (12) hem oran (0.12) anahtarlarını destekler. */
 async function getPlatformCommissionPercent() {
-  const cfg = await prisma.platformConfig.findUnique({
-    where: { keyName: "platform_commission_percent" },
-  });
-  const n = cfg ? Number(cfg.value) : NaN;
-  return Number.isFinite(n) && n >= 0 ? n : 10;
+  const keys = [
+    "platform_commission_percent", // 12 => yüzde
+    "platform_commission_rate",    // 0.12 => oran
+    "platform_commission",         // olası legacy
+    "platformFeePercent",          // olası legacy
+  ];
+  for (const keyName of keys) {
+    const row = await prisma.platformConfig.findUnique({ where: { keyName } });
+    if (!row?.value) continue;
+    const num = Number(row.value);
+    if (!Number.isFinite(num) || num < 0) continue;
+    const pct = num <= 1 ? num * 100 : num;          // 0.12 → 12
+    const fixed = Math.round(pct * 100) / 100;       // 2 ondalık
+    if (fixed >= 0 && fixed <= 1000) return fixed;   // makul aralık
+  }
+  return 10; // fallback
 }
 
 async function getAuthedUser(req) {
@@ -114,8 +127,6 @@ export async function GET(req) {
     if (!statusRow || statusRow.status !== "active") {
       return secureJson({ error: "Account is not active." }, { status: 403 }, req);
     }
-
-    // NOT: Artık zaman aşımı ile otomatik "approved" TERFİSİ YOK.
 
     const [minPayout, platformCommissionPercent] = await Promise.all([
       getMinPayout(),
