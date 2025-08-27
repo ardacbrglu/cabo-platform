@@ -1,3 +1,4 @@
+// /app/api/payout_request_details/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -22,7 +23,8 @@ import applyApiSecurityHeaders from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import {
   payoutRequestIdSchema,
-  updateRequestBankSchema, // sadece bu request için snapshot güncellemesi
+  updateRequestBankSchema,
+  normalizeIban, // import edilip snapshot yazarken tutarlı kalalım
 } from "@/lib/validation";
 
 const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -153,7 +155,12 @@ export async function POST(req) {
 
       await prisma.payoutRequest.update({
         where: { requestId },
-        data: { bankName, iban, realUserFullname: realName, updatedAt: new Date() },
+        data: {
+          bankName,
+          iban: normalizeIban(iban),
+          realUserFullname: realName,
+          updatedAt: new Date(),
+        },
       });
       await prisma.payoutRequestLog.create({
         data: {

@@ -1,3 +1,4 @@
+// /app/api/wallet/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -22,7 +23,7 @@ import { z } from "zod";
 import { cookies } from "next/headers";
 import applyApiSecurityHeaders from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
-import { isIbanTR, bankInfoSchema, payoutRequestIdSchema } from "@/lib/validation";
+import { isIbanTR, normalizeIban, bankInfoSchema, payoutRequestIdSchema } from "@/lib/validation";
 
 const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TX_OPTS = { maxWait: 7000, timeout: 20000 };
@@ -38,12 +39,6 @@ function secureJson(data, init = {}, req) {
 const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 const cleanBankName = (s) => String(s || "").trim().slice(0, 120);
 const cleanRealName = (s) => String(s || "").trim().replace(/\s+/g, " ").slice(0, 120);
-
-/** IBAN'ı agresif şekilde temizle: tüm alfasayısal olmayan karakterleri at */
-const normalizeIban = (s) =>
-  String(s || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
 
 function readCsrfCookieValue() {
   const store = cookies();
@@ -171,7 +166,7 @@ export async function GET(req) {
     );
 
     const balance = confirmed + pending;
-    const iban = statusRow.iban || "";
+    const iban = normalizeIban(statusRow.iban || ""); // normalize ederek döndür
     const bankName = statusRow.bankName || "";
     const realName = statusRow.realUserFullname || "";
 
@@ -308,7 +303,6 @@ export async function POST(req) {
       !("cancelRequest" in raw) &&
       !("deleteRequest" in raw)
     ) {
-      // server-side extra normalize (invisible chars vb.)
       if (typeof raw.iban === "string") raw.iban = normalizeIban(raw.iban);
 
       const parsed = bankInfoSchema.safeParse(raw);
@@ -413,7 +407,6 @@ export async function POST(req) {
               amountTotal: totalAmount,
               status: "pending",
 
-              // snapshot: users tablosundan
               bankName,
               iban,
               realUserFullname: realName,

@@ -1,3 +1,4 @@
+// /lib/validation.js
 // Server-only input validation & sanitization helpers (prod-ready)
 import "server-only";
 import { z } from "zod";
@@ -5,7 +6,6 @@ import sanitizeHtmlLib from "sanitize-html";
 
 /* ───────── Sanitize helpers ───────── */
 
-/** HTML'i temizler, görünmez/BiDi kontrol karakterlerini atar, NFKC normalize eder. */
 export function sanitizeText(input) {
   const raw = String(input ?? "");
   const stripped = sanitizeHtmlLib(raw, { allowedTags: [], allowedAttributes: {} });
@@ -18,15 +18,17 @@ export function sanitizeText(input) {
   return noInvisible.normalize("NFKC").trim();
 }
 
-// okunurluk için alias
 export const sanitizeHtml = sanitizeText;
 
-/** TR IBAN için: tüm unicode boşluk/sepatörleri normal boşluğa çevir, sonra alfasayısal dışını at, uppercase. */
+/** TR IBAN normalize: görünmezleri at, A-Z0-9'a indir, TR ise 26 haneye kes */
 export function normalizeIban(v) {
-  return String(v ?? "")
+  const raw = String(v ?? "")
     .toUpperCase()
-    .replace(/[\u00A0\u1680\u180E\u2000-\u200F\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]/g, " ")
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u0000-\u001F\u007F]/g, "")
     .replace(/[^A-Z0-9]/g, "");
+  if (raw.startsWith("TR") && raw.length > 26) return raw.slice(0, 26);
+  return raw;
 }
 
 export function normalizeRealName(v) {
@@ -43,7 +45,6 @@ export function isIbanTR(ibanRaw) {
   const iban = normalizeIban(ibanRaw);
   if (!/^TR\d{24}$/.test(iban)) return false;
 
-  // İlk 4 karakteri sona taşı, A=10..Z=35'e çevir, mod 97 akış hesapla
   const rearranged = iban.slice(4) + iban.slice(0, 4);
   const expanded = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
 
