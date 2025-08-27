@@ -12,7 +12,7 @@ import { useState, useEffect, useMemo } from "react";
 import Layout from "@/components/Layout";
 import {
   Wallet2, BarChart2, Lock, Banknote, Loader2, CheckCircle,
-  XCircle, X, ChevronLeft, ChevronRight, Pencil, Save,
+  XCircle, X, ChevronLeft, ChevronRight, Pencil, Save, Trash2, FileText
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
@@ -393,7 +393,6 @@ export default function WalletPage() {
     }
   }
 
-
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)),
     [history.length]
@@ -480,31 +479,33 @@ export default function WalletPage() {
               )}
             </div>
 
-            {/* MOBİL: buton tam genişlik değil; hizalı & hoş bir max genişlik */}
-            <button
-              className={`mt-4 w-[92%] sm:w-full max-w-[360px] mx-auto py-2 rounded font-bold font-mono text-[#181818] ${
-                payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
-              } text-base mb-1`}
-              style={{ fontSize: "1.05rem" }}
-              disabled={payoutDisabled}
-              onClick={handleRequestPayout}
-              aria-disabled={payoutDisabled}
-            >
-              {loading ? (
-                <Loader2 className="animate-spin" size={18} />
-              ) : payoutDisabled ? (
-                <span className="flex items-center justify-center gap-1">
-                  <Lock size={17} className="mr-1" />
-                  {disabledReason === "bank" && t("walletRequirements")}
-                  {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
-                  {disabledReason === "min" && t("minThresholdNotMet")}
-                </span>
-              ) : (
-                <span className="flex items-center justify-center gap-1">
-                  <Banknote size={18} className="mr-1" /> {t("requestPayout")}
-                </span>
-              )}
-            </button>
+            {/* MOBİL: buton tam ortalı ve simetrik */}
+            <div className="w-full flex justify-center">
+              <button
+                className={`mt-4 w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono text-[#181818] ${
+                  payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
+                } text-base mb-1`}
+                style={{ fontSize: "1.05rem" }}
+                disabled={payoutDisabled}
+                onClick={handleRequestPayout}
+                aria-disabled={payoutDisabled}
+              >
+                {loading ? (
+                  <Loader2 className="animate-spin" size={18} />
+                ) : payoutDisabled ? (
+                  <span className="flex items-center justify-center gap-1">
+                    <Lock size={17} className="mr-1" />
+                    {disabledReason === "bank" && t("walletRequirements")}
+                    {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
+                    {disabledReason === "min" && t("minThresholdNotMet")}
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-1">
+                    <Banknote size={18} className="mr-1" /> {t("requestPayout")}
+                  </span>
+                )}
+              </button>
+            </div>
 
             {payoutState.status === "success" && (
               <div className="flex items-center gap-1 mt-2 text-green-400 text-xs font-bold font-mono">
@@ -578,14 +579,16 @@ export default function WalletPage() {
               />
               {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
 
-              {/* MOBİL: kaydet butonu da daha dar ve ortalı */}
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className={`w-[92%] sm:w-full max-w-[360px] mx-auto py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
-              >
-                {ibanSaved ? t("saved") : t("saveBankInfo")}
-              </button>
+              {/* MOBİL: kaydet butonu da tam ortalı ve simetrik */}
+              <div className="w-full flex justify-center">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className={`w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
+                >
+                  {ibanSaved ? t("saved") : t("saveBankInfo")}
+                </button>
+              </div>
             </form>
             <div className="mt-3 text-[11px] sm:text-xs text-gray-400 font-mono text-center leading-snug">
               {t("bankInfoNote")}
@@ -602,14 +605,14 @@ export default function WalletPage() {
             </span>
           </div>
 
-          {/* MOBİL: yatay taşmayı tamamen engelle — method+bank sütunları mobilde gizli, metinler kısalır */}
+          {/* MOBİL: yatay taşmayı tamamen engelle — method+bank sütunları mobilde gizli, paddings/pill küçüldü */}
           <div className="w-full overflow-x-hidden">
-            <table className="w-full text-xs font-mono text-left table-fixed md:table-auto">
+            <table className="w-full text-[11px] sm:text-xs font-mono text-left table-fixed md:table-auto">
               <thead>
                 <tr className="text-gray-400 border-b border-[#232323]">
-                  <th className="py-2 px-2 md:px-3 w-[34%] md:w-auto">{t("date")}</th>
+                  <th className="py-2 px-2 md:px-3 w-[30%] md:w-auto">{t("date")}</th>
                   <th className="py-2 px-2 md:px-3 text-right w-[22%] md:w-auto">{t("amount")}</th>
-                  <th className="py-2 px-2 md:px-3 w-[28%] md:w-auto">{t("status")}</th>
+                  <th className="py-2 px-2 md:px-3 w-[32%] md:w-auto">{t("status")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("method")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("bank")}</th>
                   <th className="py-2 px-2 md:px-3 w-[16%] md:w-auto"></th>
@@ -632,7 +635,7 @@ export default function WalletPage() {
                         </td>
                         <td className="py-2 px-2 md:px-3">
                           <span
-                            className={`inline-block align-middle font-bold px-2 py-1 rounded whitespace-nowrap ${
+                            className={`inline-block align-middle font-bold px-1.5 py-0.5 rounded whitespace-nowrap leading-tight ${
                               item.status === "paid"
                                 ? "bg-green-900/60 text-[#81d742]"
                                 : item.status === "rejected"
@@ -645,12 +648,12 @@ export default function WalletPage() {
                             {t(item.status)}
                           </span>
                           {item.status === "pending" && item.lockAt && (
-                            <span className="ml-2 text-gray-400 font-mono text-[11px] hidden sm:inline">
+                            <span className="ml-2 text-gray-400 font-mono text-[10px] hidden sm:inline">
                               {(t("cancelUntil") || "Cancel until")}: {new Date(item.lockAt).toLocaleString()}
                             </span>
                           )}
                           {item.status === "pending" && !item.canCancel && (
-                            <span className="ml-2 text-yellow-400 text-[11px] font-mono hidden sm:inline">
+                            <span className="ml-2 text-yellow-400 text-[10px] font-mono hidden sm:inline">
                               {(t("locked") || "Locked")}
                             </span>
                           )}
@@ -662,25 +665,33 @@ export default function WalletPage() {
                             <button
                               onClick={() => handleCancelRequest(item.requestId)}
                               disabled={isSubmitting}
-                              className="text-red-500 hover:bg-red-900/30 rounded px-2 py-1 transition text-xs font-mono disabled:opacity-50"
+                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50"
+                              title={t("cancel")}
                             >
-                              {t("cancel")}
+                              <X size={14} className="sm:mr-1" />
+                              <span className="hidden sm:inline">{t("cancel")}</span>
+                              <span className="sm:hidden">İptal</span>
                             </button>
                           )}
                           {item.status === "rejected" && item.requestId && item.canDelete && (
                             <button
                               onClick={() => handleDeleteRequest(item.requestId)}
-                              className="text-red-400 hover:bg-red-900/30 rounded px-2 py-1 transition text-xs font-mono"
+                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-400 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono"
                               title={t("delete")}
                             >
-                              {t("delete")}
+                              <Trash2 size={14} className="sm:mr-1" />
+                              <span className="hidden sm:inline">{t("delete")}</span>
+                              <span className="sm:hidden">Sil</span>
                             </button>
                           )}
                           <button
                             onClick={() => openDetails(item.requestId)}
-                            className="text-blue-400 hover:underline ml-1 text-xs font-mono"
+                            className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-blue-400 hover:bg-blue-900/20 transition text-[11px] sm:text-xs font-mono ml-1"
+                            title={t("details") || "Detay"}
                           >
-                            {t("edit")}
+                            <FileText size={14} className="sm:mr-1" />
+                            <span className="hidden sm:inline">{t("details") || "Detay"}</span>
+                            <span className="sm:hidden">Detay</span>
                           </button>
                         </td>
                       </tr>
