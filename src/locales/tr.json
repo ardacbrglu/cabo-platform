@@ -431,8 +431,12 @@
   "netPayable": "Net ödenecek",
   "minThresholdNotMet": "Minimum çekim tutarına ulaşılmadı",
   "deleteRejectedConfirm": "Reddedilen çekim talebini silmek istiyor musunuz?",
-  "pendingNet": "Bekleyen (net)"
+  "pendingNet": "Bekleyen (net)",
+  
+  "netPaidTotal": "Net ödenmiş tutar"
 }
+
+
 
 
 

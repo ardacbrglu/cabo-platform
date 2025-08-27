@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Loader2, RotateCcw } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { Loader2, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
 import MerchantLayout from "@/components/merchant/MerchantLayout";
 import { apiFetch } from "@/lib/apiFetch";
 
@@ -14,10 +14,12 @@ const statusLabels = {
   platform_confirmed: "Confirmed",
   rejected: "Rejected",
 };
+
 const ROWS_PER_PAGE = 8;
+const DETAILS_ROWS_PER_PAGE = 8;
 
 function formatAmount(eur) {
-  return Number(eur).toLocaleString("en-US", { minimumFractionDigits: 2 }) + " €";
+  return Number(eur || 0).toLocaleString("en-US", { minimumFractionDigits: 2 }) + " €";
 }
 function getstatusStyle(status) {
   if (status === "pending") return "bg-yellow-900/60 text-[#ffe7a1]";
@@ -36,7 +38,6 @@ function getSalestatusStyle(status) {
 export default function MerchantPaymentsPage() {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState([]);
-  const [selectAll, setSelectAll] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -45,7 +46,6 @@ export default function MerchantPaymentsPage() {
   const [payError, setPayError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // refresh state
   const [reloading, setReloading] = useState(false);
 
   // Details modal
@@ -55,8 +55,11 @@ export default function MerchantPaymentsPage() {
   const [detailsData, setDetailsData] = useState([]);
   const [detailsAffiliate, setDetailsAffiliate] = useState("");
   const [detailsMeta, setDetailsMeta] = useState(null);
+  const [detailsPage, setDetailsPage] = useState(1);
 
-  // Listeyi çek
+  // Platform Bank Info (popup açılınca)
+  const [platformBank, setPlatformBank] = useState(null);
+
   async function loadList(p = page) {
     try {
       const res = await apiFetch(`/api/merchant/payments?page=${p}&limit=${ROWS_PER_PAGE}`, { method: "GET" });
@@ -66,24 +69,23 @@ export default function MerchantPaymentsPage() {
         setTotal(data.total || 0);
       } else {
         setItems([]);
+        setTotal(0);
       }
     } catch {
       setItems([]);
+      setTotal(0);
     }
   }
 
   useEffect(() => {
     setSelected([]);
-    setSelectAll(false);
     loadList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  // Manual refresh
   async function handleRefresh() {
     setReloading(true);
     setSelected([]);
-    setSelectAll(false);
     try {
       await loadList();
     } finally {
@@ -91,22 +93,30 @@ export default function MerchantPaymentsPage() {
     }
   }
 
-  // Toplu seçim (sadece pending)
-  useEffect(() => {
-    if (selectAll) {
-      setSelected(items.filter((i) => i.status === "pending").flatMap((i) => i.itemIds));
-    } else {
-      setSelected([]);
-    }
-  }, [selectAll, items]);
-
   function handleSelect(itemIds, checked, isPending) {
     if (!isPending) return;
     if (checked) {
       setSelected((prev) => Array.from(new Set([...prev, ...itemIds])));
     } else {
       setSelected((prev) => prev.filter((id) => !itemIds.includes(id)));
-      setSelectAll(false);
+    }
+  }
+
+  // Select all pending (toggle)
+  const allPendingIdsOnPage = useMemo(
+    () => items.filter((i) => i.status === "pending").flatMap((i) => i.itemIds),
+    [items]
+  );
+  const allPendingSelected =
+    allPendingIdsOnPage.length > 0 &&
+    allPendingIdsOnPage.every((id) => selected.includes(id));
+
+  function handleToggleSelectAllPending() {
+    if (allPendingSelected) {
+      // clear only pending ones on current page
+      setSelected((prev) => prev.filter((id) => !allPendingIdsOnPage.includes(id)));
+    } else {
+      setSelected((prev) => Array.from(new Set([...prev, ...allPendingIdsOnPage])));
     }
   }
 
@@ -116,15 +126,11 @@ export default function MerchantPaymentsPage() {
     setPayError("");
     setNotice("");
     try {
-      const res = await apiFetch("/api/merchant/payments", {
-        method: "PATCH",
-        body: { itemIds: selected },
-      });
+      const res = await apiFetch("/api/merchant/payments", { method: "PATCH", body: { itemIds: selected } });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) throw new Error(data?.error || "Payment update failed");
       setShowPayPopup(false);
       setSelected([]);
-      setSelectAll(false);
       setNotice("Selected items were marked as paid.");
       await loadList(1);
       setPage(1);
@@ -142,7 +148,10 @@ export default function MerchantPaymentsPage() {
     setDetailsLoading(true);
     setDetailsError("");
     setDetailsData([]);
+    setDetailsMeta(null);
     setDetailsAffiliate(item.affiliate_name || "");
+    setDetailsPage(1);
+
     try {
       const res = await apiFetch(`/api/merchant/payments/details`, {
         method: "POST",
@@ -153,22 +162,16 @@ export default function MerchantPaymentsPage() {
         setDetailsData(data.details);
         setDetailsMeta(data.meta || null);
       } else {
-        setDetailsData([]);
-        setDetailsMeta(null);
         setDetailsError(data?.error || "No payout sales found.");
       }
     } catch {
       setDetailsError("Failed to load details.");
-      setDetailsMeta(null);
     } finally {
       setDetailsLoading(false);
     }
   }
 
-  const pageCount = Math.max(1, Math.ceil(total / ROWS_PER_PAGE));
-
-  // Platform Bank Info (popup açılınca)
-  const [platformBank, setPlatformBank] = useState(null);
+  // Platform bank info fetch (popup açıldığında)
   useEffect(() => {
     if (!showPayPopup) return;
     (async () => {
@@ -182,27 +185,14 @@ export default function MerchantPaymentsPage() {
     })();
   }, [showPayPopup]);
 
-  // CSV export
-  function handleExport() {
-    const csv = [["Affiliate", "Amount", "Requested At", "Status"].join(",")];
-    for (const item of items) {
-      csv.push(
-        [
-          `"${item.affiliate_name}"`,
-          `"${formatAmount(item.amount)}"`,
-          `"${item.requested_at}"`,
-          `"${statusLabels[item.status] || item.status}"`,
-        ].join(",")
-      );
-    }
-    const blob = new Blob([csv.join("\n")], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "merchant_payments.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-  }
+  const pageCount = Math.max(1, Math.ceil(total / ROWS_PER_PAGE));
+
+  // Details pagination slice
+  const detailsPageCount = Math.max(1, Math.ceil(detailsData.length / DETAILS_ROWS_PER_PAGE));
+  const detailsSlice = useMemo(() => {
+    const start = (detailsPage - 1) * DETAILS_ROWS_PER_PAGE;
+    return detailsData.slice(start, start + DETAILS_ROWS_PER_PAGE);
+  }, [detailsData, detailsPage]);
 
   return (
     <MerchantLayout>
@@ -235,21 +225,48 @@ export default function MerchantPaymentsPage() {
         </div>
       )}
 
-      {/* Export & Pay */}
+      {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <input
-          type="checkbox"
-          className="scale-110 accent-[#81d742]"
-          checked={selectAll}
-          onChange={(e) => setSelectAll(e.target.checked)}
-          title="Select all"
-        />
         <button
           className="bg-[#181d17] hover:bg-[#212921] text-[#caffb6] px-4 py-2 rounded shadow font-medium border border-[#222]"
-          onClick={handleExport}
+          onClick={() => {
+            // Export current page
+            const csv = [["Affiliate", "Amount", "Requested At", "Status"].join(",")];
+            for (const item of items) {
+              csv.push(
+                [
+                  `"${item.affiliate_name}"`,
+                  `"${formatAmount(item.amount)}"`,
+                  `"${item.requested_at || "-"}"`,
+                  `"${statusLabels[item.status] || item.status}"`,
+                ].join(",")
+              );
+            }
+            const blob = new Blob([csv.join("\n")], { type: "text/csv" });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "merchant_payments.csv";
+            a.click();
+            window.URL.revokeObjectURL(url);
+          }}
         >
           Export to CSV
         </button>
+
+        <button
+          className={`px-4 py-2 rounded shadow font-semibold border transition ${
+            allPendingSelected
+              ? "bg-[#2b2b2b] text-[#f3fff1] border-[#444] hover:bg-[#343434]"
+              : "bg-[#1c2a1c] text-[#e7ffe4] border-[#2d2] hover:bg-[#202f20]"
+          }`}
+          onClick={handleToggleSelectAllPending}
+          disabled={items.filter((i) => i.status === "pending").length === 0}
+          title="Toggle select all pending payouts on this page"
+        >
+          {allPendingSelected ? "Clear selection" : "Select all pending"}
+        </button>
+
         <button
           className="bg-[#232723] hover:bg-[#192319] text-[#e7ffe4] px-4 py-2 rounded shadow font-semibold border border-[#2d2] transition disabled:opacity-40"
           disabled={selected.length === 0 || paying}
@@ -280,51 +297,53 @@ export default function MerchantPaymentsPage() {
                 </td>
               </tr>
             )}
-            {items.map((item) => (
-              <tr
-                key={item.requestId + "-" + item.affiliate_id}
-                className="border-b border-[#222] hover:bg-[#1e261f] transition"
-                style={{ height: "56px" }}
-              >
-                <td className="p-3">
-                  <input
-                    type="checkbox"
-                    className="scale-110 accent-[#81d742]"
-                    checked={selected.some((id) => item.itemIds.includes(id))}
-                    onChange={(e) =>
-                      handleSelect(item.itemIds, e.target.checked, item.status === "pending")
-                    }
-                    disabled={item.status !== "pending"}
-                  />
-                </td>
-                <td className="p-3 font-semibold">{item.affiliate_name}</td>
-                <td className="p-3 text-right font-bold" style={{ color: COLOR_GREEN }}>
-                  {formatAmount(item.amount)}
-                </td>
-                <td className="p-3">
-                  {item.requested_at ? String(item.requested_at).replace("T", " ").slice(0, 19) : "-"}
-                </td>
-                <td className="p-3">
-                  <span className={`font-bold px-2 py-1 rounded ${getstatusStyle(item.status)}`}>
-                    {statusLabels[item.status] || item.status}
-                  </span>
-                </td>
-                <td className="p-3">
-                  <button
-                    className="text-blue-400 hover:underline font-bold text-xs"
-                    onClick={() => handleShowDetails(item)}
-                  >
-                    Details
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {items.map((item) => {
+              const isChecked = item.itemIds.every((id) => selected.includes(id));
+              const isPending = item.status === "pending";
+              return (
+                <tr
+                  key={item.requestId + "-" + item.affiliate_id}
+                  className="border-b border-[#222] hover:bg-[#1e261f] transition"
+                  style={{ height: "56px" }}
+                >
+                  <td className="p-3">
+                    <input
+                      type="checkbox"
+                      className="scale-110 accent-[#81d742]"
+                      checked={isChecked}
+                      onChange={(e) => handleSelect(item.itemIds, e.target.checked, isPending)}
+                      disabled={!isPending}
+                    />
+                  </td>
+                  <td className="p-3 font-semibold">{item.affiliate_name}</td>
+                  <td className="p-3 text-right font-bold" style={{ color: COLOR_GREEN }}>
+                    {formatAmount(item.amount)}
+                  </td>
+                  <td className="p-3">
+                    {item.requested_at ? String(item.requested_at).replace("T", " ").slice(0, 19) : "-"}
+                  </td>
+                  <td className="p-3">
+                    <span className={`font-bold px-2 py-1 rounded ${getstatusStyle(item.status)}`}>
+                      {statusLabels[item.status] || item.status}
+                    </span>
+                  </td>
+                  <td className="p-3">
+                    <button
+                      className="text-blue-400 hover:underline font-bold text-xs"
+                      onClick={() => handleShowDetails(item)}
+                    >
+                      Details
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       {/* Pagination */}
-      {pageCount > 1 && (
+      {Math.max(1, Math.ceil(total / ROWS_PER_PAGE)) > 1 && (
         <div className="flex gap-3 justify-center mt-6 items-center">
           <button
             className="px-3 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] transition disabled:opacity-40"
@@ -334,12 +353,12 @@ export default function MerchantPaymentsPage() {
             {"<"}
           </button>
           <span className="font-semibold text-[#caffb6] text-base">
-            Page {page} / {pageCount}
+            Page {page} / {Math.max(1, Math.ceil(total / ROWS_PER_PAGE))}
           </span>
           <button
             className="px-3 py-1 rounded bg-[#232323] text-gray-300 hover:bg-[#222] transition disabled:opacity-40"
-            disabled={page === pageCount}
-            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            disabled={page === Math.max(1, Math.ceil(total / ROWS_PER_PAGE))}
+            onClick={() => setPage((p) => Math.min(Math.max(1, Math.ceil(total / ROWS_PER_PAGE)), p + 1))}
           >
             {">"}
           </button>
@@ -422,7 +441,7 @@ export default function MerchantPaymentsPage() {
 
             <div className="w-full border-b border-[#232323] my-2"></div>
 
-            <div className="overflow-x-auto rounded-xl bg-[#202620] border border-[#243823] shadow-sm max-h-[330px]">
+            <div className="overflow-x-auto rounded-xl bg-[#181818] border border-[#232323] shadow-sm max-h-[330px]">
               <table className="min-w-full text-xs font-mono">
                 <thead>
                   <tr className="text-[#baffc1] border-b border-[#232323]">
@@ -449,13 +468,13 @@ export default function MerchantPaymentsPage() {
                       <td colSpan={8} className="py-10 text-center text-red-400">{detailsError}</td>
                     </tr>
                   )}
-                  {!detailsLoading && !detailsError && detailsData.length === 0 && (
+                  {!detailsLoading && !detailsError && detailsSlice.length === 0 && (
                     <tr>
                       <td colSpan={8} className="py-10 text-center text-gray-500">No sales found.</td>
                     </tr>
                   )}
-                  {detailsData.map((sale, idx) => (
-                    <tr key={idx} className="border-b border-[#232323] group">
+                  {detailsSlice.map((sale, idx) => (
+                    <tr key={idx} className="border-b border-[#232323]">
                       <td className="py-2 px-3">{sale.orderId}</td>
                       <td className="py-2 px-3">{sale.product_name}</td>
                       <td className="py-2 px-3 text-right">{formatAmount(sale.amount)}</td>
@@ -474,6 +493,27 @@ export default function MerchantPaymentsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* details pagination controls */}
+            <div className="flex justify-between items-center mt-3">
+              <button
+                onClick={() => setDetailsPage((p) => Math.max(1, p - 1))}
+                disabled={detailsPage <= 1}
+                className="px-2 py-1 bg-[#232323] rounded disabled:opacity-40 flex items-center gap-1 text-[#d1ffd0]"
+              >
+                <ChevronLeft size={16} /> Prev
+              </button>
+              <span className="text-[#81d742] text-xs font-mono">
+                Page {detailsPage} / {detailsPageCount}
+              </span>
+              <button
+                onClick={() => setDetailsPage((p) => Math.min(detailsPageCount, p + 1))}
+                disabled={detailsPage >= detailsPageCount}
+                className="px-2 py-1 bg-[#232323] rounded disabled:opacity-40 flex items-center gap-1 text-[#d1ffd0]"
+              >
+                Next <ChevronRight size={16} />
+              </button>
             </div>
 
             <div className="flex justify-end mt-4">

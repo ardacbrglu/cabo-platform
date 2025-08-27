@@ -1,4 +1,3 @@
-// /app/api/payout_request_details/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -24,7 +23,7 @@ import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import {
   payoutRequestIdSchema,
   updateRequestBankSchema,
-  normalizeIban, // import edilip snapshot yazarken tutarlı kalalım
+  normalizeIban,
 } from "@/lib/validation";
 
 const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -116,7 +115,7 @@ export async function POST(req) {
 
     const body = await req.json();
 
-    /* (A) — Bu talebin banka snapshot’ını güncelle (users tablosuna dokunma) */
+    /* (A) — Talebin banka snapshot’ını güncelle */
     if (body && body.updateRequestBank === true) {
       const parsed = updateRequestBankSchema.safeParse(body);
       if (!parsed.success) {
@@ -192,6 +191,9 @@ export async function POST(req) {
         realUserFullname: true,
         platformPaid: true,
         platformPaidAt: true,
+        // yeni:
+        merchantPaidAt: true,
+        platformConfirmedAt: true,
         amountTotal: true,
         payoutRequestItems: { select: { status: true, sourceSaleIds: true } },
       },
@@ -277,6 +279,8 @@ export async function POST(req) {
         realName: payoutReq.realUserFullname || "",
         platform_paid: payoutReq.platformPaid,
         platformPaidAt: payoutReq.platformPaidAt,
+        merchantPaidAt: payoutReq.merchantPaidAt,
+        platformConfirmedAt: payoutReq.platformConfirmedAt,
 
         amountTotal,
         platformCommissionPercent,

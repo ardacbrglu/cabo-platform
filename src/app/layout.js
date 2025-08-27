@@ -1,4 +1,3 @@
-// app/layout.js
 import "./globals.css";
 import { cookies } from "next/headers";
 import Providers from "./providers";
@@ -18,7 +17,11 @@ export default function RootLayout({ children }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#0b0b0b" />
       </head>
-      <body className="bg-[#0B0B0B] text-white" suppressHydrationWarning>
+      {/* Body artık kendi başına min-h viewport ve flex-col → footer dipte */}
+      <body
+        className="min-h-[100dvh] flex flex-col bg-[#0B0B0B] text-white"
+        suppressHydrationWarning
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

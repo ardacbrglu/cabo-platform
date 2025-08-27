@@ -1,4 +1,16 @@
 // app/api/dashboard/route.js
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+/**
+ * Security Docblock (prod)
+ * - Auth: NextAuth; require role=affiliate & status=active
+ * - Headers: no-store; Vary: Cookie; applyApiSecurityHeaders()
+ * - Ratelimit: 60/dk (IP) + 60/dk (userId)
+ * - Require: X-Request-Id
+ * - DB: Prisma only
+ */
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
@@ -13,22 +25,29 @@ function withHeaders(res) {
   res.headers.set("Vary", "Cookie");
   return applyApiSecurityHeaders(res);
 }
-function json(data, init = {}) { return withHeaders(NextResponse.json(data, init)); }
+function json(data, init = {}) {
+  return withHeaders(NextResponse.json(data, init));
+}
+const n = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
-function deviceFromUA(userAgent = "") {
-  const ua = (userAgent || "").toLowerCase();
-  if (ua.includes("android")) return "Android";
-  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ios")) return "iOS";
-  if (ua.includes("windows")) return "Windows";
-  if (ua.includes("mac")) return "Mac";
-  return "Other";
+async function readNumberConfig(keys, fallback) {
+  for (const keyName of keys) {
+    const row = await prisma.platformConfig.findUnique({ where: { keyName } });
+    const raw = row?.value ?? "";
+    const val = Number(raw);
+    if (Number.isFinite(val) && val > 0) return val;
+    // 0.xx gibi yüzde de olabilir
+    const asFloat = parseFloat(raw);
+    if (Number.isFinite(asFloat) && asFloat > 0) return asFloat;
+  }
+  return fallback;
 }
 
 export async function GET(req) {
   const requestId = requireRequestId(req);
 
   try {
-    // 0) IP rate-limit 60/dk
+    // RL: IP
     {
       const ipKey = makeRateLimitKey(req, { scope: "dashboard:ip" });
       const { ok, resetMs } = await checkRateLimit({ key: ipKey, limit: 60, windowMs: 60_000 });
@@ -41,27 +60,28 @@ export async function GET(req) {
       }
     }
 
-    // 1) Session
+    // Session
     const session = await getServerSession(authOptions);
     const email = session?.user?.email?.toLowerCase?.();
-    if (!email) {
-      audit({ evt: "dashboard.unauthorized", requestId });
-      const res = json({ error: "unauthorized", request_id: requestId }, { status: 401 });
-      res.headers.set("x-debug-reason", "no_session");
-      return res;
-    }
+    if (!email) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
 
-    // 2) Kullanıcı
+    // User
     const dbUser = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, role: true, status: true, name: true, email: true, iban: true, bankName: true, realUserFullname: true },
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        name: true,
+        email: true,
+        iban: true,
+        bankName: true,
+        realUserFullname: true,
+      },
     });
-    if (!dbUser) {
-      audit({ evt: "dashboard.unauthorized.no_user", email, requestId });
-      return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
-    }
+    if (!dbUser) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
 
-    // 2.5) User rate-limit 60/dk
+    // RL: user
     {
       const userKey = makeRateLimitKey(req, { scope: "dashboard:user", userId: dbUser.id });
       const { ok, resetMs } = await checkRateLimit({ key: userKey, limit: 60, windowMs: 60_000 });
@@ -74,71 +94,102 @@ export async function GET(req) {
       }
     }
 
-    // 3) RBAC
-    if (dbUser.role !== "affiliate") {
-      audit({ evt: "dashboard.forbidden.role", userId: dbUser.id, role: dbUser.role, requestId });
-      return json({ error: "forbidden", request_id: requestId }, { status: 403 });
-    }
-    if (dbUser.status !== "active") {
-      audit({ evt: "dashboard.forbidden.status", userId: dbUser.id, status: dbUser.status, requestId });
-      return json({ error: "inactive", request_id: requestId }, { status: 403 });
-    }
+    // RBAC
+    if (dbUser.role !== "affiliate") return json({ error: "forbidden", request_id: requestId }, { status: 403 });
+    if (dbUser.status !== "active") return json({ error: "inactive", request_id: requestId }, { status: 403 });
 
     const userId = dbUser.id;
 
-    // 4) Platform ayarları
-    let minPayout = 100;
-    try {
-      const cfg = await prisma.platformConfig.findUnique({ where: { keyName: "min_payout" } });
-      const v = Number(cfg?.value); if (!Number.isNaN(v)) minPayout = v;
-    } catch {}
-    let platformCommission = 5;
-    try {
-      const pcfg = await prisma.platformConfig.findUnique({ where: { keyName: "platform_commission" } });
-      const v = Number(pcfg?.value); if (!Number.isNaN(v)) platformCommission = v;
-    } catch {}
+    // Config – DB anahtar isimleri ile birebir
+    const minPayout = await readNumberConfig(["min_payout"], 100);
+    // platform_commission_rate: 0.12 → %12
+    let platformCommissionRaw = await readNumberConfig(
+      ["platform_commission_rate", "platform_commission_percent", "platform_commission", "platformFeePercent"],
+      0.1
+    );
+    // 0–1 aralığı ise yüzdelik çevir
+    const platformCommission =
+      platformCommissionRaw <= 1 ? Math.round(platformCommissionRaw * 100) : Math.round(platformCommissionRaw);
 
-    // 5) Banka alanları
+    // Bank fields
     const iban = dbUser.iban || "";
     const bankName = dbUser.bankName || "";
     const realName = dbUser.realUserFullname || "";
     const ibanMissing = !/^TR\d{24}$/.test(iban);
-    const bankMissing = !bankName || !bankName.trim();
-    const realNameMissing = !realName || realName.trim().split(/\s+/).length < 2;
+    const bankMissing = !bankName?.trim();
+    const realNameMissing = !realName?.trim() || realName.trim().split(/\s+/).length < 2;
 
-    // 6) Linkler
-    const userLinks = await prisma.affiliateLink.findMany({ where: { userId }, select: { productId: true, linkId: true } });
-    const productIds = userLinks.map((l) => l.productId);
-    const linkIds = userLinks.map((l) => l.linkId);
+    // Links
+    const links = await prisma.affiliateLink.findMany({
+      where: { userId },
+      select: { productId: true, linkId: true },
+    });
+    const productIds = links.map((l) => l.productId);
+    const linkIds = links.map((l) => l.linkId);
 
     if (productIds.length === 0) {
-      audit({ evt: "dashboard.ok.empty", userId, requestId });
+      // Net ödenmiş (paid) toplam (0)
       return json({
-        totalClicks: 0, totalSales: 0, totalEarnings: 0, balance: 0,
-        minPayout, platformCommission,
-        username: dbUser.name || "", email: dbUser.email || "", userId,
-        iban, bankName, ibanMissing, bankMissing, realNameMissing,
-        recentActions: [], leaderboard: [], lastConversion: null, lastClick: null,
+        totalClicks: 0,
+        totalSales: 0,
+        totalEarnings: 0,
+        netPaidTotal: 0,
+        confirmedTotal: 0,
+        confirmedAvailable: 0,
+        minPayout,
+        platformCommission,
+        username: dbUser.name || "",
+        email: dbUser.email || "",
+        userId,
+        iban,
+        bankName,
+        ibanMissing,
+        bankMissing,
+        realNameMissing,
+        activeRequestCount: 0,
+        payoutEligible: false,
+        payoutDisabledReason: "min",
+        recentActions: [],
+        leaderboard: [],
+        lastConversion: null,
+        lastClick: null,
       });
     }
 
-    // 7) Sayaçlar
+    // Counters
     const totalClicks = await prisma.click.count({ where: { linkId: { in: linkIds } } });
 
-    const totalSalesAgg = await prisma.affiliateUserSale.aggregate({
+    const salesAggQty = await prisma.affiliateUserSale.aggregate({
       _sum: { quantity: true },
       where: { productId: { in: productIds }, userId },
     });
-    const totalSales = Number(totalSalesAgg._sum.quantity || 0);
+    const totalSales = n(salesAggQty?._sum?.quantity);
 
-    const totalEarnAgg = await prisma.affiliateUserSale.aggregate({
+    const earnAgg = await prisma.affiliateUserSale.aggregate({
       _sum: { commissionAffiliate: true },
       where: { productId: { in: productIds }, userId, status: "confirmed" },
     });
-    const totalEarnings = Number(totalEarnAgg._sum.commissionAffiliate || 0);
-    const balance = totalEarnings;
+    const confirmedTotal = n(earnAgg?._sum?.commissionAffiliate);
 
-    // 8) Son satışlar
+    // Aktif çekimlerin rezervasyonu (pending & approved)
+    const activeReqCount = await prisma.payoutRequest.count({
+      where: { userId, status: { in: ["pending", "approved"] } },
+    });
+    const activeSumAgg = await prisma.payoutRequest.aggregate({
+      _sum: { amountTotal: true },
+      where: { userId, status: { in: ["pending", "approved"] } },
+    });
+    const reservedByActive = n(activeSumAgg?._sum?.amountTotal);
+    const confirmedAvailable = Math.max(confirmedTotal - reservedByActive, 0);
+
+    // **Net ödenmiş**: status='paid' olan PayoutRequest.netPayable toplamı
+    const paidAgg = await prisma.payoutRequest.aggregate({
+      _sum: { netPayable: true },
+      where: { userId, status: "paid" },
+    });
+    const netPaidTotal = n(paidAgg?._sum?.netPayable);
+
+    // Recent conversions
     const recentConversions = await prisma.affiliateUserSale.findMany({
       where: { productId: { in: productIds }, status: "confirmed", userId },
       orderBy: { convertedAt: "desc" },
@@ -146,23 +197,26 @@ export async function GET(req) {
       include: { merchantProduct: { select: { name: true } } },
     });
 
-    // 9) Leaderboard
+    // Leaderboard (ilk 3)
     const activeAffiliates = await prisma.user.findMany({
       where: { role: "affiliate", status: "active" },
       select: { id: true, name: true },
     });
-    const affiliateIdSet = new Set(activeAffiliates.map((u) => u.id));
-    const agg = await prisma.affiliateUserSale.groupBy({
+    const idSet = new Set(activeAffiliates.map((u) => u.id));
+    const lb = await prisma.affiliateUserSale.groupBy({
       by: ["userId"],
-      where: { status: "confirmed", userId: { in: [...affiliateIdSet] } },
+      where: { status: "confirmed", userId: { in: [...idSet] } },
       _sum: { commissionAffiliate: true },
       orderBy: { _sum: { commissionAffiliate: "desc" } },
       take: 3,
     });
     const nameById = new Map(activeAffiliates.map((u) => [u.id, u.name || "User"]));
-    const leaderboard = agg.map((row) => ({ name: nameById.get(row.userId) || "User", value: Number(row._sum.commissionAffiliate || 0) }));
+    const leaderboard = lb.map((row) => ({
+      name: nameById.get(row.userId) || "User",
+      value: `₺${n(row?._sum?.commissionAffiliate).toFixed(2)}`,
+    }));
 
-    // 10) Son 24 saat
+    // Live (24h)
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const lastConversion = await prisma.affiliateUserSale.findFirst({
       where: { userId, status: "confirmed", productId: { in: productIds }, convertedAt: { gte: since } },
@@ -174,31 +228,74 @@ export async function GET(req) {
       orderBy: { clickedAt: "desc" },
       include: { affiliateLink: { include: { product: true } } },
     });
-
-    const lastConversionData = lastConversion
-      ? { type: "conversion", time: lastConversion.convertedAt, productName: lastConversion.merchantProduct?.name || "Unknown Product",
-          commission: Number(lastConversion.commissionAffiliate || 0), quantity: lastConversion.quantity || 1 }
+    const liveConv = lastConversion
+      ? {
+          type: "conversion",
+          time: lastConversion.convertedAt,
+          productName: lastConversion.merchantProduct?.name || "Product",
+          commission: n(lastConversion.commissionAffiliate),
+          quantity: lastConversion.quantity || 1,
+        }
+      : null;
+    const liveClick = lastClick
+      ? {
+          type: "click",
+          time: lastClick.clickedAt,
+          productName: lastClick.affiliateLink?.product?.name || "Product",
+          extra: (() => {
+            const ua = (lastClick.userAgent || "").toLowerCase();
+            if (ua.includes("android")) return "Android";
+            if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ios")) return "iOS";
+            if (ua.includes("windows")) return "Windows";
+            if (ua.includes("mac")) return "Mac";
+            return "Other";
+          })(),
+        }
       : null;
 
-    const lastClickData = lastClick
-      ? { type: "click", time: lastClick.clickedAt, productName: lastClick.affiliateLink?.product?.name || "Unknown Product",
-          extra: deviceFromUA(lastClick.userAgent) }
-      : null;
+    // Payout eligibility
+    const payoutEligible =
+      confirmedAvailable >= minPayout &&
+      !ibanMissing &&
+      !bankMissing &&
+      !realNameMissing &&
+      activeReqCount < 2;
 
-    audit({ evt: "dashboard.ok", userId, totals: { clicks: totalClicks, sales: totalSales, earn: totalEarnings }, requestId });
+    let payoutDisabledReason = null;
+    if (ibanMissing || bankMissing || realNameMissing) payoutDisabledReason = "bank";
+    else if (activeReqCount >= 2) payoutDisabledReason = "activeLimit";
+    else if (confirmedAvailable < minPayout) payoutDisabledReason = "min";
+
+    audit({ evt: "dashboard.ok", userId, requestId });
 
     return json({
-      totalClicks, totalSales, totalEarnings, balance, minPayout, platformCommission,
-      username: dbUser.name || "", email: dbUser.email || "", userId,
-      iban, bankName, ibanMissing, bankMissing, realNameMissing,
+      totalClicks,
+      totalSales,
+      totalEarnings: confirmedTotal, // toplam onaylanmış (brüt)
+      netPaidTotal,                  // **yeni**: ödenmiş net toplam
+      confirmedTotal,
+      confirmedAvailable,
+      minPayout,
+      platformCommission,
+      username: dbUser.name || "",
+      email: dbUser.email || "",
+      userId,
+      iban,
+      bankName,
+      ibanMissing,
+      bankMissing,
+      realNameMissing,
+      activeRequestCount: activeReqCount,
+      payoutEligible,
+      payoutDisabledReason,
       recentActions: (recentConversions || []).map((c) => ({
-        amount: `+${Number(c.commissionAffiliate || 0).toFixed(2)}₺`,
-        desc: `Sale: ${c.merchantProduct?.name || "Product"} (${c.quantity || 1} adet)`,
+        amount: `+${n(c.commissionAffiliate).toFixed(2)}₺`,
+        product: c.merchantProduct?.name || "Product",
         date: c.convertedAt.toISOString().slice(0, 10),
       })),
-      leaderboard: leaderboard.map((l) => ({ name: l.name, value: `₺${l.value.toFixed(2)}` })),
-      lastConversion: lastConversionData,
-      lastClick: lastClickData,
+      leaderboard,
+      lastConversion: liveConv,
+      lastClick: liveClick,
     });
   } catch (err) {
     audit({ evt: "dashboard.error", err: String(err?.message || err), requestId });

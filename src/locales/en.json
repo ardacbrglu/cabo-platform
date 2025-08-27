@@ -417,8 +417,12 @@
   "netPayable": "Net payable",
   "minThresholdNotMet": "Minimum payout not reached",
   "deleteRejectedConfirm": "Delete the rejected payout request?",
-  "pendingNet": "Pending (net)"
+  "pendingNet": "Pending (net)",
+  "netPaidTotal": "Net paid"
+
+
 }
+
 
 
 

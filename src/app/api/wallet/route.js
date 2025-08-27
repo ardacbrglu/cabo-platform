@@ -1,4 +1,3 @@
-// /app/api/wallet/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -75,13 +74,7 @@ async function getPlatformCommissionPercent() {
   const n = cfg ? Number(cfg.value) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 10;
 }
-async function finalizeExpiredPayouts(userId) {
-  const threshold = new Date(Date.now() - CANCELLATION_WINDOW_MS);
-  await prisma.payoutRequest.updateMany({
-    where: { userId, status: "pending", requestedAt: { lte: threshold } },
-    data: { status: "approved", updatedAt: new Date() },
-  });
-}
+
 async function getAuthedUser(req) {
   const session = await getServerSession(authOptions);
   const role = session?.user?.role || null;
@@ -122,7 +115,8 @@ export async function GET(req) {
       return secureJson({ error: "Account is not active." }, { status: 403 }, req);
     }
 
-    await finalizeExpiredPayouts(userId);
+    // NOT: Artık zaman aşımı ile otomatik "approved" TERFİSİ YOK.
+
     const [minPayout, platformCommissionPercent] = await Promise.all([
       getMinPayout(),
       getPlatformCommissionPercent(),
@@ -166,7 +160,7 @@ export async function GET(req) {
     );
 
     const balance = confirmed + pending;
-    const iban = normalizeIban(statusRow.iban || ""); // normalize ederek döndür
+    const iban = normalizeIban(statusRow.iban || "");
     const bankName = statusRow.bankName || "";
     const realName = statusRow.realUserFullname || "";
 
@@ -189,6 +183,9 @@ export async function GET(req) {
         platformPaid: true,
         platformPaidAt: true,
         paidAt: true,
+        // yeni roll-up zaman damgaları:
+        merchantPaidAt: true,
+        platformConfirmedAt: true,
         rejectedReason: true,
         updatedAt: true,
         payoutRequestItems: { select: { status: true } },
@@ -217,6 +214,8 @@ export async function GET(req) {
         platform_paid: !!item.platformPaid,
         platformPaidAt: item.platformPaidAt,
         paid_at: item.paidAt,
+        merchantPaidAt: item.merchantPaidAt,
+        platformConfirmedAt: item.platformConfirmedAt,
         rejectedReason: item.rejectedReason,
         updatedAt: item.updatedAt,
         lockAt: lockAt ? lockAt.toISOString() : null,
