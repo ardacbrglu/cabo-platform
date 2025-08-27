@@ -5,6 +5,7 @@
  * - All requests via apiFetch (credentials: include, X-Requested-With, X-Request-Id).
  * - CSRF header is auto-added by apiFetch when available.
  * - No sensitive details leaked in UI errors.
+ * - Mobile-only UI tweaks below DO NOT affect desktop layout.
  */
 
 import { useState, useEffect, useMemo } from "react";
@@ -16,7 +17,7 @@ import {
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
 import apiFetch from "@/lib/apiFetch";
-import { normalizeIban, isIbanTR } from "@/lib/iban"; // 👈 ortak helper
+import { normalizeIban, isIbanTR } from "@/lib/iban";
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
@@ -26,7 +27,6 @@ function formatIbanGroups(raw) {
   const only = normalizeIban(raw).slice(0, 26);
   return only.replace(/(.{4})/g, "$1 ").trim();
 }
-
 const f2 = (n) => Number(n || 0).toFixed(2);
 
 function WalletProgress({ value, max }) {
@@ -393,6 +393,7 @@ export default function WalletPage() {
     }
   }
 
+
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((history.length || 0) / PAGE_SIZE)),
     [history.length]
@@ -438,10 +439,11 @@ export default function WalletPage() {
 
   return (
     <Layout>
-      <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-center mt-5 gap-8 px-1 md:px-4">
+      {/* mobilde kenar boşluklarını artır: px-3; md ve üstü olduğu gibi */}
+      <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-center mt-5 gap-8 px-3 md:px-4">
         <div className="flex flex-col md:flex-row gap-5 md:gap-8 w-full">
           {/* Wallet Balance */}
-          <div className="bg-[#181818] rounded-xl shadow py-5 px-2 sm:py-7 sm:px-8 flex-1 flex flex-col items-center min-w-[240px]">
+          <div className="bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-8 flex-1 flex flex-col items-center min-w-[240px]">
             <div className="font-extrabold text-xl sm:text-2xl mb-2 font-mono" style={{ color: COLOR_GREEN }}>
               {t("wallet")}
             </div>
@@ -478,8 +480,9 @@ export default function WalletPage() {
               )}
             </div>
 
+            {/* MOBİL: buton tam genişlik değil; hizalı & hoş bir max genişlik */}
             <button
-              className={`mt-4 w-full py-2 rounded font-bold font-mono text-[#181818] ${
+              className={`mt-4 w-[92%] sm:w-full max-w-[360px] mx-auto py-2 rounded font-bold font-mono text-[#181818] ${
                 payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
               } text-base mb-1`}
               style={{ fontSize: "1.05rem" }}
@@ -516,7 +519,7 @@ export default function WalletPage() {
           </div>
 
           {/* IBAN / Bank Form (USERS) */}
-          <div className="bg-[#181818] rounded-xl shadow py-5 px-2 sm:py-7 sm:px-7 flex-1 flex flex-col items-center min-w-[240px]">
+          <div className="bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-7 flex-1 flex flex-col items-center min-w-[240px]">
             <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
               {t("paymentDetails")}
             </div>
@@ -575,10 +578,11 @@ export default function WalletPage() {
               />
               {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
 
+              {/* MOBİL: kaydet butonu da daha dar ve ortalı */}
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className={`w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
+                className={`w-[92%] sm:w-full max-w-[360px] mx-auto py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
               >
                 {ibanSaved ? t("saved") : t("saveBankInfo")}
               </button>
@@ -590,23 +594,25 @@ export default function WalletPage() {
         </div>
 
         {/* Payout History */}
-        <div className="bg-[#181818] rounded-xl shadow py-6 px-2 sm:px-8 w-full mt-4 max-h-[340px] overflow-y-auto">
+        <div className="bg-[#181818] rounded-xl shadow py-6 px-3 sm:px-8 w-full mt-4 max-h-[340px] overflow-y-auto">
           <div className="flex items-center gap-2 mb-4">
             <BarChart2 className="text-[#81d742]" size={19} />
             <span className="font-extrabold text-base font-mono" style={{ color: COLOR_CABO }}>
               {t("payoutHistory")}
             </span>
           </div>
-          <div className="w-full overflow-x-auto">
-            <table className="min-w-full text-xs font-mono text-left">
+
+          {/* MOBİL: yatay taşmayı tamamen engelle — method+bank sütunları mobilde gizli, metinler kısalır */}
+          <div className="w-full overflow-x-hidden">
+            <table className="w-full text-xs font-mono text-left table-fixed md:table-auto">
               <thead>
                 <tr className="text-gray-400 border-b border-[#232323]">
-                  <th className="py-2 px-3">{t("date")}</th>
-                  <th className="py-2 px-3 text-right">{t("amount")}</th>
-                  <th className="py-2 px-3">{t("status")}</th>
-                  <th className="py-2 px-3">{t("method")}</th>
-                  <th className="py-2 px-3">{t("bank")}</th>
-                  <th className="py-2 px-3"></th>
+                  <th className="py-2 px-2 md:px-3 w-[34%] md:w-auto">{t("date")}</th>
+                  <th className="py-2 px-2 md:px-3 text-right w-[22%] md:w-auto">{t("amount")}</th>
+                  <th className="py-2 px-2 md:px-3 w-[28%] md:w-auto">{t("status")}</th>
+                  <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("method")}</th>
+                  <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("bank")}</th>
+                  <th className="py-2 px-2 md:px-3 w-[16%] md:w-auto"></th>
                 </tr>
               </thead>
               <tbody>
@@ -620,13 +626,13 @@ export default function WalletPage() {
                   paginatedHistory.map((item, i) =>
                     item ? (
                       <tr key={i} className="border-b border-[#202020] last:border-none">
-                        <td className="py-2 px-3">{item.date}</td>
-                        <td className="py-2 px-3 font-bold text-right tabular-nums" style={{ color: COLOR_GREEN }}>
+                        <td className="py-2 px-2 md:px-3 whitespace-nowrap">{item.date}</td>
+                        <td className="py-2 px-2 md:px-3 font-bold text-right tabular-nums" style={{ color: COLOR_GREEN }}>
                           ₺{f2(item.amount || 0)}
                         </td>
-                        <td className="py-2 px-3">
+                        <td className="py-2 px-2 md:px-3">
                           <span
-                            className={`font-bold px-2 py-1 rounded ${
+                            className={`inline-block align-middle font-bold px-2 py-1 rounded whitespace-nowrap ${
                               item.status === "paid"
                                 ? "bg-green-900/60 text-[#81d742]"
                                 : item.status === "rejected"
@@ -639,48 +645,53 @@ export default function WalletPage() {
                             {t(item.status)}
                           </span>
                           {item.status === "pending" && item.lockAt && (
-                            <span className="ml-2 text-gray-400 font-mono text-[11px]">
+                            <span className="ml-2 text-gray-400 font-mono text-[11px] hidden sm:inline">
                               {(t("cancelUntil") || "Cancel until")}: {new Date(item.lockAt).toLocaleString()}
                             </span>
                           )}
                           {item.status === "pending" && !item.canCancel && (
-                            <span className="ml-2 text-yellow-400 text-[11px] font-mono">{(t("locked") || "Locked")}</span>
+                            <span className="ml-2 text-yellow-400 text-[11px] font-mono hidden sm:inline">
+                              {(t("locked") || "Locked")}
+                            </span>
                           )}
                         </td>
-                        <td className="py-2 px-3">{item.method}</td>
-                        <td className="py-2 px-3">{item.bankName || "-"}</td>
-                        <td className="py-2 px-3 flex items-center gap-1">
+                        <td className="py-2 px-2 md:px-3 hidden sm:table-cell">{item.method}</td>
+                        <td className="py-2 px-2 md:px-3 hidden sm:table-cell truncate max-w-[160px]">{item.bankName || "-"}</td>
+                        <td className="py-2 px-2 md:px-3 whitespace-nowrap">
                           {item.status === "pending" && item.requestId && item.canCancel && (
                             <button
                               onClick={() => handleCancelRequest(item.requestId)}
                               disabled={isSubmitting}
-                              className="text-red-500 hover:bg-red-900/30 rounded p-1 transition flex items-center gap-1 text-xs font-mono disabled:opacity-50"
+                              className="text-red-500 hover:bg-red-900/30 rounded px-2 py-1 transition text-xs font-mono disabled:opacity-50"
                             >
-                              <X size={13} /> {t("cancel")}
+                              {t("cancel")}
                             </button>
                           )}
                           {item.status === "rejected" && item.requestId && item.canDelete && (
                             <button
                               onClick={() => handleDeleteRequest(item.requestId)}
-                              className="text-red-400 hover:bg-red-900/30 rounded p-1 transition text-xs font-mono"
+                              className="text-red-400 hover:bg-red-900/30 rounded px-2 py-1 transition text-xs font-mono"
                               title={t("delete")}
                             >
-                              ✖
+                              {t("delete")}
                             </button>
                           )}
-                          <button onClick={() => openDetails(item.requestId)} className="text-blue-400 hover:underline ml-1 text-xs font-mono">
+                          <button
+                            onClick={() => openDetails(item.requestId)}
+                            className="text-blue-400 hover:underline ml-1 text-xs font-mono"
+                          >
                             {t("edit")}
                           </button>
                         </td>
                       </tr>
                     ) : (
                       <tr key={i} className="border-b border-[#202020] last:border-none">
-                        <td className="py-2 px-3">&nbsp;</td>
-                        <td className="py-2 px-3">&nbsp;</td>
-                        <td className="py-2 px-3">&nbsp;</td>
-                        <td className="py-2 px-3">&nbsp;</td>
-                        <td className="py-2 px-3">&nbsp;</td>
-                        <td className="py-2 px-3">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3 hidden sm:table-cell">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3 hidden sm:table-cell">&nbsp;</td>
+                        <td className="py-2 px-2 md:px-3">&nbsp;</td>
                       </tr>
                     )
                   )
@@ -885,19 +896,9 @@ export default function WalletPage() {
         )}
       </main>
 
+      {/* yalnız tabular-nums yardımcı sınıfı; ekstra global hack yok */}
       <style jsx global>{`
         .tabular-nums { font-variant-numeric: tabular-nums; }
-        @media (max-width: 640px) {
-          .flex.flex-col.md\\:flex-row.gap-5.md\\:gap-8.w-full {
-            flex-direction: column !important;
-            gap: 18px !important;
-          }
-          .bg-\\[\\#181818\\].rounded-xl.shadow.py-5.px-2.sm\\:py-7.sm\\:px-8.flex-1.flex.flex-col.items-center.min-w-\\[240px\\] {
-            padding-left: 8px !important;
-            padding-right: 8px !important;
-            min-width: 0 !important;
-          }
-        }
       `}</style>
     </Layout>
   );
