@@ -2,9 +2,9 @@
 
 /**
  * Security Docblock (UI)
- * - All network calls use apiFetch wrapper (credentials: include, X-Requested-With, X-Request-Id).
- * - CSRF: apiFetch adds NextAuth csrf header when present.
- * - Errors are handled gracefully in UI; no sensitive details leaked.
+ * - All requests via apiFetch (credentials: include, X-Requested-With, X-Request-Id).
+ * - CSRF header is auto-added by apiFetch when available.
+ * - No sensitive details leaked in UI errors.
  */
 
 import { useState, useEffect, useMemo } from "react";
@@ -16,31 +16,17 @@ import {
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
 import apiFetch from "@/lib/apiFetch";
+import { normalizeIban, isIbanTR } from "@/lib/iban"; // 👈 ortak helper
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
-function isIbanTRClient(raw) {
-  if (!raw) return false;
-  const iban = String(raw).replace(/\s+/g, "").toUpperCase();
-  if (!/^TR\d{24}$/.test(iban)) return false;
-  const rearranged = iban.slice(4) + iban.slice(0, 4);
-  const expanded = rearranged.replace(/[A-Z]/g, (ch) => (ch.charCodeAt(0) - 55).toString());
-  let remainder = 0;
-  for (let i = 0; i < expanded.length; i++) {
-    const d = expanded.charCodeAt(i) - 48;
-    if (d < 0 || d > 9) return false;
-    remainder = (remainder * 10 + d) % 97;
-  }
-  return remainder === 1;
-}
-const normalizeIban = (raw) =>
-  String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+/* 4’lü gruplama – sadece gösterim için */
 function formatIbanGroups(raw) {
-  const only = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const trimmed = only.slice(0, 26);
-  return trimmed.replace(/(.{4})/g, "$1 ").trim();
+  const only = normalizeIban(raw).slice(0, 26);
+  return only.replace(/(.{4})/g, "$1 ").trim();
 }
+
 const f2 = (n) => Number(n || 0).toFixed(2);
 
 function WalletProgress({ value, max }) {
@@ -101,6 +87,8 @@ export default function WalletPage() {
   const [confirmed, setConfirmed] = useState(0);
   const [minPayout, setMinPayout] = useState(100);
   const [platformCommissionPercent, setPlatformCommissionPercent] = useState(0);
+
+  // Profil (users) için banka
   const [iban, setIban] = useState("");
   const [bankName, setBankName] = useState("");
   const [realName, setRealName] = useState("");
@@ -108,11 +96,12 @@ export default function WalletPage() {
   const [ibanError, setIbanError] = useState("");
   const [bankError, setBankError] = useState("");
   const [realNameError, setRealNameError] = useState("");
+
   const [history, setHistory] = useState([]);
   const [payoutState, setPayoutState] = useState({ status: "", message: "" });
-
   const [activeRequestCount, setActiveRequestCount] = useState(0);
 
+  // Talep detay modalı (sadece snapshot’ı etkiler)
   const [detailsModal, setDetailsModal] = useState({
     open: false,
     sales: [],
@@ -186,12 +175,14 @@ export default function WalletPage() {
         setConfirmed(Number(data.confirmed) || 0);
         setMinPayout(Number(data.minPayout) || 100);
         setPlatformCommissionPercent(Number(data.platformCommissionPercent) || 0);
+
         setIban(formatIbanGroups(data.iban || ""));
         setBankName(data.bankName || "");
         setRealName(data.realName || "");
         setIbanMissing(!!data.ibanMissing);
         setBankMissing(!!data.bankMissing);
         setRealNameMissing(!!data.realNameMissing);
+
         setActiveRequestCount(Number(data.activeRequestCount || 0));
         setHistory(Array.isArray(data.history) ? data.history : []);
       })
@@ -202,7 +193,7 @@ export default function WalletPage() {
 
   function validateRealName(val) {
     const s = String(val || "").trim();
-    return s.split(" ").length >= 2 && s.length >= 4;
+    return s.split(/\s+/).length >= 2 && s.length >= 4;
   }
 
   async function handleIbanSave(e) {
@@ -210,7 +201,7 @@ export default function WalletPage() {
     setIbanError(""); setBankError(""); setRealNameError("");
 
     const ibanNorm = normalizeIban(iban);
-    if (!isIbanTRClient(ibanNorm)) {
+    if (!isIbanTR(ibanNorm)) {
       setIbanError(t("invalidIban"));
       return;
     }
@@ -228,15 +219,15 @@ export default function WalletPage() {
       const res = await apiFetch("/api/wallet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: { iban: ibanNorm, bankName, realName },
+        body: { iban: ibanNorm, bankName, realName }, // PROFİL (users) güncelle
       });
-      await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setIbanSaved(true);
         setTimeout(() => setIbanSaved(false), 2000);
         refreshData();
       } else {
-        setIbanError(t("unknownError"));
+        setIbanError(data?.error || t("unknownError"));
       }
     } catch {
       setIbanError(t("unknownError"));
@@ -256,7 +247,7 @@ export default function WalletPage() {
           "Content-Type": "application/json",
           "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         },
-        body: { requestPayout: true },
+        body: { requestPayout: true }, // USERS’daki son bankayı snapshotla
       });
       await res.json().catch(() => ({}));
       if (res.ok) {
@@ -352,7 +343,7 @@ export default function WalletPage() {
     if (!detailsModal.requestId) return;
 
     const ibanNorm = normalizeIban(detailsModal.editIban);
-    if (!isIbanTRClient(ibanNorm)) {
+    if (!isIbanTR(ibanNorm)) {
       setDetailsModal((m) => ({ ...m, editError: t("invalidIban") }));
       return;
     }
@@ -361,13 +352,14 @@ export default function WalletPage() {
       return;
     }
     const rn = String(detailsModal.editRealName || "").trim();
-    if (rn.split(" ").length < 2) {
+    if (rn.split(/\s+/).length < 2) {
       setDetailsModal((m) => ({ ...m, editError: t("realNameRequired") }));
       return;
     }
 
     setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
     try {
+      // SADECE TALEP SNAPSHOT’I — users tablosu etkilenmez
       const res = await apiFetch("/api/payout_request_details", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -523,7 +515,7 @@ export default function WalletPage() {
             )}
           </div>
 
-          {/* IBAN / Bank Form */}
+          {/* IBAN / Bank Form (USERS) */}
           <div className="bg-[#181818] rounded-xl shadow py-5 px-2 sm:py-7 sm:px-7 flex-1 flex flex-col items-center min-w-[240px]">
             <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
               {t("paymentDetails")}
@@ -539,6 +531,7 @@ export default function WalletPage() {
                 placeholder="TR00 0000 0000 0000 0000 0000 00"
                 value={iban}
                 onChange={(e) => setIban(formatIbanGroups(e.target.value))}
+                onBlur={(e) => setIban(formatIbanGroups(e.target.value))}
                 onPaste={(e) => {
                   e.preventDefault();
                   const text = (e.clipboardData || window.clipboardData).getData("text");
@@ -751,7 +744,7 @@ export default function WalletPage() {
                 {detailsModal.platformPaidAt && <span> {t("at")} {new Date(detailsModal.platformPaidAt).toLocaleDateString()}</span>}
               </div>
 
-              {/* request bank edit (only snapshot for this request) */}
+              {/* request bank edit (snapshot only) */}
               {detailsModal.status === "pending" && (
                 <div className={`mb-3 border rounded p-2 ${detailsModal.canEditBank ? "border-[#2a2a2a]" : "border-[#3a2a2a]"}`}>
                   <div className="flex items-center justify-between mb-2">
@@ -782,6 +775,7 @@ export default function WalletPage() {
                           placeholder="TR00..."
                           value={detailsModal.editIban}
                           onChange={(e) => setDetailsModal((m) => ({ ...m, editIban: formatIbanGroups(e.target.value) }))}
+                          onBlur={(e) => setDetailsModal((m) => ({ ...m, editIban: formatIbanGroups(e.target.value) }))}
                           maxLength={34}
                         />
                         <input
@@ -908,5 +902,3 @@ export default function WalletPage() {
     </Layout>
   );
 }
-
-
