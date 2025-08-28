@@ -1,13 +1,17 @@
 // File: src/lib/mailer.js
-// Purpose: Activation & password-reset emails (Resend first, SMTP optional fallback)
+// Purpose: Activation & password-reset emails (Resend first, optional SMTP)
 // Security Docblock (Cabo PROD):
-// - Server-only; tokenli URL’ler loglanmaz (yalnız maske’li alıcı).
-// - HTTPS 443 tercih; SMTP fallback opsiyonel (env ile kapatılabilir).
-// - Hata sözleşmesi: throw MailerError { code: MAIL_*, kind, status?, original }.
-// - DKIM/SPF için domain doğrulama önerilir (Resend Domains).
+// - HTTPS 443 öncelikli; SMTP fallback env ile kapatılabilir.
+// - Tokenli URL'ler loglanmaz (yalnız maskeli alıcı).
+// - Hata sözleşmesi: MailerError { code: MAIL_*, kind, status?, original }.
+// - DNS IPv4-first: bazı PaaS'larda IPv6 egress time-out'larını önler.
 
 import "server-only";
+import dns from "dns";
 import nodemailer from "nodemailer";
+
+// IPv4-first (Node >=18)
+try { dns.setDefaultResultOrder?.("ipv4first"); } catch {}
 
 /* -------------------- flags & helpers -------------------- */
 const isProd = process.env.NODE_ENV === "production";
@@ -20,7 +24,7 @@ class MailerError extends Error {
     super("mail_send_failed");
     this.name = "MailerError";
     this.kind = kind;                           // "auth" | "config" | "network" | "rate" | "unknown"
-    this.code = `MAIL_${String(kind).toUpperCase()}`; // MAIL_AUTH, MAIL_CONFIG, MAIL_NETWORK, MAIL_RATE, MAIL_UNKNOWN
+    this.code = `MAIL_${String(kind).toUpperCase()}`;
     this.original = original ? String(original?.message || original) : "";
     if (status) this.status = status;
   }
@@ -110,62 +114,84 @@ const RESEND_FROM = (process.env.RESEND_FROM || "Cabo <onboarding@resend.dev>").
 const REPLY_TO = (process.env.REPLY_TO || "").trim() || undefined;
 const DISABLE_SMTP_FALLBACK = process.env.MAILER_DISABLE_SMTP_FALLBACK === "1";
 
-async function resendSend({ to, subject, text, html }) {
-  if (!RESEND_API_KEY) throw new MailerError("config", new Error("RESEND_API_KEY missing"));
+// küçük yardımcı: bekleme
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function resendHttpSend(payload, timeoutMs = 10_000) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-
-  let res;
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    res = await fetch("https://api.resend.com/emails", {
+    const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       signal: ctrl.signal,
       headers: {
         "Authorization": `Bearer ${RESEND_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: RESEND_FROM,
-        to: Array.isArray(to) ? to : [to],
-        subject,
-        html,
-        text,
-        reply_to: REPLY_TO,
-      }),
+      body: JSON.stringify(payload),
     });
+    const text = await res.text().catch(() => "");
+    clearTimeout(timer);
+    return { res, text };
   } catch (e) {
     clearTimeout(timer);
     throw new MailerError("network", e);
   }
-  clearTimeout(timer);
+}
 
-  const rawText = await res.text().catch(() => "");
-  if (res.ok) {
-    let data; try { data = JSON.parse(rawText); } catch {}
-    dbg("Resend mail sent →", maskEmail(to), "| id:", data?.id || "n/a");
-    return { ok: true, messageId: data?.id || null };
+async function resendSend({ to, subject, text, html }) {
+  if (!RESEND_API_KEY) throw new MailerError("config", new Error("RESEND_API_KEY missing"));
+
+  const payload = {
+    from: RESEND_FROM,
+    to: Array.isArray(to) ? to : [to],
+    subject,
+    html,
+    text,
+    reply_to: REPLY_TO,
+  };
+
+  // 1 deneme + network için 1 yeniden deneme (kısa)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { res, text: rawText } = await resendHttpSend(payload, 10_000);
+      if (res.ok) {
+        let data; try { data = JSON.parse(rawText); } catch {}
+        dbg("Resend mail sent →", maskEmail(to), "| id:", data?.id || "n/a");
+        return { ok: true, messageId: data?.id || null };
+      }
+
+      let kind = "unknown";
+      if (res.status === 401 || res.status === 403) kind = "auth";
+      else if (res.status === 429) kind = "rate";
+      else if (res.status >= 400 && res.status < 500) kind = "config";
+      else kind = "network";
+
+      const err = new MailerError(kind, new Error(`resend_${res.status}: ${rawText.slice(0, 250)}`), res.status);
+      const hint =
+        kind === "auth"
+          ? "Check RESEND_API_KEY (no quotes, no < >, key active)."
+          : kind === "config"
+          ? "Check RESEND_FROM (use onboarding@resend.dev or verified domain) and recipient."
+          : kind === "rate"
+          ? "Rate limited; review Resend plan/limits."
+          : "Network/SSL to api.resend.com:443.";
+
+      console.error("[mailer] Resend send failed:", err.code, "-", err.original);
+      if (MAILER_DEBUG) console.error("[mailer] hint:", hint);
+
+      // non-network hatalarda retry anlamsız
+      if (kind !== "network") throw err;
+      if (attempt === 1) await sleep(600); else throw err;
+    } catch (e) {
+      if (e instanceof MailerError) {
+        if (e.kind !== "network" || attempt === 2) throw e;
+        await sleep(600);
+      } else {
+        throw new MailerError("network", e);
+      }
+    }
   }
-
-  // classify HTTP failures
-  let kind = "unknown";
-  if (res.status === 401 || res.status === 403) kind = "auth";
-  else if (res.status === 429) kind = "rate";
-  else if (res.status >= 400 && res.status < 500) kind = "config";
-  else kind = "network";
-  const err = new MailerError(kind, new Error(`resend_${res.status}: ${rawText.slice(0, 250)}`), res.status);
-
-  const hint =
-    kind === "auth"
-      ? "Check RESEND_API_KEY (no < >, no quotes, key active)."
-      : kind === "config"
-      ? "Check RESEND_FROM (use onboarding@resend.dev or a verified domain) and recipient address."
-      : kind === "rate"
-      ? "Resend rate limited; review plan/limits."
-      : "Network/SSL issue to api.resend.com:443.";
-  console.error("[mailer] Resend send failed:", err.code, "-", err.original);
-  if (MAILER_DEBUG) console.error("[mailer] hint:", hint);
-  throw err;
 }
 
 /* ============================================================
@@ -182,7 +208,7 @@ const SMTP_FROM =
 const SMTP_SECURE = SMTP_PORT === 465;
 
 function smtpConfigured() {
-  return Boolean(SMTP_HOST && SMTP_PORT && (SMTP_USER || SMTP_PASS)); // bazı relayerlarda pass gerekmeyebilir
+  return Boolean(SMTP_HOST && SMTP_PORT && (SMTP_USER || SMTP_PASS));
 }
 
 function classifySmtp(err) {
@@ -197,25 +223,15 @@ function classifySmtp(err) {
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST || undefined,
   port: SMTP_PORT || undefined,
-  secure: SMTP_SECURE,          // 465 TLS
-  requireTLS: !SMTP_SECURE,     // 587 STARTTLS
+  secure: SMTP_SECURE,
+  requireTLS: !SMTP_SECURE,
   auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
   pool: true,
   maxConnections: 3,
   maxMessages: 50,
-  connectionTimeout: 15_000,
-  socketTimeout: 20_000,
+  connectionTimeout: 12_000,
+  socketTimeout: 15_000,
   tls: { minVersion: "TLSv1.2", rejectUnauthorized: isProd ? true : false },
-  dkim:
-    process.env.DKIM_DOMAIN &&
-    process.env.DKIM_SELECTOR &&
-    process.env.DKIM_PRIVATE_KEY
-      ? {
-          domainName: process.env.DKIM_DOMAIN,
-          keySelector: process.env.DKIM_SELECTOR,
-          privateKey: process.env.DKIM_PRIVATE_KEY,
-        }
-      : undefined,
 });
 
 let verifiedOnce = false;
@@ -234,7 +250,6 @@ async function ensureSmtpVerified() {
 async function smtpSend({ to, subject, text, html }) {
   if (!smtpConfigured()) throw new MailerError("config", new Error("SMTP not configured"));
   await ensureSmtpVerified();
-
   try {
     const info = await transporter.sendMail({
       from: SMTP_FROM,
@@ -244,18 +259,20 @@ async function smtpSend({ to, subject, text, html }) {
       html,
       replyTo: REPLY_TO,
     });
-    dbg("SMTP mail sent →", maskEmail(to), "| id:", info?.messageId || "n/a");
+    dbg("SMTP mail sent →", maskEmail(to), "| id:", info?.messageId || null);
     return { ok: true, messageId: info?.messageId || null };
   } catch (e) {
     const { kind, message } = classifySmtp(e);
     console.error("✖ SMTP email error:", kind, "-", message);
-    const hint =
-      kind === "auth"
-        ? "Check SMTP_USER/SMTP_PASS (Gmail requires App Password)."
-        : kind === "network"
-        ? `Check SMTP_HOST/PORT (${SMTP_HOST}:${SMTP_PORT}) and outbound rules.`
-        : "Check FROM/recipient/config.";
-    if (MAILER_DEBUG) console.error("[mailer] hint:", hint);
+    if (MAILER_DEBUG) {
+      const hint =
+        kind === "auth"
+          ? "Check SMTP_USER/SMTP_PASS (Gmail needs App Password)."
+          : kind === "network"
+          ? `Check SMTP_HOST/PORT (${SMTP_HOST}:${SMTP_PORT}) and outbound rules.`
+          : "Check FROM/recipient/config.";
+      console.error("[mailer] hint:", hint);
+    }
     throw new MailerError(kind, e);
   }
 }
@@ -264,18 +281,18 @@ async function smtpSend({ to, subject, text, html }) {
 async function sendGeneric(kind, to, url, locale) {
   const { subject, text, html } = subjectAndBody(kind, url, locale);
 
-  // 1) Try Resend first if configured
+  // 1) Resend
   if (RESEND_API_KEY) {
     try {
       return await resendSend({ to, subject, text, html });
     } catch (e) {
-      // If fallback disabled or SMTP not configured, bubble up
+      // Fallback kapalıysa veya SMTP yoksa kaldır
       if (DISABLE_SMTP_FALLBACK || !smtpConfigured()) throw e;
-      // else continue to SMTP
+      // aksi halde devam (SMTP)
     }
   }
 
-  // 2) SMTP fallback (if configured)
+  // 2) SMTP fallback
   return smtpSend({ to, subject, text, html });
 }
 
@@ -295,10 +312,7 @@ export function getMailerStatus() {
     prod: isProd,
     origin: ORIGIN,
     replyTo: REPLY_TO || null,
-    resend: {
-      from: RESEND_FROM,
-      key: RESEND_API_KEY ? "set" : "missing",
-    },
+    resend: { from: RESEND_FROM, key: RESEND_API_KEY ? "set" : "missing" },
     smtp: {
       host: SMTP_HOST || null,
       port: SMTP_PORT || null,
