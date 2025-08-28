@@ -1,57 +1,19 @@
 // File: src/lib/mailer.js
-// Purpose: Activation & password-reset emails (production-safe)
+// Purpose: Activation & password-reset emails (HTTPS API first, SMTP fallback)
+// Security Docblock:
+// - Server-only; tokenli URL’ler loglanmaz (yalnız maske’li alıcı).
+// - Prod’da TLS 1.2+; DKIM opsiyonel.
+// - Hata sözleşmesi: throw MailerError { code: MAIL_* , kind, original }.
+// - Öncelik: RESEND (HTTPS 443) → SMTP fallback (465/587).
 
 import "server-only";
 import nodemailer from "nodemailer";
 
-/* ---------------- Base URL (activation/reset links) ---------------- */
-function computeOrigin() {
-  const base =
-    process.env.NEXTAUTH_URL ||
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.BASE_URL ||
-    "http://localhost:3000";
-  try {
-    return new URL(base).origin;
-  } catch {
-    return "http://localhost:3000";
-  }
-}
-const ORIGIN = computeOrigin();
+/* ---------------- Runtime flags & helpers ---------------- */
 const isProd = process.env.NODE_ENV === "production";
 const MAILER_DEBUG = process.env.MAILER_DEBUG === "1";
-
-/* ---------------- Env & helpers ---------------- */
-const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 465); // 465=TLS, 587=STARTTLS
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const FROM_EMAIL =
-  process.env.FROM_EMAIL ||
-  process.env.SMTP_FROM || // backward compat
-  "Cabo <no-reply@localhost>";
-
-const SECURE = SMTP_PORT === 465; // nodemailer: secure=true => TLS from start
-
-const maskEmail = (e) => String(e || "").replace(/(.{2}).*(@.*)/, "$1***$2");
 const dbg = (...a) => { if (MAILER_DEBUG) console.log("[mailer]", ...a); };
-
-function classifyMailError(err) {
-  const msg = String(err?.message || err);
-  let kind = "unknown";
-  if (/Invalid login|Username and Password not accepted|AUTH|535|534/i.test(msg)) {
-    kind = "auth";
-  } else if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|timeout/i.test(msg)) {
-    kind = "network";
-  } else if (/No recipients defined|Missing credentials/i.test(msg)) {
-    kind = "config";
-  }
-  let hint = "";
-  if (kind === "auth") hint = "Check SMTP_USER/SMTP_PASS (Gmail App Password required).";
-  if (kind === "network") hint = `Check SMTP_HOST/PORT (${SMTP_HOST}:${SMTP_PORT}) and outbound rules.`;
-  if (kind === "config") hint = "Check FROM_EMAIL / recipient / mandatory fields.";
-  return { kind, message: msg, hint };
-}
+const maskEmail = (e) => String(e || "").replace(/(.{2}).*(@.*)/, "$1***$2");
 
 class MailerError extends Error {
   constructor(kind = "unknown", original) {
@@ -63,45 +25,16 @@ class MailerError extends Error {
   }
 }
 
-/* ---------------- Transport (lazy-verified) ---------------- */
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SECURE,              // 465 TLS
-  requireTLS: !SECURE,         // 587 STARTTLS / 2525 style
-  auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-  pool: true,
-  maxConnections: 3,
-  maxMessages: 50,
-  connectionTimeout: 15_000,
-  socketTimeout: 20_000,
-  tls: { minVersion: "TLSv1.2", rejectUnauthorized: isProd ? true : false },
-  dkim:
-    process.env.DKIM_DOMAIN &&
-    process.env.DKIM_SELECTOR &&
-    process.env.DKIM_PRIVATE_KEY
-      ? {
-          domainName: process.env.DKIM_DOMAIN,
-          keySelector: process.env.DKIM_SELECTOR,
-          privateKey: process.env.DKIM_PRIVATE_KEY,
-        }
-      : undefined,
-});
-
-let verifiedOnce = false;
-async function ensureVerified() {
-  if (verifiedOnce || !isProd) return;
-  try {
-    await transporter.verify();
-    verifiedOnce = true;
-    dbg(`SMTP verify OK → ${SMTP_HOST}:${SMTP_PORT}, secure=${SECURE}`);
-  } catch (e) {
-    const c = classifyMailError(e);
-    console.error("[mailer] SMTP verify failed:", c.kind, "-", c.message);
-    if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
-    // verification failure should not crash import; real send will throw anyway
-  }
+/* ---------------- Base URL (activation/reset links) ---------------- */
+function computeOrigin() {
+  const base =
+    process.env.NEXTAUTH_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    process.env.BASE_URL ||
+    "http://localhost:3000";
+  try { return new URL(base).origin; } catch { return "http://localhost:3000"; }
 }
+const ORIGIN = computeOrigin();
 
 /* ---------------- Content ---------------- */
 function buildUrl(pathname, params = {}) {
@@ -168,65 +101,174 @@ function subjectAndBody(kind, url, locale = "en") {
   return { subject, text, html };
 }
 
-/* ---------------- Public API ---------------- */
-export async function sendActivationEmail(to, token, locale = "en") {
-  await ensureVerified();
+/* ===================================================================
+   1) RESEND (HTTPS 443) — birinci tercih
+   =================================================================== */
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM = process.env.RESEND_FROM || process.env.FROM_EMAIL || "Cabo <no-reply@example.com>";
 
-  const url = buildUrl("/activate", { token, lang: locale });
-  const { subject, text, html } = subjectAndBody("activation", url, locale);
+async function resendSend({ to, subject, text, html }) {
+  // Bağımlılık yok: direkt HTTPS çağrısı
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
 
   try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: {
+        "Authorization": `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text,
+      }),
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`resend_${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json().catch(() => ({}));
+    dbg("Resend mail sent →", maskEmail(to), "| id:", data?.id || "n/a");
+    return { ok: true, messageId: data?.id || null };
+  } catch (e) {
+    clearTimeout(timer);
+    // Resend hata kodlarını network kategorisine düşürmek en doğrusu
+    throw new MailerError("network", e);
+  }
+}
+
+/* ===================================================================
+   2) SMTP (465/587) — fallback
+   =================================================================== */
+const SMTP_HOST = process.env.SMTP_HOST || "smtp.gmail.com";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465); // 465 TLS, 587 STARTTLS
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const SMTP_FROM =
+  process.env.FROM_EMAIL ||
+  process.env.SMTP_FROM ||
+  "Cabo <no-reply@localhost>";
+
+const SECURE = SMTP_PORT === 465;
+
+function classifyMailError(err) {
+  const msg = String(err?.message || err);
+  let kind = "unknown";
+  if (/Invalid login|Username and Password not accepted|AUTH|535|534/i.test(msg)) kind = "auth";
+  else if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|timeout/i.test(msg)) kind = "network";
+  else if (/No recipients defined|Missing credentials/i.test(msg)) kind = "config";
+  let hint = "";
+  if (kind === "auth") hint = "Check SMTP_USER/SMTP_PASS (Gmail App Password required).";
+  if (kind === "network") hint = `Check SMTP_HOST/PORT (${SMTP_HOST}:${SMTP_PORT}) and outbound rules.`;
+  if (kind === "config") hint = "Check FROM_EMAIL / recipient / mandatory fields.";
+  return { kind, message: msg, hint };
+}
+
+const transporter = nodemailer.createTransport({
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SECURE,              // 465 TLS
+  requireTLS: !SECURE,         // 587 STARTTLS
+  auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+  pool: true,
+  maxConnections: 3,
+  maxMessages: 50,
+  connectionTimeout: 15_000,
+  socketTimeout: 20_000,
+  tls: { minVersion: "TLSv1.2", rejectUnauthorized: isProd ? true : false },
+  dkim:
+    process.env.DKIM_DOMAIN &&
+    process.env.DKIM_SELECTOR &&
+    process.env.DKIM_PRIVATE_KEY
+      ? {
+          domainName: process.env.DKIM_DOMAIN,
+          keySelector: process.env.DKIM_SELECTOR,
+          privateKey: process.env.DKIM_PRIVATE_KEY,
+        }
+      : undefined,
+});
+
+let verifiedOnce = false;
+async function ensureVerified() {
+  if (verifiedOnce || !isProd) return;
+  try {
+    await transporter.verify();
+    verifiedOnce = true;
+    dbg(`SMTP verify OK → ${SMTP_HOST}:${SMTP_PORT}, secure=${SECURE}`);
+  } catch (e) {
+    const c = classifyMailError(e);
+    console.error("[mailer] SMTP verify failed:", c.kind, "-", c.message);
+    if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
+    // verify başarısız olsa da gerçek gönderimde tekrar deneyeceğiz
+  }
+}
+
+async function smtpSend({ to, subject, text, html }) {
+  await ensureVerified();
+  try {
     const info = await transporter.sendMail({
-      from: FROM_EMAIL,
+      from: SMTP_FROM,
       to,
       subject,
       text,
       html,
     });
-    dbg("Activation mail sent →", maskEmail(to), "| id:", info?.messageId || "n/a");
+    dbg("SMTP mail sent →", maskEmail(to), "| id:", info?.messageId || "n/a");
     return { ok: true, messageId: info?.messageId || null };
   } catch (err) {
     const c = classifyMailError(err);
-    console.error("❌ Activation email error:", c.kind, "-", c.message);
+    console.error("❌ SMTP email error:", c.kind, "-", c.message);
     if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
     throw new MailerError(c.kind, err);
   }
+}
+
+/* ---------------- Public API ---------------- */
+async function sendGeneric(kind, to, url, locale) {
+  const { subject, text, html } = subjectAndBody(kind, url, locale);
+
+  // 1) RESEND var ise onu kullan
+  if (RESEND_API_KEY) {
+    try {
+      return await resendSend({ to, subject, text, html });
+    } catch (e) {
+      // Fallback’e inmeden önce logla
+      console.error("[mailer] Resend send failed:", e?.code || e?.kind || e);
+      // devam → SMTP
+    }
+  }
+
+  // 2) SMTP fallback
+  return smtpSend({ to, subject, text, html });
+}
+
+export async function sendActivationEmail(to, token, locale = "en") {
+  const url = buildUrl("/activate", { token, lang: locale });
+  const res = await sendGeneric("activation", to, url, locale);
+  return res;
 }
 
 export async function sendPasswordResetEmail(to, token, locale = "en") {
-  await ensureVerified();
-
   const url = buildUrl("/password_reset", { token, lang: locale });
-  const { subject, text, html } = subjectAndBody("reset", url, locale);
-
-  try {
-    const info = await transporter.sendMail({
-      from: FROM_EMAIL,
-      to,
-      subject,
-      text,
-      html,
-    });
-    dbg("Reset mail sent →", maskEmail(to), "| id:", info?.messageId || "n/a");
-    return { ok: true, messageId: info?.messageId || null };
-  } catch (err) {
-    const c = classifyMailError(err);
-    console.error("❌ Password reset email error:", c.kind, "-", c.message);
-    if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
-    throw new MailerError(c.kind, err);
-  }
+  const res = await sendGeneric("reset", to, url, locale);
+  return res;
 }
 
-/* Optional: small status helper for /api/health if you add one later */
 export function getMailerStatus() {
   return {
     prod: isProd,
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SECURE,
-    user: maskEmail(SMTP_USER),
-    from: FROM_EMAIL,
     origin: ORIGIN,
-    verified: verifiedOnce,
+    provider: RESEND_API_KEY ? "resend" : "smtp",
+    smtp: {
+      host: SMTP_HOST, port: SMTP_PORT, secure: SECURE,
+      user: maskEmail(SMTP_USER), from: SMTP_FROM, verified: verifiedOnce
+    },
+    resend: { from: RESEND_FROM, key: RESEND_API_KEY ? "set" : "missing" },
   };
 }
