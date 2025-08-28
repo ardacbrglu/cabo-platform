@@ -1,4 +1,3 @@
-// src/app/api/register/route.js
 /**
  * Affiliate register API (manual only)
  *
@@ -6,9 +5,9 @@
  * - requireOrigin + requireAjax + requireRequestId
  * - Ratelimit: 8/min (IP+UA)
  * - Validation: Zod + sanitize
- * - CAPTCHA: verify on all flows
+ * - CAPTCHA: verify on all flows (with remote IP)
  * - Email activation: single-use token (1 day)
- * - JSON error contract: { success:false, error, message, request_id }
+ * - JSON error contract: { success:false, error, message, request_id, [error_code] }
  * - Audit: success/error events with requestId
  * - DB: Prisma only (no raw SQL)
  * - NOTE: Google registration is DISABLED (returns 403)
@@ -24,7 +23,7 @@ import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { sendActivationEmail } from "@/lib/mailer";
-import { verifyRecaptcha } from "@/lib/captcha";
+import { verifyRecaptchaFromRequest, verifyRecaptcha } from "@/lib/captcha";
 
 export const runtime = "nodejs";
 
@@ -139,15 +138,12 @@ export async function POST(req) {
 
   // ---- Google (DEVRE DIŞI)
   if (bodyRaw?.flow === "google") {
-    // Şema yine de doğrulansın ki CAPTCHA gibi bilgiler boş gelmesin
     try {
       GoogleDisabledSchema.parse(bodyRaw);
-    } catch {
-      // Şema hatası ⇒ yine de 403 döndür.
-    }
-    // CAPTCHA doğrulaması yapılır ama kayıt açılmaz.
+    } catch {}
     try {
       if (bodyRaw?.captcha) {
+        // doğrula ama kayıt açma
         await verifyRecaptcha(bodyRaw.captcha).catch(() => ({}));
       }
     } catch {}
@@ -182,8 +178,9 @@ export async function POST(req) {
     );
   }
 
-  const cap = await verifyRecaptcha(data.captcha);
-  if (!cap.ok) {
+  // ✅ CAPTCHA (IP ile)
+  const capOk = await verifyRecaptchaFromRequest(req, data.captcha);
+  if (!capOk) {
     return withHeaders(
       NextResponse.json(
         { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
@@ -245,10 +242,12 @@ export async function POST(req) {
     });
     try {
       await sendActivationEmail(email, token, locale);
-    } catch {
+    } catch (err) {
+      const code = err?.code || err?.kind || "mail_fail";
+      audit({ evt: "register.manual.resend.mail_fail", email, requestId, code });
       return withHeaders(
         NextResponse.json(
-          { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
+          { success: false, error: "mail_fail", error_code: code, message: t("mailfail"), request_id: requestId },
           { status: 500 }
         )
       );
@@ -281,10 +280,12 @@ export async function POST(req) {
 
   try {
     await sendActivationEmail(email, activationToken, locale);
-  } catch {
+  } catch (err) {
+    const code = err?.code || err?.kind || "mail_fail";
+    audit({ evt: "register.manual.create.mail_fail", email, requestId, code });
     return withHeaders(
       NextResponse.json(
-        { success: false, error: "mail_fail", message: t("mailfail"), request_id: requestId },
+        { success: false, error: "mail_fail", error_code: code, message: t("mailfail"), request_id: requestId },
         { status: 500 }
       )
     );

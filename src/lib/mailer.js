@@ -53,12 +53,22 @@ function classifyMailError(err) {
   return { kind, message: msg, hint };
 }
 
+class MailerError extends Error {
+  constructor(kind = "unknown", original) {
+    super("mail_send_failed");
+    this.name = "MailerError";
+    this.kind = kind;
+    this.code = `MAIL_${String(kind).toUpperCase()}`; // MAIL_AUTH / MAIL_NETWORK / MAIL_CONFIG / MAIL_UNKNOWN
+    this.original = original ? String(original?.message || original) : "";
+  }
+}
+
 /* ---------------- Transport (lazy-verified) ---------------- */
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SECURE,              // 465 TLS
-  requireTLS: !SECURE,         // 587 STARTTLS
+  requireTLS: !SECURE,         // 587 STARTTLS / 2525 style
   auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
   pool: true,
   maxConnections: 3,
@@ -162,7 +172,6 @@ function subjectAndBody(kind, url, locale = "en") {
 export async function sendActivationEmail(to, token, locale = "en") {
   await ensureVerified();
 
-  // Do NOT log the URL (token). Only log masked recipient.
   const url = buildUrl("/activate", { token, lang: locale });
   const { subject, text, html } = subjectAndBody("activation", url, locale);
 
@@ -180,7 +189,7 @@ export async function sendActivationEmail(to, token, locale = "en") {
     const c = classifyMailError(err);
     console.error("❌ Activation email error:", c.kind, "-", c.message);
     if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
-    throw new Error("mail_send_failed");
+    throw new MailerError(c.kind, err);
   }
 }
 
@@ -204,7 +213,7 @@ export async function sendPasswordResetEmail(to, token, locale = "en") {
     const c = classifyMailError(err);
     console.error("❌ Password reset email error:", c.kind, "-", c.message);
     if (MAILER_DEBUG) console.error("[mailer] hint:", c.hint);
-    throw new Error("mail_send_failed");
+    throw new MailerError(c.kind, err);
   }
 }
 
