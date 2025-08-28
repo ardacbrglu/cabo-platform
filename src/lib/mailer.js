@@ -2,22 +2,16 @@
 // Purpose: Activation & password-reset emails (Resend first, optional SMTP)
 // Security Docblock (Cabo PROD):
 // - HTTPS 443 öncelik; SMTP fallback env ile kapatılabilir.
-// - IPv4-first: DNS + undici’de IPv6 kaynaklı egress sorunlarını önler.
+// - IPv4-first: DNS düzeyinde (Node) IPv6 kaynaklı egress sorunlarını azaltır.
 // - Hata sözleşmesi: MailerError { code: MAIL_*, kind, status?, original }.
 // - Tokenli URL'ler loglanmaz (yalnız maskeli alıcı).
 
 import "server-only";
 import dns from "dns";
 import nodemailer from "nodemailer";
-import { Agent, setGlobalDispatcher } from "undici";
 
-// ---- IPv4-first (Node & undici)
+// ---- IPv4-first (Node DNS)
 try { dns.setDefaultResultOrder?.("ipv4first"); } catch {}
-try {
-  const lookup4 = (hostname, options, cb) =>
-    dns.lookup(hostname, { ...options, family: 4, all: false }, cb);
-  setGlobalDispatcher(new Agent({ connect: { lookup: lookup4 } }));
-} catch {}
 
 /* -------------------- flags & helpers -------------------- */
 const isProd = process.env.NODE_ENV === "production";
