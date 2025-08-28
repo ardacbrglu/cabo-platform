@@ -680,3 +680,6 @@ export default function MerchantRegisterPage() {
     </PublicLayout>
   );
 }
+
+
+
