@@ -29,9 +29,9 @@ export const runtime = "nodejs";
 
 const ACTIVATION_JWT_SECRET = process.env.NEXTAUTH_SECRET;
 
-function withHeaders(res) {
+function withHeaders(res, req) {
   res.headers.set("Cache-Control", "no-store");
-  return applyApiSecurityHeaders(res);
+  return applyApiSecurityHeaders(res, req);
 }
 
 const ManualSchema = z.object({
@@ -99,7 +99,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "bad_request", message: "bad_request", request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -119,7 +120,8 @@ export async function POST(req) {
           request_id: requestId,
         },
         { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
-      )
+      ),
+      req
     );
   }
 
@@ -132,7 +134,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "bad_request", message: t("required"), request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -152,7 +155,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "google_disabled", message: t("googleDisabled"), request_id: requestId },
         { status: 403 }
-      )
+      ),
+      req
     );
   }
 
@@ -174,7 +178,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "invalid_payload", message: msg, request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -185,7 +190,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "captcha_failed", message: t("captcha"), request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -201,7 +207,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "google_only", message: t("googleReg"), request_id: requestId },
         { status: 409 }
-      )
+      ),
+      req
     );
   }
 
@@ -212,7 +219,8 @@ export async function POST(req) {
         NextResponse.json(
           { success: false, error: "already_active", message: t("alreadyActive"), request_id: requestId },
           { status: 409 }
-        )
+        ),
+        req
       );
     }
     // pending → günlük 3 limit
@@ -225,7 +233,8 @@ export async function POST(req) {
         NextResponse.json(
           { success: false, error: "limit_exceeded", message: t("limitExceeded"), request_id: requestId },
           { status: 429 }
-        )
+        ),
+        req
       );
     }
 
@@ -240,21 +249,34 @@ export async function POST(req) {
         languagePreference: existing.languagePreference || locale,
       },
     });
+
+    // Mail gönder (debug-friendly)
     try {
       await sendActivationEmail(email, token, locale);
     } catch (err) {
-      const code = err?.code || err?.kind || "mail_fail";
-      audit({ evt: "register.manual.resend.mail_fail", email, requestId, code });
+      const code = err?.code || err?.kind || "MAIL_UNKNOWN";
+      const detail = String(err?.original || err?.message || "").slice(0, 180);
+      audit({ evt: "register.manual.resend.mail_fail", email, requestId, code, detail });
       return withHeaders(
         NextResponse.json(
-          { success: false, error: "mail_fail", error_code: code, message: t("mailfail"), request_id: requestId },
+          {
+            success: false,
+            error: "mail_fail",
+            error_code: code,
+            detail,
+            message: t("mailfail"),
+            request_id: requestId,
+          },
           { status: 500 }
-        )
+        ),
+        req
       );
     }
+
     audit({ evt: "register.manual.resend", email, requestId });
     return withHeaders(
-      NextResponse.json({ success: true, message: t("success"), request_id: requestId })
+      NextResponse.json({ success: true, message: t("success"), request_id: requestId }),
+      req
     );
   }
 
@@ -278,21 +300,32 @@ export async function POST(req) {
     },
   });
 
+  // Mail gönder (debug-friendly)
   try {
     await sendActivationEmail(email, activationToken, locale);
   } catch (err) {
-    const code = err?.code || err?.kind || "mail_fail";
-    audit({ evt: "register.manual.create.mail_fail", email, requestId, code });
+    const code = err?.code || err?.kind || "MAIL_UNKNOWN";
+    const detail = String(err?.original || err?.message || "").slice(0, 180);
+    audit({ evt: "register.manual.create.mail_fail", email, requestId, code, detail });
     return withHeaders(
       NextResponse.json(
-        { success: false, error: "mail_fail", error_code: code, message: t("mailfail"), request_id: requestId },
+        {
+          success: false,
+          error: "mail_fail",
+          error_code: code,
+          detail,
+          message: t("mailfail"),
+          request_id: requestId,
+        },
         { status: 500 }
-      )
+      ),
+      req
     );
   }
 
   audit({ evt: "register.manual.created", email, requestId });
   return withHeaders(
-    NextResponse.json({ success: true, message: t("success"), request_id: requestId })
+    NextResponse.json({ success: true, message: t("success"), request_id: requestId }),
+    req
   );
 }

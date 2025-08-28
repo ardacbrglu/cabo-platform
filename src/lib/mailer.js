@@ -1,17 +1,23 @@
 // File: src/lib/mailer.js
 // Purpose: Activation & password-reset emails (Resend first, optional SMTP)
 // Security Docblock (Cabo PROD):
-// - HTTPS 443 öncelikli; SMTP fallback env ile kapatılabilir.
-// - Tokenli URL'ler loglanmaz (yalnız maskeli alıcı).
+// - HTTPS 443 öncelik; SMTP fallback env ile kapatılabilir.
+// - IPv4-first: DNS + undici’de IPv6 kaynaklı egress sorunlarını önler.
 // - Hata sözleşmesi: MailerError { code: MAIL_*, kind, status?, original }.
-// - DNS IPv4-first: bazı PaaS'larda IPv6 egress time-out'larını önler.
+// - Tokenli URL'ler loglanmaz (yalnız maskeli alıcı).
 
 import "server-only";
 import dns from "dns";
 import nodemailer from "nodemailer";
+import { Agent, setGlobalDispatcher } from "undici";
 
-// IPv4-first (Node >=18)
+// ---- IPv4-first (Node & undici)
 try { dns.setDefaultResultOrder?.("ipv4first"); } catch {}
+try {
+  const lookup4 = (hostname, options, cb) =>
+    dns.lookup(hostname, { ...options, family: 4, all: false }, cb);
+  setGlobalDispatcher(new Agent({ connect: { lookup: lookup4 } }));
+} catch {}
 
 /* -------------------- flags & helpers -------------------- */
 const isProd = process.env.NODE_ENV === "production";
@@ -114,7 +120,7 @@ const RESEND_FROM = (process.env.RESEND_FROM || "Cabo <onboarding@resend.dev>").
 const REPLY_TO = (process.env.REPLY_TO || "").trim() || undefined;
 const DISABLE_SMTP_FALLBACK = process.env.MAILER_DISABLE_SMTP_FALLBACK === "1";
 
-// küçük yardımcı: bekleme
+// küçük yardımcı
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function resendHttpSend(payload, timeoutMs = 10_000) {
@@ -151,46 +157,36 @@ async function resendSend({ to, subject, text, html }) {
     reply_to: REPLY_TO,
   };
 
-  // 1 deneme + network için 1 yeniden deneme (kısa)
+  // 1 deneme + network için 1 retry
   for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const { res, text: rawText } = await resendHttpSend(payload, 10_000);
-      if (res.ok) {
-        let data; try { data = JSON.parse(rawText); } catch {}
-        dbg("Resend mail sent →", maskEmail(to), "| id:", data?.id || "n/a");
-        return { ok: true, messageId: data?.id || null };
-      }
-
-      let kind = "unknown";
-      if (res.status === 401 || res.status === 403) kind = "auth";
-      else if (res.status === 429) kind = "rate";
-      else if (res.status >= 400 && res.status < 500) kind = "config";
-      else kind = "network";
-
-      const err = new MailerError(kind, new Error(`resend_${res.status}: ${rawText.slice(0, 250)}`), res.status);
-      const hint =
-        kind === "auth"
-          ? "Check RESEND_API_KEY (no quotes, no < >, key active)."
-          : kind === "config"
-          ? "Check RESEND_FROM (use onboarding@resend.dev or verified domain) and recipient."
-          : kind === "rate"
-          ? "Rate limited; review Resend plan/limits."
-          : "Network/SSL to api.resend.com:443.";
-
-      console.error("[mailer] Resend send failed:", err.code, "-", err.original);
-      if (MAILER_DEBUG) console.error("[mailer] hint:", hint);
-
-      // non-network hatalarda retry anlamsız
-      if (kind !== "network") throw err;
-      if (attempt === 1) await sleep(600); else throw err;
-    } catch (e) {
-      if (e instanceof MailerError) {
-        if (e.kind !== "network" || attempt === 2) throw e;
-        await sleep(600);
-      } else {
-        throw new MailerError("network", e);
-      }
+    const { res, text: rawText } = await resendHttpSend(payload, 10_000);
+    if (res.ok) {
+      let data; try { data = JSON.parse(rawText); } catch {}
+      dbg("Resend mail sent →", maskEmail(to), "| id:", data?.id || "n/a");
+      return { ok: true, messageId: data?.id || null };
     }
+
+    let kind = "unknown";
+    if (res.status === 401 || res.status === 403) kind = "auth";
+    else if (res.status === 429) kind = "rate";
+    else if (res.status >= 400 && res.status < 500) kind = "config";
+    else kind = "network";
+
+    const err = new MailerError(kind, new Error(`resend_${res.status}: ${rawText.slice(0, 250)}`), res.status);
+    const hint =
+      kind === "auth"
+        ? "Check RESEND_API_KEY (no quotes, no < >, key active)."
+        : kind === "config"
+        ? "Check RESEND_FROM (use onboarding@resend.dev or verified domain) and recipient."
+        : kind === "rate"
+        ? "Rate limited; review Resend plan/limits."
+        : "Network/SSL to api.resend.com:443.";
+
+    console.error("[mailer] Resend send failed:", err.code, "-", err.original);
+    if (MAILER_DEBUG) console.error("[mailer] hint:", hint);
+
+    if (kind !== "network" || attempt === 2) throw err;
+    await sleep(600);
   }
 }
 
@@ -259,7 +255,7 @@ async function smtpSend({ to, subject, text, html }) {
       html,
       replyTo: REPLY_TO,
     });
-    dbg("SMTP mail sent →", maskEmail(to), "| id:", info?.messageId || null);
+    dbg("SMTP mail sent →", maskEmail(to), "| id:", info?.messageId || "n/a");
     return { ok: true, messageId: info?.messageId || null };
   } catch (e) {
     const { kind, message } = classifySmtp(e);
@@ -281,18 +277,17 @@ async function smtpSend({ to, subject, text, html }) {
 async function sendGeneric(kind, to, url, locale) {
   const { subject, text, html } = subjectAndBody(kind, url, locale);
 
-  // 1) Resend
+  // 1) Resend (primary)
   if (RESEND_API_KEY) {
     try {
       return await resendSend({ to, subject, text, html });
     } catch (e) {
-      // Fallback kapalıysa veya SMTP yoksa kaldır
       if (DISABLE_SMTP_FALLBACK || !smtpConfigured()) throw e;
-      // aksi halde devam (SMTP)
+      // aksi halde SMTP'ye düş
     }
   }
 
-  // 2) SMTP fallback
+  // 2) SMTP (optional)
   return smtpSend({ to, subject, text, html });
 }
 
