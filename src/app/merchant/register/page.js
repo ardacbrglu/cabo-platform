@@ -1,144 +1,180 @@
-// src/app/register/page.js
 "use client";
 
 /**
- * Affiliate Register (manual only) — Google sign-up disabled
+ * File: src/app/merchant/register/page.js
+ * Purpose: Merchant Register (manual only, no Google) — prod-ready form
  *
  * Security Docblock (Cabo PROD):
- * - All requests go via central apiFetch (credentials:include, X-Requested-With, X-Request-Id).
- * - No custom CSRF on client; server enforces Origin/Referer host match + AJAX + Request-Id + rate limit + reCAPTCHA + Zod.
- * - UI keeps inputs on error; a11y-friendly (aria-live, focus first invalid).
- * - Google sign-up button is intentionally disabled (grey, non-clickable) with a localized "coming soon" notice.
+ * - Tüm istekler merkezi apiFetch ile gider (credentials:include, X-Requested-With, X-Request-Id).
+ * - Mutasyonlar için client tarafında ekstra CSRF işlemi yok; server Origin/Referer + AJAX + Request-Id doğrular.
+ * - Ratelimit ve reCAPTCHA server'da zorunlu; burada yalnız token üretimi yapılır.
+ * - PII client loglanmaz; token/şifre vs. console'a yazılmaz.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
+import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/apiFetch";
 
 // reCAPTCHA (SSR off)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
-const translations = {
+const dicts = {
   en: {
-    title: "Create your Cabo account",
-    infoTitle: "Ready to earn with Cabo?",
+    title: "Register Your Business",
+    infoTitle: "Grow your business with Cabo",
     infoDesc:
-      "Join our network of affiliate promoters — get your unique links, share them, and earn when people make purchases.",
-    infoStrong: "Claim products, promote your links, and get paid!",
-    li1: "No upfront cost or approval needed",
-    li2: "Each product has a unique referral link",
-    li3: "Real-time dashboard with clicks, earnings, payouts",
-    li4: "Withdraw anytime — direct to your bank",
-    faq: "Curious how it works?",
-    faqLink: "Read the FAQ",
-    username: "Username",
-    usernamePH: "Enter your username",
-    email: "Email",
-    emailPH: "you@example.com",
+      "Register your business, create your merchant account and start tracking affiliate-driven product sales.",
+    infoStrong:
+      "Cabo gives you a complete affiliate infrastructure — so you can focus on growth.",
+    li1: "Live tracking & conversion validation",
+    li2: "Control commissions per product",
+    li3: "Webhook integration & analytics",
+    li4: "Secure payment reporting",
+    loginBtn: "Login here",
+    company: "Company Name",
+    fullName: "Full Name (Authorized Person)",
+    email: "Business Email",
+    phone: "Phone Number",
     password: "Password",
-    passwordPH: "Create a password",
-    termsPrefix: "I accept the",
-    termsTos: "Terms of Service",
-    termsAnd: "and",
-    termsPrivacy: "Privacy Policy",
-    registerBtn: "Register",
-    already: "Already have an account?",
-    loginLink: "Log in",
-    or: "or",
-    // Google disabled copy
-    googleBtn: "Sign up with Google",
-    googleSoon: "Google sign-up — coming soon",
-    // Server messages
+    confirmPassword: "Confirm Password",
+    submit: "Create Account",
+    loading: "Creating...",
     success:
-      "Registration successful! Please check your email to activate your account.",
+      "Your merchant request has been received and is pending approval. You’ll be notified by email once your account is activated.",
     failed: "Registration failed.",
-    server: "Server error. Please try again later.",
-    // Field-level
+    invalidCompany: "Company name must be 2–150 valid characters.",
+    invalidName:
+      "Full name must be 3–40 characters (letters/numbers/space/_).",
+    invalidPhone: "Invalid phone number.",
+    invalidEmail: "Invalid email address.",
+    invalidPassword:
+      "Password must be at least 8 characters and include both letters and numbers.",
+    passwordMismatch: "Passwords do not match.",
+    acceptTerms: (
+      <>
+        I accept the{" "}
+        <Link
+          href="/merchant/terms"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link
+          href="/merchant/privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Privacy Policy
+        </Link>
+      </>
+    ),
+    mustAccept: "You must accept the Terms and Privacy Policy.",
+    howWorksQ: "How does our system work?",
+    howWorksLink: "See Details",
+    req_company: "Please fill out this field.",
     req_name: "Please fill out this field.",
     req_email: "Please fill out this field.",
+    req_phone: "Please fill out this field.",
     req_password: "Please fill out this field.",
-    req_terms: "You must accept the terms.",
+    req_password2: "Please confirm your password.",
+    req_terms: "You must accept the Terms.",
     req_captcha: "Please complete the captcha.",
-    invalidEmail: "Invalid email address.",
-    invalidName: "3–32 chars; letters, digits, _ only.",
-    weakPassword: "At least 8 chars and include letters and numbers.",
+    bottomLoginText: "Already have an account?",
+    bottomLoginLink: "Log in",
+    // server error map
+    e_required: "Please fill in all fields.",
+    e_email: "Invalid email address.",
+    e_uniq: "This email is already registered.",
+    e_pending: "This email is already pending review.",
+    e_already_active: "This email is already active.",
+    e_captcha: "Captcha verification failed. Please try again.",
+    e_ratelimit: "Too many requests. Please wait and try again.",
+    e_server: "Server error. Please try again later.",
   },
   tr: {
-    title: "Cabo hesabını oluştur",
-    infoTitle: "Cabo ile kazanmaya hazır mısın?",
+    title: "İşletmeni Kaydet",
+    infoTitle: "İşletmeni Cabo ile büyüt",
     infoDesc:
-      "Büyüyen affiliate ağımıza katıl — kendine özel linklerini al, paylaş ve alışverişlerden kazan!",
-    infoStrong: "Ürünleri seç, linklerini paylaş, ödülünü al!",
-    li1: "Onay/ücret gerekmez",
-    li2: "Her ürün için benzersiz referans linki",
-    li3: "Anlık dashboard: tık, kazanç, çekim",
-    li4: "İstediğin zaman banka hesabına çek",
-    faq: "Nasıl çalışıyor merak ettin mi?",
-    faqLink: "SSS'yi oku",
-    username: "Kullanıcı adı",
-    usernamePH: "Kullanıcı adını gir",
-    email: "E-posta",
-    emailPH: "sen@example.com",
+      "İşletmeni kaydet, satıcı hesabını oluştur ve affiliate yönlendirmeleriyle gelen satışlarını anlık takip et.",
+    infoStrong:
+      "Cabo eksiksiz bir affiliate altyapısı sunar — sen sadece büyümeye odaklan.",
+    li1: "Anlık takip & dönüşüm doğrulama",
+    li2: "Ürün başına komisyon kontrolü",
+    li3: "Webhook entegrasyonu & analiz",
+    li4: "Güvenli ödeme raporları",
+    loginBtn: "Giriş yap",
+    company: "Şirket Adı",
+    fullName: "Ad Soyad (Yetkili)",
+    email: "Firma E-posta",
+    phone: "Telefon Numarası",
     password: "Şifre",
-    passwordPH: "Şifre oluştur",
-    termsPrefix: "",
-    termsTos: "Kullanım Koşulları",
-    termsAnd: "ve",
-    termsPrivacy: "Gizlilik Politikası’nı",
-    registerBtn: "Kaydol",
-    already: "Zaten hesabın var mı?",
-    loginLink: "Giriş yap",
-    or: "veya",
-    // Google disabled copy
-    googleBtn: "Google ile kayıt ol",
-    googleSoon: "Google ile kayıt — yakında",
-    // Server messages
-    success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et.",
+    confirmPassword: "Şifre (Tekrar)",
+    submit: "Hesabı Oluştur",
+    loading: "Kaydediliyor...",
+    success:
+      "Satıcı başvurun alındı ve onay bekliyor. Hesabın aktif olduğunda e-posta ile bilgilendirileceksin.",
     failed: "Kayıt başarısız.",
-    server: "Sunucu hatası. Lütfen tekrar deneyin.",
-    // Field-level
+    invalidCompany: "Şirket adı 2–150 geçerli karakter olmalı.",
+    invalidName: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
+    invalidPhone: "Geçersiz telefon numarası.",
+    invalidEmail: "Geçersiz e-posta.",
+    invalidPassword:
+      "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
+    passwordMismatch: "Şifreler eşleşmiyor.",
+    acceptTerms: (
+      <>
+        <Link
+          href="/merchant/terms"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Kullanım
+        </Link>{" "}
+        ve{" "}
+        <Link
+          href="/merchant/privacy"
+          className="text-[#81d742] underline hover:text-[#b3ffb3]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Gizlilik Şartlarını
+        </Link>{" "}
+        kabul ediyorum
+      </>
+    ),
+    mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
+    howWorksQ: "Sistemimiz nasıl çalışır?",
+    howWorksLink: "Detaylı Bilgi",
+    req_company: "Lütfen bu alanı doldurun.",
     req_name: "Lütfen bu alanı doldurun.",
     req_email: "Lütfen bu alanı doldurun.",
+    req_phone: "Lütfen bu alanı doldurun.",
     req_password: "Lütfen bu alanı doldurun.",
+    req_password2: "Lütfen şifreyi tekrar girin.",
     req_terms: "Şartları kabul etmelisiniz.",
     req_captcha: "Lütfen robot olmadığınızı doğrulayın.",
-    invalidEmail: "Geçersiz e-posta.",
-    invalidName: "3–32 karakter; harf, rakam, _.",
-    weakPassword: "En az 8 karakter; harf ve rakam içermeli.",
+    bottomLoginText: "Zaten hesabın var mı?",
+    bottomLoginLink: "Giriş yap",
+    // server error map
+    e_required: "Lütfen tüm alanları doldurun.",
+    e_email: "Geçersiz e-posta.",
+    e_uniq: "Bu e-posta zaten kayıtlı.",
+    e_pending: "Bu e-posta zaten incelemede.",
+    e_already_active: "Bu e-posta zaten aktif.",
+    e_captcha: "Doğrulama başarısız. Lütfen tekrar deneyin.",
+    e_ratelimit: "Çok fazla istek. Biraz bekleyip tekrar deneyin.",
+    e_server: "Sunucu hatası. Lütfen tekrar deneyin.",
   },
 };
-
-function TermsLabel({ locale }) {
-  const isTr = String(locale || "en").toLowerCase().startsWith("tr");
-  const dict = isTr ? translations.tr : translations.en;
-  return (
-    <>
-      {dict.termsPrefix ? <>{dict.termsPrefix} </> : null}
-      <Link
-        href={`/terms?lang=${isTr ? "tr" : "en"}`}
-        className="text-[#81d742] underline hover:text-[#b3ffb3]"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {dict.termsTos}
-      </Link>{" "}
-      {dict.termsAnd}{" "}
-      <Link
-        href={`/privacy?lang=${isTr ? "tr" : "en"}`}
-        className="text-[#81d742] underline hover:text-[#b3ffb3]"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {dict.termsPrivacy}
-      </Link>
-      {isTr ? " kabul ediyorum" : ""}
-    </>
-  );
-}
 
 function FieldHint({ show, message }) {
   if (!show) return null;
@@ -159,81 +195,167 @@ function FieldHint({ show, message }) {
   );
 }
 
-export default function RegisterPage() {
+export default function MerchantRegisterPage() {
   const { locale, ready } = useLocale();
-  const dict = useMemo(() => {
-    const isTr = String(locale || "en").toLowerCase().startsWith("tr");
-    return isTr ? translations.tr : translations.en;
-  }, [locale]);
+  const dict = useMemo(
+    () => (String(locale).toLowerCase().startsWith("tr") ? dicts.tr : dicts.en),
+    [locale]
+  );
   const t = (k) => dict[k] ?? k;
 
-  // form state
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [form, setForm] = useState({
+    companyName: "",
+    name: "",
+    email: "",
+    password: "",
+    password2: "",
+    phone: "",
+    countryCode: "+90",
+  });
   const [terms, setTerms] = useState(false);
+
   const [captcha, setCaptcha] = useState("");
+  const [captchaEnabled, setCaptchaEnabled] = useState(true);
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [serverError, setServerError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  // validation helpers
-  const [submitted, setSubmitted] = useState(false);
+  // Tooltip visibility
   const [hintsVisible, setHintsVisible] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
   const programmaticFocusRef = useRef(false);
 
+  // Localhost captcha bypass (only if explicitly allowed)
   useEffect(() => {
-    function close() { setHintsVisible(false); }
+    const disableLocal = process.env.NEXT_PUBLIC_RECAPTCHA_DISABLE_LOCAL === "1";
+    if (
+      disableLocal &&
+      (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+    ) {
+      setCaptchaEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    function closeHints() {
+      setHintsVisible(false);
+    }
     if (hintsVisible) {
-      window.addEventListener("pointerdown", close, { once: true });
-      window.addEventListener("keydown", close, { once: true });
+      window.addEventListener("pointerdown", closeHints, { once: true });
+      window.addEventListener("keydown", closeHints, { once: true });
       return () => {
-        window.removeEventListener("pointerdown", close);
-        window.removeEventListener("keydown", close);
+        window.removeEventListener("pointerdown", closeHints);
+        window.removeEventListener("keydown", closeHints);
       };
     }
   }, [hintsVisible]);
 
   if (!ready) return null;
 
+  const onChange = (e) => {
+    const { name, value } = e.target;
+    setServerError("");
+
+    if (name === "email" && captchaEnabled && captcha) {
+      // e-posta değiştiyse v3 token yeniden alınmalı
+      setCaptcha("");
+      setCaptchaResetKey((k) => k + 1);
+    }
+
+    if (name === "phone") {
+      const digits = value.replace(/\D+/g, "");
+      setForm((s) => ({ ...s, phone: digits }));
+      return;
+    }
+    setForm((s) => ({ ...s, [name]: value }));
+  };
+
+  const reName = /^[\p{L}\p{N}_ ]+$/u;
+  const reCompany = /^[\p{L}\p{N}\s&_.,'’()-]+$/u;
+
   const validate = () => {
     const errs = {};
-    if (!name) errs.name = t("req_name");
-    else if (!/^[A-Za-z0-9_]{3,32}$/.test(name)) errs.name = t("invalidName");
+    if (!form.companyName) errs.companyName = t("req_company");
+    else if (
+      form.companyName.length < 2 ||
+      form.companyName.length > 150 ||
+      !reCompany.test(form.companyName.trim())
+    )
+      errs.companyName = t("invalidCompany");
 
-    if (!email) errs.email = t("req_email");
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = t("invalidEmail");
+    if (!form.name) errs.name = t("req_name");
+    else if (
+      form.name.length < 3 ||
+      form.name.length > 40 ||
+      !reName.test(form.name.trim())
+    )
+      errs.name = t("invalidName");
 
-    if (!password) errs.password = t("req_password");
-    else if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))
-      errs.password = t("weakPassword");
+    if (!form.email) errs.email = t("req_email");
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
+      errs.email = t("invalidEmail");
+
+    if (!form.phone) errs.phone = t("req_phone");
+    else if (!/^\d{10,15}$/.test(form.phone)) errs.phone = t("invalidPhone");
+
+    if (!form.password) errs.password = t("req_password");
+    else if (
+      form.password.length < 8 ||
+      !/\d/.test(form.password) ||
+      !/[a-zA-Z]/.test(form.password)
+    )
+      errs.password = t("invalidPassword");
+
+    if (!form.password2) errs.password2 = t("req_password2");
+    else if (form.password2 !== form.password)
+      errs.password2 = t("passwordMismatch");
 
     if (!terms) errs.terms = t("req_terms");
-    if (!captcha) errs.captcha = t("req_captcha");
+    if (captchaEnabled && !captcha) errs.captcha = t("req_captcha");
+
     return errs;
   };
 
   const errors = submitted ? validate() : {};
-  const needsRef = (nameKey) => submitted && errors[nameKey] && !firstInvalidRef.current;
-  const showHint = (nameKey) => hintsVisible && !!errors[nameKey] && (nameKey === "terms" || nameKey === "captcha");
+  const show = (name) =>
+    hintsVisible && !!errors[name] && (name === "terms" || name === "captcha");
+  const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
+
+  const handleFocus = () => {
+    if (!programmaticFocusRef.current) setHintsVisible(false);
+  };
+
+  function mapServerError(json) {
+    const code = String(json?.error || json?.error_code || "").toLowerCase();
+    if (!code) return json?.message || t("failed");
+
+    // normalize
+    if (code.includes("captcha")) return t("e_captcha");
+    if (code.includes("too_many") || code.includes("rate")) return t("e_ratelimit");
+    if (code.includes("already_active")) return t("e_already_active");
+    if (code.includes("pending")) return t("e_pending");
+    if (code.includes("uniq") || code.includes("exists") || code.includes("conflict"))
+      return t("e_uniq");
+    if (code.includes("email")) return t("e_email");
+    if (code.includes("required") || code.includes("invalid_payload"))
+      return t("e_required");
+    if (code.includes("mail")) return t("e_server");
+    return json?.message || t("failed");
+  }
 
   const inputBase =
     "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
   const ringOk = "focus:ring-[#81d742]";
   const ringErr = "focus:ring-red-400 border-red-500";
 
-  const handleFocus = () => {
-    if (!programmaticFocusRef.current) setHintsVisible(false);
-  };
-
   async function onSubmit(e) {
     e.preventDefault();
     setSubmitted(true);
     setServerError("");
-    setSuccess("");
+    setSuccess(false);
     firstInvalidRef.current = null;
 
     const errs = validate();
@@ -252,32 +374,54 @@ export default function RegisterPage() {
     setHintsVisible(false);
     setLoading(true);
     try {
-      const res = await apiFetch("/api/register", {
+      const fullPhone = `${form.countryCode}${form.phone}`.trim();
+      const body = {
+        companyName: form.companyName.trim(),
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+        phoneNumber: fullPhone,
+        termsAccepted: true,
+      };
+      if (captchaEnabled && captcha) body.captcha = captcha;
+
+      const res = await apiFetch("/api/register_merchant", {
         method: "POST",
+        body,
         headers: { "accept-language": locale || "en" },
-        body: {
-          flow: "manual",
-          name: name.trim(),
-          email: email.trim().toLowerCase(),
-          password,
-          termsAccepted: true,
-          captcha,
-        },
       });
+
+      // explicit 429 handling (apiFetch zaten tek retry yapar)
+      if (res.status === 429) {
+        const data = await res.json().catch(() => ({}));
+        setServerError(mapServerError(data));
+        if (captchaEnabled) {
+          setCaptcha("");
+          setCaptchaResetKey((k) => k + 1);
+        }
+        setLoading(false);
+        return;
+      }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
-        setServerError(data?.message || t("failed"));
-        setCaptcha("");
-        setCaptchaResetKey((k) => k + 1);
+        setServerError(mapServerError(data));
+        if (captchaEnabled) {
+          setCaptcha("");
+          setCaptchaResetKey((k) => k + 1);
+        }
       } else {
-        setSuccess(t("success"));
-        setTimeout(() => (window.location.href = "/login"), 1800);
+        setSuccess(true);
+        setTimeout(() => {
+          window.location.assign("/merchant/login");
+        }, 2000);
       }
     } catch {
-      setServerError(t("server"));
-      setCaptcha("");
-      setCaptchaResetKey((k) => k + 1);
+      setServerError(t("e_server"));
+      if (captchaEnabled) {
+        setCaptcha("");
+        setCaptchaResetKey((k) => k + 1);
+      }
     } finally {
       setLoading(false);
     }
@@ -289,180 +433,248 @@ export default function RegisterPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
+              {t("infoTitle")}
+            </h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">
+              {t("infoStrong")}
+            </p>
+            <ul
+              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
+              style={{ maxWidth: 340 }}
+            >
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
               <li>{t("li4")}</li>
             </ul>
 
-            <div className="text-gray-400 text-sm">
-              {t("faq")}{" "}
-              <Link href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-                {t("faqLink")}
+            <div className="text-[#81d742] mt-4 text-base font-semibold">
+              {t("howWorksQ")}{" "}
+              <Link
+                href="/merchant/info"
+                className="underline hover:text-[#b3ffb3] transition"
+              >
+                {t("howWorksLink")}
               </Link>
             </div>
           </div>
         </div>
 
         {/* FORM CARD */}
-        <form
-          onSubmit={onSubmit}
-          className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center cabo-mobile-bottom-space"
-          autoComplete="off"
-          noValidate
-        >
-          <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-2">{t("title")}</h3>
+        <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
 
-          {/* Username */}
-          <div className="w-full relative" onFocus={handleFocus}>
-            <input
-              ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value.replace(/[^A-Za-z0-9_]/g, ""))}
-              placeholder={t("usernamePH")}
-              minLength={3}
-              maxLength={32}
-              required
-              aria-invalid={!!errors.name}
-              className={`${inputBase} ${errors.name ? ringErr : ringOk}`}
-            />
-            {submitted && errors.name && (
-              <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.name}</p>
-            )}
-          </div>
-
-          {/* Email */}
-          <div className="w-full relative" onFocus={handleFocus}>
-            <input
-              ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value.trimStart())}
-              placeholder={t("emailPH")}
-              required
-              aria-invalid={!!errors.email}
-              className={`${inputBase} ${errors.email ? ringErr : ringOk}`}
-            />
-            {submitted && errors.email && (
-              <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.email}</p>
-            )}
-          </div>
-
-          {/* Password */}
-          <div className="w-full relative" onFocus={handleFocus}>
-            <input
-              ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("passwordPH")}
-              minLength={8}
-              autoComplete="new-password"
-              required
-              aria-invalid={!!errors.password}
-              className={`${inputBase} ${errors.password ? ringErr : ringOk}`}
-            />
-            {submitted && errors.password && (
-              <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.password}</p>
-            )}
-          </div>
-
-          {/* Terms (tooltip near checkbox) */}
-          <div className="relative flex items-center gap-2 w-full" onFocus={handleFocus}>
-            <input
-              id="terms"
-              type="checkbox"
-              checked={terms}
-              onChange={(e) => setTerms(e.target.checked)}
-              required
-              aria-invalid={!!errors.terms}
-              className="accent-[#81d742] h-5 w-5"
-            />
-            <label htmlFor="terms" className="text-base md:text-lg text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
-              <TermsLabel locale={locale} />
-            </label>
-            <FieldHint show={showHint("terms")} message={errors.terms} />
-          </div>
-
-          {/* CAPTCHA */}
-          <div className="w-full relative" onFocus={handleFocus}>
-            <Captcha
-              onChange={(val) => {
-                setCaptcha(val || "");
-                if (val) {
-                  // hide hint if solved
-                }
-              }}
-              lang={locale}
-              resetKey={captchaResetKey}
-            />
-            <FieldHint show={showHint("captcha")} message={errors.captcha} />
-          </div>
-
-          {/* Server messages */}
-          {serverError && (
-            <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
-              {serverError}
-            </div>
-          )}
-          {success && (
-            <div className="text-green-400 text-base text-center" role="status" aria-live="polite">
-              {success}
-            </div>
-          )}
-
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#81d742] text-[#0b0b0b] rounded-lg hover:bg-[#aaff6c] transition disabled:opacity-60"
+          <form
+            onSubmit={onSubmit}
+            className="w-full flex flex-col gap-6"
+            autoComplete="off"
+            noValidate
           >
-            {loading ? (
-              <span className="inline-flex items-center gap-2">
-                <Loader2 className="animate-spin" size={18} /> {t("registerBtn")}
-              </span>
-            ) : t("registerBtn")}
-          </button>
+            {/* Company */}
+            <div className="relative" onFocus={handleFocus}>
+              <input
+                ref={(el) => {
+                  if (needsRef("companyName")) firstInvalidRef.current = el;
+                }}
+                type="text"
+                name="companyName"
+                placeholder={t("company")}
+                value={form.companyName}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.companyName}
+                className={`${inputBase} ${
+                  errors.companyName ? ringErr : ringOk
+                }`}
+              />
+            </div>
 
-          {/* Divider */}
-          <div className="w-full flex items-center justify-between my-2">
-            <span className="flex-1 h-px bg-[#232323]" />
-            <span className="px-2 text-gray-400 text-sm">{t("or")}</span>
-            <span className="flex-1 h-px bg-[#232323]" />
-          </div>
+            {/* Name */}
+            <div className="relative" onFocus={handleFocus}>
+              <input
+                ref={(el) => {
+                  if (needsRef("name")) firstInvalidRef.current = el;
+                }}
+                type="text"
+                name="name"
+                placeholder={t("fullName")}
+                value={form.name}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.name}
+                className={`${inputBase} ${errors.name ? ringErr : ringOk}`}
+              />
+            </div>
 
-          {/* Google disabled notice + disabled button (light grey) */}
-          <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
-            {t("googleSoon")}
-          </div>
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            className="w-full py-3 md:py-4 text-base md:text-lg font-semibold bg-[#eceff3] text-[#8a8f98] rounded-lg border border-[#d7dbe0] shadow-none cursor-not-allowed select-none flex items-center justify-center gap-2"
-          >
-            <img src="/google.svg" alt="" className="w-6 h-6 mr-1 opacity-60" />
-            {t("googleBtn")}
-          </button>
+            {/* Email */}
+            <div className="relative" onFocus={handleFocus}>
+              <input
+                ref={(el) => {
+                  if (needsRef("email")) firstInvalidRef.current = el;
+                }}
+                type="email"
+                name="email"
+                placeholder={t("email")}
+                value={form.email}
+                onChange={onChange}
+                required
+                aria-invalid={!!errors.email}
+                className={`${inputBase} ${errors.email ? ringErr : ringOk}`}
+              />
+            </div>
 
-          <div className="text-sm md:text-base text-gray-400 text-center pt-4">
-            {t("already")}{" "}
-            <Link href="/login" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-              {t("loginLink")}
+            {/* Phone */}
+            <div className="flex gap-3">
+              <select
+                name="countryCode"
+                value={form.countryCode}
+                onChange={onChange}
+                className="bg-white text-black rounded-lg px-3 py-3 border border-[#232323] focus:outline-none focus:ring-2 focus:ring-[#81d742]"
+                aria-label="Country code"
+              >
+                <option value="+90">🇹🇷 +90</option>
+                <option value="+1">🇺🇸 +1</option>
+              </select>
+              <div className="relative flex-1" onFocus={handleFocus}>
+                <input
+                  ref={(el) => {
+                    if (needsRef("phone")) firstInvalidRef.current = el;
+                  }}
+                  type="tel"
+                  name="phone"
+                  placeholder={t("phone")}
+                  value={form.phone}
+                  onChange={onChange}
+                  inputMode="numeric"
+                  required
+                  aria-invalid={!!errors.phone}
+                  className={`${inputBase} ${errors.phone ? ringErr : ringOk}`}
+                />
+              </div>
+            </div>
+
+            {/* Password */}
+            <div className="relative" onFocus={handleFocus}>
+              <input
+                ref={(el) => {
+                  if (needsRef("password")) firstInvalidRef.current = el;
+                }}
+                type="password"
+                name="password"
+                placeholder={t("password")}
+                value={form.password}
+                onChange={onChange}
+                minLength={8}
+                autoComplete="new-password"
+                required
+                aria-invalid={!!errors.password}
+                className={`${inputBase} ${errors.password ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Confirm Password */}
+            <div className="relative" onFocus={handleFocus}>
+              <input
+                ref={(el) => {
+                  if (needsRef("password2")) firstInvalidRef.current = el;
+                }}
+                type="password"
+                name="password2"
+                placeholder={t("confirmPassword")}
+                value={form.password2}
+                onChange={onChange}
+                minLength={8}
+                autoComplete="new-password"
+                required
+                aria-invalid={!!errors.password2}
+                className={`${inputBase} ${errors.password2 ? ringErr : ringOk}`}
+              />
+            </div>
+
+            {/* Terms (tooltip açık) */}
+            <div
+              className="relative flex items-center gap-2 mb-1"
+              onFocus={handleFocus}
+            >
+              <input
+                id="terms"
+                type="checkbox"
+                checked={terms}
+                onChange={(e) => setTerms(e.target.checked)}
+                required
+                aria-invalid={!!errors.terms}
+                className="accent-[#81d742] h-4 w-4"
+              />
+              <label
+                htmlFor="terms"
+                className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap"
+              >
+                {t("acceptTerms")}
+              </label>
+              <FieldHint show={show("terms")} message={t("mustAccept")} />
+            </div>
+
+            {/* CAPTCHA (opsiyonel) */}
+            {captchaEnabled && (
+              <div className="relative" onFocus={handleFocus}>
+                <Captcha
+                  onChange={setCaptcha}
+                  lang={locale}
+                  resetKey={captchaResetKey}
+                />
+                <FieldHint show={show("captcha")} message={t("req_captcha")} />
+              </div>
+            )}
+
+            {/* Server messages */}
+            {serverError && (
+              <p className="text-red-500 text-base" role="alert" aria-live="polite">
+                {serverError}
+              </p>
+            )}
+            {success && (
+              <p className="text-green-400 text-base" role="status" aria-live="polite">
+                {t("success")}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
+            >
+              {loading ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="animate-spin" size={18} /> {t("loading")}
+                </span>
+              ) : (
+                t("submit")
+              )}
+            </button>
+          </form>
+
+          <div className="w-full mt-8 pt-6 border-t border-[#232323] text-center text-sm text-gray-400">
+            {t("bottomLoginText")}{" "}
+            <Link
+              href="/merchant/login"
+              className="text-[#81d742] underline hover:text-[#b3ffb3]"
+            >
+              {t("bottomLoginLink")}
             </Link>
           </div>
-        </form>
+        </div>
       </div>
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space { margin-top: 1rem; }
-          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
+          .cabo-mobile-top-space {
+            margin-top: 1rem;
+          }
+          .cabo-mobile-bottom-space {
+            margin-bottom: 3rem;
+          }
         }
       `}</style>
     </PublicLayout>
