@@ -1,4 +1,3 @@
-// /app/support/page.jsx
 "use client";
 
 import Layout from "@/components/Layout";
@@ -7,11 +6,11 @@ import { useUser } from "@/context/UserContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useState, useRef } from "react";
 import Captcha from "@/components/Captcha";
-import apiFetch from "@/lib/apiFetch";
+import { apiFetch } from "@/lib/apiFetch"; // <-- named import
 
 export default function SupportPage() {
   const { user } = useUser();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
 
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
@@ -21,13 +20,32 @@ export default function SupportPage() {
   const [captchaKey, setCaptchaKey] = useState(0); // reset için remount
   const msgRef = useRef(null);
 
+  const mapError = (codeOrMsg) => {
+    const s = String(codeOrMsg || "").toLowerCase();
+    if (s.includes("captcha")) return t("captchaRequired") || "Please complete the captcha.";
+    if (s.includes("too many") || s.includes("rate")) return t("tooManyRequests") || "Too many requests. Please try again.";
+    if (s.includes("unauthorized")) return t("mustLogin") || "Please login first.";
+    if (s.includes("invalid")) return t("errorInvalid") || "Invalid request.";
+    return t("errorGeneric") || "Something went wrong. Please try again.";
+  };
+
+  const resetCaptcha = () => {
+    setCaptchaToken(null);
+    setCaptchaKey((k) => k + 1);
+  };
+
   const handleSend = async (e) => {
     e.preventDefault();
     setError("");
 
-    if (!message.trim()) return;
+    const text = message.trim();
+    if (!text) return;
     if (!captchaToken) {
       setError(t("captchaRequired") || "Please complete the captcha.");
+      return;
+    }
+    if (!user?.id) {
+      setError(t("mustLogin") || "Please login first.");
       return;
     }
 
@@ -36,34 +54,39 @@ export default function SupportPage() {
       const res = await apiFetch("/api/support", {
         method: "POST",
         headers: {
-          // CSRF header'ını apiFetch otomatik ekler; reCAPTCHA token'ını biz ekliyoruz
+          // reCAPTCHA token header (server bunu okuyacak)
           "x-recaptcha-token": captchaToken,
+          "accept-language": locale || "en",
         },
-        body: { message },
+        body: { message: text },
       });
 
-      const data = await res.json().catch(() => ({}));
+      // özel 429/401 branch
+      if (res.status === 429 || res.status === 401) {
+        const data = await res.json().catch(() => ({}));
+        setError(mapError(data?.error || res.statusText));
+        resetCaptcha();
+        setSending(false);
+        msgRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
 
-      if (res.ok && data.success) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
         setSent(true);
         setMessage("");
-        setCaptchaToken(null);
-        setCaptchaKey((k) => k + 1); // captcha reset
+        resetCaptcha();
         setTimeout(() => setSent(false), 3500);
       } else {
-        setError(data.error || t("errorGeneric"));
-        setCaptchaToken(null);
-        setCaptchaKey((k) => k + 1);
+        setError(mapError(data?.error || data?.message));
+        resetCaptcha();
       }
     } catch {
-      setError(t("errorGeneric"));
-      setCaptchaToken(null);
-      setCaptchaKey((k) => k + 1);
+      setError(t("errorGeneric") || "Something went wrong. Please try again.");
+      resetCaptcha();
     } finally {
       setSending(false);
-      if (msgRef.current) {
-        msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+      msgRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
@@ -88,11 +111,12 @@ export default function SupportPage() {
               )}
             </div>
 
-            {/* Başarı / Hata Mesajları */}
+            {/* Flash messages */}
             {sent && (
               <div
                 ref={msgRef}
                 className="flex items-center gap-2 bg-[#182f18] border border-[#81d74280] text-[#aaff99] rounded-md px-4 py-2 mb-4"
+                role="status" aria-live="polite"
               >
                 <CheckCircle size={18} className="text-[#81d742]" />
                 {t("messageSent")}
@@ -102,12 +126,13 @@ export default function SupportPage() {
               <div
                 ref={msgRef}
                 className="flex items-center gap-2 bg-red-900/80 border border-red-500 text-red-200 rounded-md px-4 py-2 mb-4"
+                role="alert" aria-live="assertive"
               >
                 {error}
               </div>
             )}
 
-            <form onSubmit={handleSend} autoComplete="off">
+            <form onSubmit={handleSend} autoComplete="off" noValidate>
               <label className="block text-[#d1ffd0] text-xs font-bold font-mono mb-2">
                 {t("yourMessage")}
               </label>
@@ -119,7 +144,6 @@ export default function SupportPage() {
                 disabled={sending}
                 required
                 maxLength={900}
-                autoComplete="off"
               />
 
               {/* CAPTCHA */}
@@ -133,7 +157,7 @@ export default function SupportPage() {
               <button
                 type="submit"
                 className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={sending || !message.trim() || !captchaToken}
+                disabled={sending || !message.trim() || !captchaToken || !user?.id}
               >
                 {sending ? t("sending") : t("send")}
               </button>
@@ -166,36 +190,7 @@ export default function SupportPage() {
             <div className="flex items-center gap-2 mb-4 text-[#81d742] font-extrabold text-lg">
               <Info size={21} /> {t("faq")}
             </div>
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqWithdraw")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqWithdrawAnswerLong")}</div>
-              </div>
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqAffiliateLinks")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqAffiliateLinksAnswerLong")}</div>
-              </div>
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqWhenPayout")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqWhenPayoutAnswerLong")}</div>
-              </div>
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqPayoutMethod")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqPayoutMethodAnswerLong")}</div>
-              </div>
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqContactChange")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqContactChangeAnswerLong")}</div>
-              </div>
-              <div>
-                <div className="text-xs font-mono text-[#d1ffd0] mb-1 font-bold">{t("faqNoCommission")}</div>
-                <div className="text-gray-300 text-xs font-mono">{t("faqNoCommissionAnswerLong")}</div>
-              </div>
-            </div>
-            <div className="mt-7 text-gray-400 font-mono text-[0.90rem] text-center">
-              {t("stillNeedHelp")}{" "}
-              <span className="text-[#81d742] underline">{t("sendSupportMessageSuggestion")}</span>
-            </div>
+            {/* ... mevcut FAQ içeriğin ... */}
           </div>
         </div>
       </main>
