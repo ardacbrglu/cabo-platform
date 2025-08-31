@@ -5,17 +5,17 @@
  * Purpose: Public (unauthenticated) pages layout — desktop mevcut stil, mobile MerchantLayout ile 1e1
  *
  * UX/Security Docblock:
- * - Desktop header/nav: ESKİ HALİ KORUNDU.
- * - Mobile header/nav: MerchantLayout’taki davranış ile 1e1 (hamburger → başlık altına açılan liste).
+ * - Desktop header/nav: ESKİ HALİ KORUNDU; dil değişimi butonu artık açılır çekmece (dropdown).
+ * - Mobile header/nav: MerchantLayout’taki davranış ile 1e1 (hamburger → başlık altına açılan liste), dil seçimi eklendi.
  * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
  * - Rota değişiminde mobil menü otomatik kapanır.
- * - Erişilebilirlik: aria-label, aria-expanded; focus ring’ler korunur.
+ * - Erişilebilirlik: aria-label, aria-expanded, aria-haspopup; ESC ile kapanma; dışa tıklayınca kapanma.
  */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { Menu } from "lucide-react";
+import { Menu, Globe, ChevronDown } from "lucide-react";
 
 const translations = {
   en: {
@@ -26,6 +26,7 @@ const translations = {
     merchantQ: "Are you a product owner?",
     merchantAccess: "Merchant access",
     copyright: "Cabo Affiliate | Built by Arda Cabaroğlu",
+    language: "Language",
   },
   tr: {
     home: "Anasayfa",
@@ -35,14 +36,24 @@ const translations = {
     merchantQ: "Ürün sahibi misin?",
     merchantAccess: "Satıcı girişi",
     copyright: "Cabo Affiliate | Arda Cabaroğlu tarafından geliştirilmiştir",
+    language: "Dil",
   },
 };
+
+const LANGS = [
+  { code: "tr", short: "TR", label: "Türkçe" },
+  { code: "en", short: "EN", label: "English" },
+];
 
 export default function PublicLayout({ children }) {
   const { locale, setLocale, ready } = useLocale();
   const [isMobile, setIsMobile] = useState(false);
   const [currentPath, setCurrentPath] = useState("/");
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Desktop dil dropdown durumu
+  const [langOpen, setLangOpen] = useState(false);
+  const langRef = useRef(null);
 
   // client-only ölçümler
   useEffect(() => {
@@ -59,13 +70,16 @@ export default function PublicLayout({ children }) {
       try {
         setCurrentPath(window.location.pathname || "/");
         setMobileOpen(false);
+        setLangOpen(false);
       } catch {}
     };
     const patch = (type) => {
       const orig = history[type];
       return function (...args) {
         const ret = orig.apply(this, args);
-        try { window.dispatchEvent(new Event("locationchange")); } catch {}
+        try {
+          window.dispatchEvent(new Event("locationchange"));
+        } catch {}
         return ret;
       };
     };
@@ -81,10 +95,30 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
+  // Desktop dil menüsü: dışa tıklayınca ve ESC ile kapat
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!langRef.current) return;
+      if (!langRef.current.contains(e.target)) setLangOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        setLangOpen(false);
+        setMobileOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   if (!ready) return null;
 
   const t = (k) => (translations[locale] || translations.en)[k] || k;
-  const LANG_LABEL = locale === "tr" ? "TR" : "EN";
+  const LANG_LABEL = (LANGS.find((l) => l.code === locale) || LANGS[1]).short; // default EN
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -98,6 +132,27 @@ export default function PublicLayout({ children }) {
       currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
     }`;
 
+  const LangOption = ({ code, label, short }) => {
+    const active = locale === code;
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setLocale(code);
+          setLangOpen(false);
+        }}
+        className={`w-full text-left px-3 py-2 rounded-md transition ${
+          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+        }`}
+        role="menuitem"
+        aria-current={active ? "true" : "false"}
+      >
+        <span className="mr-2 inline-block min-w-[2.2rem] text-center font-bold">{short}</span>
+        <span>{label}</span>
+      </button>
+    );
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0b0b] text-white font-sans tracking-tight">
       {/* HEADER */}
@@ -109,26 +164,49 @@ export default function PublicLayout({ children }) {
           Cabo
         </h1>
 
-        {/* DESKTOP — eski hali birebir korunur */}
+        {/* DESKTOP — eski hali, dil için dropdown eklendi */}
         {!isMobile ? (
-          <nav aria-label="Public navigation">
+          <nav aria-label="Public navigation" className="relative">
             <ul className="flex gap-7 text-sm font-medium items-center">
               {navLinks.map((item) => (
                 <li key={item.href}>
-                  <Link href={item.href} className={linkClassDesktop(item.href)} prefetch={false}>
+                  <Link
+                    href={item.href}
+                    className={linkClassDesktop(item.href)}
+                    prefetch={false}
+                    aria-current={currentPath === item.href ? "page" : undefined}
+                  >
                     {item.label}
                   </Link>
                 </li>
               ))}
-              <li className="ml-2">
+
+              {/* Dil Değiştirici (Dropdown) */}
+              <li className="ml-2 relative" ref={langRef}>
                 <button
                   type="button"
-                  className="px-2 py-1 rounded text-[#81d742] font-bold transition hover:text-[#b0f7a2]"
+                  className="px-2 py-1 rounded text-[#81d742] font-bold transition hover:text-[#b0f7a2] flex items-center gap-1"
                   aria-label="Change language"
-                  onClick={() => setLocale(locale === "tr" ? "en" : "tr")}
+                  aria-haspopup="menu"
+                  aria-expanded={langOpen}
+                  onClick={() => setLangOpen((s) => !s)}
                 >
+                  <Globe size={16} aria-hidden="true" />
                   {LANG_LABEL}
+                  <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} aria-hidden="true" />
                 </button>
+
+                {langOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Language selector"
+                    className="absolute right-0 mt-2 w-44 rounded-lg border border-[#1e1e1e] bg-[#131313] shadow-lg p-1 z-20"
+                  >
+                    {LANGS.map((l) => (
+                      <LangOption key={l.code} {...l} />
+                    ))}
+                  </div>
+                )}
               </li>
             </ul>
           </nav>
@@ -136,7 +214,7 @@ export default function PublicLayout({ children }) {
           // MOBILE — MerchantLayout ile 1e1 (hamburger + başlık altına açılan liste)
           <div className="flex items-center">
             <button
-              onClick={() => setMobileOpen(!mobileOpen)}
+              onClick={() => setMobileOpen((s) => !s)}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
@@ -160,10 +238,39 @@ export default function PublicLayout({ children }) {
               className={`block py-2 transition ${
                 currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"
               }`}
+              aria-current={currentPath === l.href ? "page" : undefined}
             >
               {l.label}
             </Link>
           ))}
+
+          {/* Mobil Dil Seçimi */}
+          <div className="mt-2 pt-2 border-t border-[#222]">
+            <div className="flex items-center gap-2 text-gray-400 mb-1">
+              <Globe size={16} aria-hidden="true" />
+              <span className="uppercase tracking-wide">{t("language")} / Language</span>
+            </div>
+            <div className="flex gap-2">
+              {LANGS.map((l) => {
+                const active = locale === l.code;
+                return (
+                  <button
+                    key={l.code}
+                    type="button"
+                    onClick={() => setLocale(l.code)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-semibold transition border ${
+                      active
+                        ? "border-[#2a2a2a] bg-[#1a1a1a] text-[#81d742]"
+                        : "border-[#1f1f1f] text-gray-200 hover:bg-[#161616]"
+                    }`}
+                    aria-current={active ? "true" : "false"}
+                  >
+                    {l.short}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
