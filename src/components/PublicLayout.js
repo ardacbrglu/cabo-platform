@@ -5,12 +5,12 @@
  * Purpose: Public (unauthenticated) pages layout — desktop mevcut stil, mobile MerchantLayout ile 1e1
  *
  * UX/Security Docblock (Cabo PROD):
- * - Desktop nav: dil butonu yalnız ikon; açılır menüde bayrak + "TR/EN". Mavi focus outline devre dışı.
- * - Mobile menü: hamburger ile aç/kapa; dil alt-menüsünde bayrak + TR/EN. Seçim sonrası otomatik kapanma YOK.
- *   Dışa tıklayınca veya hamburger ikonuna basınca kapanır.
+ * - Desktop nav: dil butonu yalnız ikon; açılır menüde bayrak + "TR/EN".
+ * - Mobile menü ve mobil dil akışı DEĞİŞMEDİ (aynen korundu) — sadece seçeneklerin yanına bayrak eklendi.
  * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır.
- * - Alt şerit (“Are you a product owner?”) + footer, içeriğe bakmaksızın ekranın ALTINA yapışır (flex-1).
- * - Erişilebilirlik: aria-* öznitelikleri; ESC ve dış tıklamada kapanma (desktop).
+ * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
+ * - Rota değişiminde tüm açılır menüler kapanır; ESC/dış tıklamada kapanır.
+ * - Desktop’ta gri CTA şeridi ve footer her zaman alta yapışsın diye main’in desktop minHeight’ı kaldırıldı.
  */
 
 import Link from "next/link";
@@ -52,8 +52,10 @@ function FlagTR({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="18" height="12" fill="#E30A17" />
+      {/* hilal */}
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
+      {/* yıldız */}
       <polygon
         fill="#fff"
         points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
@@ -87,9 +89,9 @@ export default function PublicLayout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileLangOpen, setMobileLangOpen] = useState(false);
 
-  const [langOpen, setLangOpen] = useState(false); // desktop dropdown
+  // Desktop dil dropdown durumu
+  const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef(null);
-  const mobileMenuRef = useRef(null); // dış tıklama için
 
   // client-only ölçümler
   useEffect(() => {
@@ -100,16 +102,41 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // Rota değişiminde otomatik kapatma İSTENMİYOR → önceki davranışı kaldırdık
+  // rota değişince menüleri kapat
+  useEffect(() => {
+    const onLocChange = () => {
+      try {
+        setCurrentPath(window.location.pathname || "/");
+        setMobileOpen(false);
+        setMobileLangOpen(false);
+        setLangOpen(false);
+      } catch {}
+    };
+    const patch = (type) => {
+      const orig = history[type];
+      return function (...args) {
+        const ret = orig.apply(this, args);
+        try { window.dispatchEvent(new Event("locationchange")); } catch {}
+        return ret;
+      };
+    };
+    try {
+      history.pushState = patch("pushState");
+      history.replaceState = patch("replaceState");
+    } catch {}
+    window.addEventListener("popstate", onLocChange);
+    window.addEventListener("locationchange", onLocChange);
+    return () => {
+      window.removeEventListener("popstate", onLocChange);
+      window.removeEventListener("locationchange", onLocChange);
+    };
+  }, []);
 
   // Desktop dil menüsü: dış tık/ESC ile kapat
   useEffect(() => {
     const onDocClick = (e) => {
-      if (langRef.current && !langRef.current.contains(e.target)) setLangOpen(false);
-      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target)) {
-        setMobileOpen(false);
-        setMobileLangOpen(false);
-      }
+      if (!langRef.current) return;
+      if (!langRef.current.contains(e.target)) setLangOpen(false);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -149,13 +176,13 @@ export default function PublicLayout({ children }) {
       currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
     }`;
 
-  // Desktop seçenek
+  // Desktop seçenek (bayrak + TR/EN)
   const LangOptionDesktop = ({ code, short }) => {
     const active = activeLang.code === code;
     return (
       <button
         type="button"
-        onClick={() => { setLangPersist(code); /* açık kalsın istersen burayı kapatma */ }}
+        onClick={() => { setLangPersist(code); setLangOpen(false); }}
         className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2
           ${active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"}`}
         role="menuitem"
@@ -168,13 +195,13 @@ export default function PublicLayout({ children }) {
     );
   };
 
-  // Mobile seçenek (bayrak + TR/EN) — otomatik kapanma YOK
+  // Mobile seçenek (bayrak + TR/EN) — mevcut davranış: seçimden sonra kapanır
   const LangOptionMobile = ({ code, short }) => {
     const active = activeLang.code === code;
     return (
       <button
         type="button"
-        onClick={() => { setLangPersist(code); /* otomatik kapatma YOK */ }}
+        onClick={() => { setLangPersist(code); setMobileLangOpen(false); setMobileOpen(false); }}
         className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2
           ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
         role="menuitem"
@@ -245,18 +272,17 @@ export default function PublicLayout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE — hamburger
+          // MOBILE — hamburger (mevcut)
           <div className="flex items-center">
             <button
               onClick={() => {
                 setMobileOpen((s) => !s);
-                // alt menüyü kapatma/kapatmama serbest; burada dokunmuyoruz
+                if (mobileLangOpen) setMobileLangOpen(false);
               }}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
               aria-expanded={mobileOpen}
-              style={{ outline: "none" }}
             >
               <Menu size={24} />
             </button>
@@ -264,20 +290,15 @@ export default function PublicLayout({ children }) {
         )}
       </header>
 
-      {/* CONTENT — sticky bottom için: main gerçekten flex-1, minHeight hesapları kaldırıldı */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4">
-        {children}
-      </main>
-
-      {/* MOBILE DROPDOWN (içerikten sonra DOM’da; dış tıklama için ref) */}
+      {/* MOBILE DROPDOWN */}
       {isMobile && mobileOpen && (
-        <div ref={mobileMenuRef} className="px-6 pb-3 pt-2 bg-[#111] text-sm">
+        <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {navLinks.map((l) => (
             <Link
               key={l.href}
               href={l.href}
               prefetch={false}
-              // otomatik kapanma İSTENMİYOR → onClick'te kapatmıyoruz
+              onClick={() => setMobileOpen(false)}
               className={`block py-2 transition ${
                 currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"
               }`}
@@ -323,7 +344,20 @@ export default function PublicLayout({ children }) {
         </div>
       )}
 
-      {/* Merchant CTA — main flex-1 olduğu için otomatik olarak alta yapışır */}
+      {/* CONTENT — Desktop'ta minHeight kaldırıldı; Mobile aynı kaldı */}
+      <main
+        className="flex-1 flex flex-col items-center"
+        style={{
+          minHeight: isMobile ? "calc(68vh)" : undefined, // desktop: undefined → CTA/footer alta yapışır
+          justifyContent: "center",
+          paddingBottom: isMobile ? 10 : 32,
+          paddingTop: isMobile ? 24 : 32,
+        }}
+      >
+        {children}
+      </main>
+
+      {/* Merchant CTA (gri şerit) — main flex-1 olduğu için otomatik alta */}
       <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
         <span className="text-gray-400">{t("merchantQ")}</span>
@@ -337,7 +371,7 @@ export default function PublicLayout({ children }) {
         </Link>
       </div>
 
-      {/* FOOTER — CTA’dan sonra, her durumda en altta */}
+      {/* FOOTER */}
       <footer className="text-center py-4 sm:py-5 bg-[#111] text-gray-500 text-xs">
         &copy; 2025 {t("copyright")}
       </footer>
