@@ -4,18 +4,21 @@
  * File: src/components/PublicLayout.jsx
  * Purpose: Public (unauthenticated) pages layout — desktop mevcut stil, mobile MerchantLayout ile 1e1
  *
- * UX/Security Docblock:
- * - Desktop header/nav: ESKİ HALİ KORUNDU; dil değişimi butonu artık açılır çekmece (dropdown).
- * - Mobile header/nav: MerchantLayout’taki davranış ile 1e1 (hamburger → başlık altına açılan liste), dil seçimi eklendi.
+ * UX/Security Docblock (Cabo PROD):
+ * - Desktop nav korunur; dil değiştirici açılır çekmece (dropdown) olarak sunulur.
+ * - Dropdown içerikleri yalın: yalnızca bayrak + "TR"/"EN" (uzun ad yok).
+ * - Dil butonu, diğer nav item’larıyla aynı renkte (hover’da yeşil).
+ * - Mobile menüde “Dil / Language” satırı var; tıklayınca bayraklı TR/EN seçenekleri açılır.
+ * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır; sayfa yenilemelerinde korunur.
  * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
- * - Rota değişiminde mobil menü otomatik kapanır.
- * - Erişilebilirlik: aria-label, aria-expanded, aria-haspopup; ESC ile kapanma; dışa tıklayınca kapanma.
+ * - Rota değişiminde tüm açılır menüler kapanır.
+ * - Erişilebilirlik: aria-label/expanded/haspopup; ESC ve dış tıklamada kapanma.
  */
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { Menu, Globe, ChevronDown } from "lucide-react";
+import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
 
 const translations = {
   en: {
@@ -41,15 +44,16 @@ const translations = {
 };
 
 const LANGS = [
-  { code: "tr", short: "TR", label: "Türkçe" },
-  { code: "en", short: "EN", label: "English" },
+  { code: "tr", short: "TR", flag: "🇹🇷" },
+  { code: "en", short: "EN", flag: "🇺🇸" },
 ];
 
 export default function PublicLayout({ children }) {
-  const { locale, setLocale, ready } = useLocale();
+  const { locale, setLocale, persistLocale, ready } = useLocale();
   const [isMobile, setIsMobile] = useState(false);
   const [currentPath, setCurrentPath] = useState("/");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileLangOpen, setMobileLangOpen] = useState(false);
 
   // Desktop dil dropdown durumu
   const [langOpen, setLangOpen] = useState(false);
@@ -70,6 +74,7 @@ export default function PublicLayout({ children }) {
       try {
         setCurrentPath(window.location.pathname || "/");
         setMobileOpen(false);
+        setMobileLangOpen(false);
         setLangOpen(false);
       } catch {}
     };
@@ -77,9 +82,7 @@ export default function PublicLayout({ children }) {
       const orig = history[type];
       return function (...args) {
         const ret = orig.apply(this, args);
-        try {
-          window.dispatchEvent(new Event("locationchange"));
-        } catch {}
+        try { window.dispatchEvent(new Event("locationchange")); } catch {}
         return ret;
       };
     };
@@ -105,6 +108,7 @@ export default function PublicLayout({ children }) {
       if (e.key === "Escape") {
         setLangOpen(false);
         setMobileOpen(false);
+        setMobileLangOpen(false);
       }
     };
     document.addEventListener("mousedown", onDocClick);
@@ -118,7 +122,13 @@ export default function PublicLayout({ children }) {
   if (!ready) return null;
 
   const t = (k) => (translations[locale] || translations.en)[k] || k;
-  const LANG_LABEL = (LANGS.find((l) => l.code === locale) || LANGS[1]).short; // default EN
+  const activeLang = LANGS.find((l) => l.code === (locale?.toLowerCase().startsWith("tr") ? "tr" : "en")) || LANGS[1];
+
+  const setLangPersist = (code) => {
+    // persistLocale varsa onu kullan, yoksa setLocale ile devam
+    if (typeof persistLocale === "function") persistLocale(code);
+    else if (typeof setLocale === "function") setLocale(code);
+  };
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -132,23 +142,24 @@ export default function PublicLayout({ children }) {
       currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
     }`;
 
-  const LangOption = ({ code, label, short }) => {
-    const active = locale === code;
+  const LangOption = ({ code, short, flag }) => {
+    const active = activeLang.code === code;
     return (
       <button
         type="button"
         onClick={() => {
-          setLocale(code);
+          setLangPersist(code);
           setLangOpen(false);
+          setMobileLangOpen(false);
         }}
-        className={`w-full text-left px-3 py-2 rounded-md transition ${
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
           active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
         }`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
       >
-        <span className="mr-2 inline-block min-w-[2.2rem] text-center font-bold">{short}</span>
-        <span>{label}</span>
+        <span aria-hidden="true" className="text-base leading-none">{flag}</span>
+        <span className="tracking-wide">{short}</span>
       </button>
     );
   };
@@ -164,7 +175,7 @@ export default function PublicLayout({ children }) {
           Cabo
         </h1>
 
-        {/* DESKTOP — eski hali, dil için dropdown eklendi */}
+        {/* DESKTOP — dil için dropdown eklendi; buton rengi nav ile aynı */}
         {!isMobile ? (
           <nav aria-label="Public navigation" className="relative">
             <ul className="flex gap-7 text-sm font-medium items-center">
@@ -185,14 +196,17 @@ export default function PublicLayout({ children }) {
               <li className="ml-2 relative" ref={langRef}>
                 <button
                   type="button"
-                  className="px-2 py-1 rounded text-[#81d742] font-bold transition hover:text-[#b0f7a2] flex items-center gap-1"
+                  className={`px-2 py-1 rounded transition flex items-center gap-1 ${
+                    // diğer nav item renkleriyle aynı
+                    "text-gray-200 hover:text-[#b0f7a2]"
+                  }`}
                   aria-label="Change language"
                   aria-haspopup="menu"
                   aria-expanded={langOpen}
                   onClick={() => setLangOpen((s) => !s)}
                 >
-                  <Globe size={16} aria-hidden="true" />
-                  {LANG_LABEL}
+                  <span aria-hidden="true"><Globe size={16} /></span>
+                  <span className="font-bold">{activeLang.short}</span>
                   <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} aria-hidden="true" />
                 </button>
 
@@ -200,7 +214,7 @@ export default function PublicLayout({ children }) {
                   <div
                     role="menu"
                     aria-label="Language selector"
-                    className="absolute right-0 mt-2 w-44 rounded-lg border border-[#1e1e1e] bg-[#131313] shadow-lg p-1 z-20"
+                    className="absolute right-0 mt-2 w-36 rounded-lg border border-[#1e1e1e] bg-[#131313] shadow-lg p-1 z-20"
                   >
                     {LANGS.map((l) => (
                       <LangOption key={l.code} {...l} />
@@ -211,10 +225,13 @@ export default function PublicLayout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE — MerchantLayout ile 1e1 (hamburger + başlık altına açılan liste)
+          // MOBILE — hamburger
           <div className="flex items-center">
             <button
-              onClick={() => setMobileOpen((s) => !s)}
+              onClick={() => {
+                setMobileOpen((s) => !s);
+                if (mobileLangOpen) setMobileLangOpen(false);
+              }}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
@@ -226,7 +243,7 @@ export default function PublicLayout({ children }) {
         )}
       </header>
 
-      {/* MOBILE DROPDOWN (MerchantLayout tarzı) */}
+      {/* MOBILE DROPDOWN (MerchantLayout tarzı + dil seçimi) */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {navLinks.map((l) => (
@@ -244,33 +261,38 @@ export default function PublicLayout({ children }) {
             </Link>
           ))}
 
-          {/* Mobil Dil Seçimi */}
-          <div className="mt-2 pt-2 border-t border-[#222]">
-            <div className="flex items-center gap-2 text-gray-400 mb-1">
+          {/* Mobil Dil Satırı */}
+          <button
+            type="button"
+            className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
+            onClick={() => setMobileLangOpen((s) => !s)}
+            aria-haspopup="menu"
+            aria-expanded={mobileLangOpen}
+            aria-label={t("language")}
+          >
+            <span className="flex items-center gap-2">
               <Globe size={16} aria-hidden="true" />
-              <span className="uppercase tracking-wide">{t("language")} / Language</span>
+              <span className="uppercase tracking-wide">{t("language")}</span>
+              <span className="ml-1 text-xs text-gray-400">({activeLang.short})</span>
+            </span>
+            <ChevronRight
+              size={16}
+              className={`transition ${mobileLangOpen ? "rotate-90" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+
+          {mobileLangOpen && (
+            <div
+              role="menu"
+              aria-label="Language selector"
+              className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]"
+            >
+              {LANGS.map((l) => (
+                <LangOption key={l.code} {...l} />
+              ))}
             </div>
-            <div className="flex gap-2">
-              {LANGS.map((l) => {
-                const active = locale === l.code;
-                return (
-                  <button
-                    key={l.code}
-                    type="button"
-                    onClick={() => setLocale(l.code)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-semibold transition border ${
-                      active
-                        ? "border-[#2a2a2a] bg-[#1a1a1a] text-[#81d742]"
-                        : "border-[#1f1f1f] text-gray-200 hover:bg-[#161616]"
-                    }`}
-                    aria-current={active ? "true" : "false"}
-                  >
-                    {l.short}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          )}
         </div>
       )}
 
