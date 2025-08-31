@@ -6,11 +6,11 @@
  *
  * UX/Security Docblock (Cabo PROD):
  * - Desktop nav: dil butonu yalnız ikon; açılır menüde bayrak + "TR/EN".
- * - Mobile menü ve mobil dil akışı DEĞİŞMEDİ (aynen korundu) — sadece seçeneklerin yanına bayrak eklendi.
+ * - Mobil: seçimlerde (sayfa/dil) menü OTOMATİK KAPANMAZ; kullanıcı dışarı/hamburger’e tıklayınca kapanır.
  * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır.
  * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
- * - Rota değişiminde tüm açılır menüler kapanır; ESC/dış tıklamada kapanır.
- * - Desktop’ta gri CTA şeridi ve footer her zaman alta yapışsın diye main’in desktop minHeight’ı kaldırıldı.
+ * - Rota değişiminde açılır menüler kapanır; ESC/dış tıklamada kapanır.
+ * - Desktop’ta gri CTA şeridi + footer her zaman alta yapışır (CTA’ya `mt-auto`).
  */
 
 import Link from "next/link";
@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
 
-/* -------------------- i18n (kısaltılmış) -------------------- */
+/* -------------------- i18n -------------------- */
 const translations = {
   en: {
     home: "Home",
@@ -52,10 +52,8 @@ function FlagTR({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="18" height="12" fill="#E30A17" />
-      {/* hilal */}
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
-      {/* yıldız */}
       <polygon
         fill="#fff"
         points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
@@ -195,13 +193,13 @@ export default function PublicLayout({ children }) {
     );
   };
 
-  // Mobile seçenek (bayrak + TR/EN) — mevcut davranış: seçimden sonra kapanır
+  // Mobile seçenek (bayrak + TR/EN) — OTOMATİK KAPANMA YOK
   const LangOptionMobile = ({ code, short }) => {
     const active = activeLang.code === code;
     return (
       <button
         type="button"
-        onClick={() => { setLangPersist(code); setMobileLangOpen(false); setMobileOpen(false); }}
+        onClick={() => { setLangPersist(code); /* menü açık kalır */ }}
         className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2
           ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
         role="menuitem"
@@ -215,7 +213,7 @@ export default function PublicLayout({ children }) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0b0b] text-white font-sans tracking-tight">
+    <div className="min-h-[100svh] md:min-h-screen flex flex-col bg-[#0b0b0b] text-white font-sans tracking-tight">
       {/* HEADER */}
       <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm relative">
         <h1
@@ -272,7 +270,7 @@ export default function PublicLayout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE — hamburger (mevcut)
+          // MOBILE — hamburger
           <div className="flex items-center">
             <button
               onClick={() => {
@@ -298,7 +296,7 @@ export default function PublicLayout({ children }) {
               key={l.href}
               href={l.href}
               prefetch={false}
-              onClick={() => setMobileOpen(false)}
+              // oto-kapanma kaldırıldı
               className={`block py-2 transition ${
                 currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"
               }`}
@@ -344,11 +342,11 @@ export default function PublicLayout({ children }) {
         </div>
       )}
 
-      {/* CONTENT — Desktop'ta minHeight kaldırıldı; Mobile aynı kaldı */}
+      {/* CONTENT */}
       <main
-        className="flex-1 flex flex-col items-center"
+        className="flex-1 min-h-0 flex flex-col items-center"
         style={{
-          minHeight: isMobile ? "calc(68vh)" : undefined, // desktop: undefined → CTA/footer alta yapışır
+          minHeight: isMobile ? "calc(68vh)" : undefined,
           justifyContent: "center",
           paddingBottom: isMobile ? 10 : 32,
           paddingTop: isMobile ? 24 : 32,
@@ -357,8 +355,8 @@ export default function PublicLayout({ children }) {
         {children}
       </main>
 
-      {/* Merchant CTA (gri şerit) — main flex-1 olduğu için otomatik alta */}
-      <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base">
+      {/* Merchant CTA (gri şerit) — ALTA YAPIŞSIN: mt-auto */}
+      <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base mt-auto">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
         <span className="text-gray-400">{t("merchantQ")}</span>
         <Link
