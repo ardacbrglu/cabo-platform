@@ -10,7 +10,7 @@
  * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır.
  * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
  * - Rota değişiminde açılır menüler kapanır; ESC/dış tıklamada kapanır.
- * - Desktop’ta gri CTA şeridi + footer her zaman alta yapışır (CTA’ya `mt-auto`).
+ * - Sticky bottom (desktop+mobile): kök min-h viewport, içerik flex-1 min-h-0, CTA `mt-auto`.
  */
 
 import Link from "next/link";
@@ -18,7 +18,6 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
 
-/* -------------------- i18n -------------------- */
 const translations = {
   en: {
     home: "Home",
@@ -47,17 +46,14 @@ const LANGS = [
   { code: "en", short: "EN" },
 ];
 
-/* -------------------- Küçük inline bayraklar (SVG) -------------------- */
+/* --- inline flags --- */
 function FlagTR({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="18" height="12" fill="#E30A17" />
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
-      <polygon
-        fill="#fff"
-        points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
-      />
+      <polygon fill="#fff" points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22" />
     </svg>
   );
 }
@@ -65,33 +61,23 @@ function FlagUS({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="19" height="12" fill="#B22234" />
-      {[1,3,5,7,9,11].map((y)=>(
-        <rect key={y} x="0" y={y} width="19" height="1" fill="#fff" />
-      ))}
+      {[1,3,5,7,9,11].map((y)=>(<rect key={y} x="0" y={y} width="19" height="1" fill="#fff" />))}
       <rect x="0" y="0" width="8" height="7" fill="#3C3B6E" />
-      {[1.2,3.6,2.4,4.8].map((x,i)=>(
-        <circle key={i} cx={x*1.5} cy={2+i} r="0.25" fill="#fff" />
-      ))}
+      {[1.2,3.6,2.4,4.8].map((x,i)=>(<circle key={i} cx={x*1.5} cy={2+i} r="0.25" fill="#fff" />))}
     </svg>
   );
 }
-function Flag({ code, className }) {
-  return code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />;
-}
+function Flag({ code, className }) { return code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />; }
 
-/* -------------------- Bileşen -------------------- */
 export default function PublicLayout({ children }) {
   const { locale, setLocale, persistLocale, ready } = useLocale();
   const [isMobile, setIsMobile] = useState(false);
   const [currentPath, setCurrentPath] = useState("/");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileLangOpen, setMobileLangOpen] = useState(false);
-
-  // Desktop dil dropdown durumu
-  const [langOpen, setLangOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false); // desktop dropdown
   const langRef = useRef(null);
 
-  // client-only ölçümler
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -100,7 +86,6 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // rota değişince menüleri kapat
   useEffect(() => {
     const onLocChange = () => {
       try {
@@ -118,10 +103,7 @@ export default function PublicLayout({ children }) {
         return ret;
       };
     };
-    try {
-      history.pushState = patch("pushState");
-      history.replaceState = patch("replaceState");
-    } catch {}
+    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -130,11 +112,9 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // Desktop dil menüsü: dış tık/ESC ile kapat
   useEffect(() => {
     const onDocClick = (e) => {
-      if (!langRef.current) return;
-      if (!langRef.current.contains(e.target)) setLangOpen(false);
+      if (langRef.current && !langRef.current.contains(e.target)) setLangOpen(false);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -170,22 +150,16 @@ export default function PublicLayout({ children }) {
   ];
 
   const linkClassDesktop = (href) =>
-    `transition hover:text-[#81d742] hover:scale-[1.015] inline-block ${
-      currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
-    }`;
+    `transition hover:text-[#81d742] hover:scale-[1.015] inline-block ${currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"}`;
 
-  // Desktop seçenek (bayrak + TR/EN)
   const LangOptionDesktop = ({ code, short }) => {
     const active = activeLang.code === code;
     return (
       <button
         type="button"
         onClick={() => { setLangPersist(code); setLangOpen(false); }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2
-          ${active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"}`}
-        role="menuitem"
-        aria-current={active ? "true" : "false"}
-        style={{ outline: "none" }}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"}`}
+        role="menuitem" aria-current={active ? "true" : "false"} style={{ outline: "none" }}
       >
         <Flag code={code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
         <span className="tracking-wide">{short}</span>
@@ -193,18 +167,15 @@ export default function PublicLayout({ children }) {
     );
   };
 
-  // Mobile seçenek (bayrak + TR/EN) — OTOMATİK KAPANMA YOK
+  // MOBILE: seçimde kapanmasın
   const LangOptionMobile = ({ code, short }) => {
     const active = activeLang.code === code;
     return (
       <button
         type="button"
-        onClick={() => { setLangPersist(code); /* menü açık kalır */ }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2
-          ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
-        role="menuitem"
-        aria-current={active ? "true" : "false"}
-        style={{ outline: "none" }}
+        onClick={() => { setLangPersist(code); /* açık kalsın */ }}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
+        role="menuitem" aria-current={active ? "true" : "false"} style={{ outline: "none" }}
       >
         <Flag code={code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
         <span className="tracking-wide">{short}</span>
@@ -216,71 +187,43 @@ export default function PublicLayout({ children }) {
     <div className="min-h-[100svh] md:min-h-screen flex flex-col bg-[#0b0b0b] text-white font-sans tracking-tight">
       {/* HEADER */}
       <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm relative">
-        <h1
-          className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight select-none"
-          style={{ color: "#d1ffd0", letterSpacing: "-0.02em", textShadow: "0 2px 12px rgba(129,215,66,0.08)" }}
-        >
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight select-none" style={{ color: "#d1ffd0", letterSpacing: "-0.02em", textShadow: "0 2px 12px rgba(129,215,66,0.08)" }}>
           Cabo
         </h1>
 
-        {/* DESKTOP — dil için dropdown (butonda sadece ikon, outline yok) */}
         {!isMobile ? (
           <nav aria-label="Public navigation" className="relative">
             <ul className="flex gap-7 text-sm font-medium items-center">
               {navLinks.map((item) => (
                 <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={linkClassDesktop(item.href)}
-                    prefetch={false}
-                    aria-current={currentPath === item.href ? "page" : undefined}
-                  >
+                  <Link href={item.href} className={linkClassDesktop(item.href)} prefetch={false} aria-current={currentPath === item.href ? "page" : undefined}>
                     {item.label}
                   </Link>
                 </li>
               ))}
-
-              {/* Dil Değiştirici (Trigger: yalnız ikon) */}
               <li className="ml-2 relative" ref={langRef}>
                 <button
                   type="button"
                   className="px-2 py-1 rounded transition flex items-center gap-1 text-gray-200 hover:text-[#b0f7a2]"
-                  aria-label="Change language"
-                  aria-haspopup="menu"
-                  aria-expanded={langOpen}
-                  onClick={() => setLangOpen((s) => !s)}
-                  style={{ outline: "none" }}
+                  aria-label="Change language" aria-haspopup="menu" aria-expanded={langOpen}
+                  onClick={() => setLangOpen((s) => !s)} style={{ outline: "none" }}
                 >
                   <span aria-hidden="true"><Globe size={18} /></span>
                   <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} aria-hidden="true" />
                 </button>
-
                 {langOpen && (
-                  <div
-                    role="menu"
-                    aria-label="Language selector"
-                    className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-30"
-                  >
-                    {LANGS.map((l) => (
-                      <LangOptionDesktop key={l.code} {...l} />
-                    ))}
+                  <div role="menu" aria-label="Language selector" className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-30">
+                    {LANGS.map((l) => (<LangOptionDesktop key={l.code} {...l} />))}
                   </div>
                 )}
               </li>
             </ul>
           </nav>
         ) : (
-          // MOBILE — hamburger
           <div className="flex items-center">
             <button
-              onClick={() => {
-                setMobileOpen((s) => !s);
-                if (mobileLangOpen) setMobileLangOpen(false);
-              }}
-              className="text-white"
-              type="button"
-              aria-label="Toggle menu"
-              aria-expanded={mobileOpen}
+              onClick={() => { setMobileOpen((s) => !s); if (mobileLangOpen) setMobileLangOpen(false); }}
+              className="text-white" type="button" aria-label="Toggle menu" aria-expanded={mobileOpen}
             >
               <Menu size={24} />
             </button>
@@ -288,7 +231,7 @@ export default function PublicLayout({ children }) {
         )}
       </header>
 
-      {/* MOBILE DROPDOWN */}
+      {/* MOBILE PANEL */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {navLinks.map((l) => (
@@ -296,75 +239,49 @@ export default function PublicLayout({ children }) {
               key={l.href}
               href={l.href}
               prefetch={false}
-              // oto-kapanma kaldırıldı
-              className={`block py-2 transition ${
-                currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"
-              }`}
+              className={`block py-2 transition ${currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"}`}
               aria-current={currentPath === l.href ? "page" : undefined}
+              // otomatik kapanma YOK (bilerek onClick ile kapatmıyoruz)
             >
               {l.label}
             </Link>
           ))}
 
-          {/* Mobil Dil Satırı */}
           <button
             type="button"
             className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
             onClick={() => setMobileLangOpen((s) => !s)}
-            aria-haspopup="menu"
-            aria-expanded={mobileLangOpen}
-            aria-label={t("language")}
-            style={{ outline: "none" }}
+            aria-haspopup="menu" aria-expanded={mobileLangOpen} aria-label={t("language")} style={{ outline: "none" }}
           >
             <span className="flex items-center gap-2">
               <Globe size={16} aria-hidden="true" />
               <span className="uppercase tracking-wide">{t("language")}</span>
               <span className="ml-1 text-xs text-gray-400">({activeLang.short})</span>
             </span>
-            <ChevronRight
-              size={16}
-              className={`transition ${mobileLangOpen ? "rotate-90" : ""}`}
-              aria-hidden="true"
-            />
+            <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} aria-hidden="true" />
           </button>
 
           {mobileLangOpen && (
-            <div
-              role="menu"
-              aria-label="Language selector"
-              className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]"
-            >
-              {LANGS.map((l) => (
-                <LangOptionMobile key={l.code} {...l} />
-              ))}
+            <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]">
+              {LANGS.map((l) => (<LangOptionMobile key={l.code} {...l} />))}
             </div>
           )}
         </div>
       )}
 
-      {/* CONTENT */}
+      {/* CONTENT (esnek alan) */}
       <main
         className="flex-1 min-h-0 flex flex-col items-center"
-        style={{
-          minHeight: isMobile ? "calc(68vh)" : undefined,
-          justifyContent: "center",
-          paddingBottom: isMobile ? 10 : 32,
-          paddingTop: isMobile ? 24 : 32,
-        }}
+        style={{ minHeight: isMobile ? "calc(68vh)" : undefined, justifyContent: "center", paddingBottom: isMobile ? 10 : 32, paddingTop: isMobile ? 24 : 32 }}
       >
         {children}
       </main>
 
-      {/* Merchant CTA (gri şerit) — ALTA YAPIŞSIN: mt-auto */}
+      {/* Merchant CTA — boşluğu yukarı iter */}
       <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base mt-auto">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
         <span className="text-gray-400">{t("merchantQ")}</span>
-        <Link
-          href="/merchant/login"
-          className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
-          prefetch={false}
-          aria-label={t("merchantAccess")}
-        >
+        <Link href="/merchant/login" className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition" prefetch={false} aria-label={t("merchantAccess")}>
           {t("merchantAccess")}
         </Link>
       </div>
