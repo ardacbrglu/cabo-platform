@@ -48,4 +48,4 @@ html, body, main, * {
 ::-webkit-scrollbar {
   display: none !important;
 }
-html, body { height: 100%; }
+html, body { min-height: 100%; height: auto; }
