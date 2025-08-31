@@ -5,11 +5,11 @@
  * Purpose: Public (unauthenticated) pages layout — desktop mevcut stil, mobile MerchantLayout ile 1e1
  *
  * UX/Security Docblock (Cabo PROD):
- * - Desktop nav korunur; dil değiştirici açılır çekmece (dropdown) olarak sunulur.
- * - Dropdown içerikleri yalın: yalnızca bayrak + "TR"/"EN" (uzun ad yok).
+ * - Desktop nav korunur; dil değiştirici açılır çekmece (dropdown). Butonda yalnızca globe ikonu gösterilir.
+ * - Dropdown içerikleri yalın: yalnızca bayrak + "TR"/"EN".
  * - Dil butonu, diğer nav item’larıyla aynı renkte (hover’da yeşil).
- * - Mobile menüde “Dil / Language” satırı var; tıklayınca bayraklı TR/EN seçenekleri açılır.
- * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır; sayfa yenilemelerinde korunur.
+ * - Mobile menü ve mobil dil akışı aynen korunur (değiştirilmedi).
+ * - Dil seçimi persistLocale ile cookie (+login ise DB) olarak saklanır; yenilemelerde korunur.
  * - Aktif rota vurgusu: currentPath === href → yeşil & kalın.
  * - Rota değişiminde tüm açılır menüler kapanır.
  * - Erişilebilirlik: aria-label/expanded/haspopup; ESC ve dış tıklamada kapanma.
@@ -68,7 +68,7 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // rota değişince menüyü kapat (MerchantLayout davranışıyla uyumlu)
+  // rota değişince menüyü kapat
   useEffect(() => {
     const onLocChange = () => {
       try {
@@ -125,7 +125,6 @@ export default function PublicLayout({ children }) {
   const activeLang = LANGS.find((l) => l.code === (locale?.toLowerCase().startsWith("tr") ? "tr" : "en")) || LANGS[1];
 
   const setLangPersist = (code) => {
-    // persistLocale varsa onu kullan, yoksa setLocale ile devam
     if (typeof persistLocale === "function") persistLocale(code);
     else if (typeof setLocale === "function") setLocale(code);
   };
@@ -152,8 +151,8 @@ export default function PublicLayout({ children }) {
           setLangOpen(false);
           setMobileLangOpen(false);
         }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#2a2a2a] ${
+          active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
         }`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
@@ -175,7 +174,7 @@ export default function PublicLayout({ children }) {
           Cabo
         </h1>
 
-        {/* DESKTOP — dil için dropdown eklendi; buton rengi nav ile aynı */}
+        {/* DESKTOP — dil için dropdown (butonda sadece ikon) */}
         {!isMobile ? (
           <nav aria-label="Public navigation" className="relative">
             <ul className="flex gap-7 text-sm font-medium items-center">
@@ -192,21 +191,17 @@ export default function PublicLayout({ children }) {
                 </li>
               ))}
 
-              {/* Dil Değiştirici (Dropdown) */}
+              {/* Dil Değiştirici (Dropdown Trigger: yalnız ikon) */}
               <li className="ml-2 relative" ref={langRef}>
                 <button
                   type="button"
-                  className={`px-2 py-1 rounded transition flex items-center gap-1 ${
-                    // diğer nav item renkleriyle aynı
-                    "text-gray-200 hover:text-[#b0f7a2]"
-                  }`}
+                  className={`px-2 py-1 rounded transition flex items-center gap-1 text-gray-200 hover:text-[#b0f7a2] focus:outline-none focus:ring-2 focus:ring-[#2a2a2a]`}
                   aria-label="Change language"
                   aria-haspopup="menu"
                   aria-expanded={langOpen}
                   onClick={() => setLangOpen((s) => !s)}
                 >
-                  <span aria-hidden="true"><Globe size={16} /></span>
-                  <span className="font-bold">{activeLang.short}</span>
+                  <span aria-hidden="true"><Globe size={18} /></span>
                   <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} aria-hidden="true" />
                 </button>
 
@@ -214,7 +209,7 @@ export default function PublicLayout({ children }) {
                   <div
                     role="menu"
                     aria-label="Language selector"
-                    className="absolute right-0 mt-2 w-36 rounded-lg border border-[#1e1e1e] bg-[#131313] shadow-lg p-1 z-20"
+                    className="absolute right-0 mt-2 w-32 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-30 ring-1 ring-black/20"
                   >
                     {LANGS.map((l) => (
                       <LangOption key={l.code} {...l} />
@@ -243,7 +238,7 @@ export default function PublicLayout({ children }) {
         )}
       </header>
 
-      {/* MOBILE DROPDOWN (MerchantLayout tarzı + dil seçimi) */}
+      {/* MOBILE DROPDOWN (değiştirilmedi) */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {navLinks.map((l) => (
@@ -261,7 +256,7 @@ export default function PublicLayout({ children }) {
             </Link>
           ))}
 
-          {/* Mobil Dil Satırı */}
+          {/* Mobil Dil Satırı (aynı kaldı) */}
           <button
             type="button"
             className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
@@ -309,7 +304,7 @@ export default function PublicLayout({ children }) {
         {children}
       </main>
 
-      {/* Merchant CTA (ince çizgi) — eski hali korunur */}
+      {/* Merchant CTA */}
       <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
         <span className="text-gray-400">{t("merchantQ")}</span>
@@ -323,7 +318,7 @@ export default function PublicLayout({ children }) {
         </Link>
       </div>
 
-      {/* FOOTER — eski hali korunur */}
+      {/* FOOTER */}
       <footer className="text-center py-4 sm:py-5 bg-[#111] text-gray-500 text-xs">
         &copy; 2025 {t("copyright")}
       </footer>
