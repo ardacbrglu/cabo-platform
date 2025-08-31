@@ -176,7 +176,7 @@ export default function LoginPage() {
   const ringErr = "focus:ring-red-400 border-red-500";
 
   async function onSubmit(e) {
-    e.preventDefault();
+    e.preventDefault();                 // ✅ tam sayfa submit’i durdur
     if (loading) return;
 
     setSubmitted(true);
@@ -214,12 +214,18 @@ export default function LoginPage() {
         },
         body: { email: email.trim().toLowerCase(), password },
         signal: ac.signal,
+
+        // 🔑 KRİTİK: 401/403’te otomatik redirect’i kapat
+        noAuthRedirect: true,
+        noRetry: true,              // (opsiyonel) backoff/retry kapat
       });
+
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        router.push(callbackUrl);
+        router.push(callbackUrl);   // başarılıysa yönlendir
       } else {
+        // 401/403/429/5xx dahil: sayfa YENİLENMEDEN mesaj göster
         setError(
           typeof data?.message === "string" && data.message
             ? data.message

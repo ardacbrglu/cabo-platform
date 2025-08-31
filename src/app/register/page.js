@@ -4,6 +4,11 @@
  * Affiliate Register (manual only, Google disabled)
  * - Terms & Privacy links go to /terms and /privacy with ?lang=tr|en
  * - a11y: first invalid focus, aria-live messages
+ *
+ * Security Docblock (Cabo PROD):
+ * - Form submit client-side; **page refresh yok**.
+ * - /api/register çağrısında apiFetch → noAuthRedirect:true, noRetry:true
+ *   (401/403/4xx’larda otomatik yönlendirme ve retry kapalı).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -49,7 +54,6 @@ const translations = {
     success: "Registration successful! Please check your email to activate your account.",
     failed: "Registration failed.",
     server: "Server error. Please try again later.",
-    // Field-level
     req_name: "Please fill out this field.",
     req_email: "Please fill out this field.",
     req_password: "Please fill out this field.",
@@ -91,7 +95,6 @@ const translations = {
     success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et.",
     failed: "Kayıt başarısız.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
-    // Field-level
     req_name: "Lütfen bu alanı doldurun.",
     req_email: "Lütfen bu alanı doldurun.",
     req_password: "Lütfen bu alanı doldurun.",
@@ -155,7 +158,10 @@ function TermsLabel({ locale }) {
 export default function RegisterPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
-  const dict = useMemo(() => (String(locale).toLowerCase().startsWith("tr") ? translations.tr : translations.en), [locale]);
+  const dict = useMemo(
+    () => (String(locale).toLowerCase().startsWith("tr") ? translations.tr : translations.en),
+    [locale]
+  );
   const t = (k) => dict[k] ?? k;
 
   const [name, setName] = useState("");
@@ -240,7 +246,12 @@ export default function RegisterPage() {
           termsAccepted: true,
           captcha,
         },
+
+        // 🛑 kritik: otomatik redirect & retry kapalı
+        noAuthRedirect: true,
+        noRetry: true,
       });
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setServerError(data?.message || t("failed"));
@@ -354,7 +365,7 @@ export default function RegisterPage() {
             {submitted && errors.password && <p className="mt-2 text-sm text-red-400" aria-live="assertive">{errors.password}</p>}
           </div>
 
-          {/* Terms (tooltip near checkbox) */}
+          {/* Terms + tooltip */}
           <div className="relative flex items-center gap-2 w-full">
             <input
               id="terms"
@@ -370,15 +381,13 @@ export default function RegisterPage() {
             <TermsHint show={termsHintVisible} message={errors.terms} />
           </div>
 
-          {/* CAPTCHA + inline error (TR/EN) */}
+          {/* CAPTCHA */}
           <div
             className={`w-full ${captchaClientError ? "ring-2 ring-red-400 rounded-md p-2" : ""}`}
             aria-invalid={captchaClientError ? "true" : "false"}
           >
             <Captcha
-              onChange={(val) => {
-                setCaptcha(val || "");
-              }}
+              onChange={(val) => { setCaptcha(val || ""); }}
               lang={locale}
               resetKey={captchaResetKey}
             />
@@ -414,14 +423,13 @@ export default function RegisterPage() {
             ) : t("registerBtn")}
           </button>
 
-          {/* Divider */}
+          {/* Divider + disabled Google button */}
           <div className="w-full flex items-center justify-between my-2">
             <span className="flex-1 h-px bg-[#232323]" />
             <span className="px-2 text-gray-400 text-sm">{t("or")}</span>
             <span className="flex-1 h-px bg-[#232323]" />
           </div>
 
-          {/* Disabled Google sign-up (same UX as login) */}
           <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
             {t("googleSoon")}
           </div>
