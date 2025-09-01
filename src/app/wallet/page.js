@@ -245,7 +245,7 @@ export default function WalletPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
         },
         body: { requestPayout: true }, // USERS’daki son bankayı snapshotla
       });
@@ -607,7 +607,8 @@ export default function WalletPage() {
 
           {/* MOBİL: yatay taşmayı tamamen engelle — method+bank sütunları mobilde gizli, paddings/pill küçüldü */}
           <div className="w-full overflow-x-hidden">
-            <table className="w-full text-[11px] sm:text-xs font-mono text-left table-fixed md:table-auto">
+            {/* Değişiklik: table-auto (mobilde içerik bazlı genişlik) */}
+            <table className="w-full text-[11px] sm:text-xs font-mono text-left table-auto">
               <thead>
                 <tr className="text-gray-400 border-b border-[#232323]">
                   <th className="py-2 px-2 md:px-3 w-[30%] md:w-auto">{t("date")}</th>
@@ -615,7 +616,8 @@ export default function WalletPage() {
                   <th className="py-2 px-2 md:px-3 w-[32%] md:w-auto">{t("status")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("method")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("bank")}</th>
-                  <th className="py-2 px-2 md:px-3 w-[16%] md:w-auto"></th>
+                  {/* Değişiklik: mobilde aksiyon sütunu genişliği %24 */}
+                  <th className="py-2 px-2 md:px-3 w-[24%] md:w-auto"></th>
                 </tr>
               </thead>
               <tbody>
@@ -660,39 +662,43 @@ export default function WalletPage() {
                         </td>
                         <td className="py-2 px-2 md:px-3 hidden sm:table-cell">{item.method}</td>
                         <td className="py-2 px-2 md:px-3 hidden sm:table-cell truncate max-w-[160px]">{item.bankName || "-"}</td>
-                        <td className="py-2 px-2 md:px-3 whitespace-nowrap">
-                          {item.status === "pending" && item.requestId && item.canCancel && (
+                        {/* Değişiklik: nowrap kaldırıldı; flex-wrap ile kırılma sağlandı */}
+                        <td className="py-2 px-2 md:px-3">
+                          <div className="flex justify-end gap-1 flex-wrap">
+                            {item.status === "pending" && item.requestId && item.canCancel && (
+                              <button
+                                onClick={() => handleCancelRequest(item.requestId)}
+                                disabled={isSubmitting}
+                                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50 shrink-0"
+                                title={t("cancel")}
+                              >
+                                <X size={14} className="sm:mr-1" />
+                                <span className="hidden sm:inline">{t("cancel")}</span>
+                                <span className="sm:hidden">İptal</span>
+                              </button>
+                            )}
+                            {item.status === "rejected" && item.requestId && item.canDelete && (
+                              <button
+                                onClick={() => handleDeleteRequest(item.requestId)}
+                                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-400 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono shrink-0"
+                                title={t("delete")}
+                              >
+                                <Trash2 size={14} className="sm:mr-1" />
+                                <span className="hidden sm:inline">{t("delete")}</span>
+                                <span className="sm:hidden">Sil</span>
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleCancelRequest(item.requestId)}
-                              disabled={isSubmitting}
-                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50"
-                              title={t("cancel")}
+                              onClick={() => openDetails(item.requestId)}
+                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-blue-400 hover:bg-blue-900/20 transition text-[11px] sm:text-xs font-mono ml-1 shrink-0"
+                              title={t("details") || "Detay"}
                             >
-                              <X size={14} className="sm:mr-1" />
-                              <span className="hidden sm:inline">{t("cancel")}</span>
-                              <span className="sm:hidden">İptal</span>
+                              <FileText size={14} className="sm:mr-1" />
+                              {/* Çok dar ekranlarda metni gizle, sadece ikon kalsın */}
+                              <span className="hidden sm:inline">{t("details") || "Detay"}</span>
+                              <span className="sm:hidden max-[360px]:hidden">Detay</span>
                             </button>
-                          )}
-                          {item.status === "rejected" && item.requestId && item.canDelete && (
-                            <button
-                              onClick={() => handleDeleteRequest(item.requestId)}
-                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-400 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono"
-                              title={t("delete")}
-                            >
-                              <Trash2 size={14} className="sm:mr-1" />
-                              <span className="hidden sm:inline">{t("delete")}</span>
-                              <span className="sm:hidden">Sil</span>
-                            </button>
-                          )}
-                          <button
-                            onClick={() => openDetails(item.requestId)}
-                            className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-blue-400 hover:bg-blue-900/20 transition text-[11px] sm:text-xs font-mono ml-1"
-                            title={t("details") || "Detay"}
-                          >
-                            <FileText size={14} className="sm:mr-1" />
-                            <span className="hidden sm:inline">{t("details") || "Detay"}</span>
-                            <span className="sm:hidden">Detay</span>
-                          </button>
+                          </div>
                         </td>
                       </tr>
                     ) : (
