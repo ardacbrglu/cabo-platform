@@ -1,3 +1,4 @@
+// src/components/NotificationBadge.jsx
 export default function NotificationBadge({
   show,
   size = 11,
@@ -22,6 +23,7 @@ export default function NotificationBadge({
         position: "absolute",
         top: `${offsetY}px`,
         right: `${offsetX}px`,
+        pointerEvents: "none",
         ...style,
       }}
       className="animate-pulse"

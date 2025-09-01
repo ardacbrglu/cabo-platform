@@ -1,3 +1,4 @@
+// src/components/Layout.jsx
 "use client";
 
 /**
@@ -5,11 +6,12 @@
  * Purpose: Authenticated (affiliate) layout
  *
  * Security/UX Docblock:
- * - Desktop nav yapısı olduğu gibi korundu (UI/stil bozulmadı).
- * - Mobile nav: MerchantLayout ile 1e1 — header sağında hamburger; tıklayınca başlık altına açılan panel.
- * - Profil alanı (mobil): bildirim/ayarlar/destek ve güvenli logout butonu.
+ * - Desktop nav yapısı korundu, UI/stil bozulmadı.
+ * - Mobile nav: header sağında hamburger; başlık altına açılan panel.
+ * - Bildirim rozeti: unread varsa desktop’ta Bell linkinde, mobilde hamburger üstünde ve menü içindeki Notifications satırında.
  * - Rota değişince mobil panel otomatik kapanır (history patch + popstate).
  * - Erişilebilirlik: aria-label, aria-expanded; butonlar klavye ile erişilebilir.
+ * - Kaydırma: ana <main> “mobile-untrap-scroll” ile nested-scroll kilitlenmesi engellendi.
  */
 
 import Link from "next/link";
@@ -31,6 +33,8 @@ import {
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
+import { useNotifications } from "@/hooks/useNotifications";
+import NotificationBadge from "@/components/NotificationBadge";
 
 const COLOR_CABO = "#d1ffd0";
 const FOOTER_H = 56;
@@ -93,6 +97,10 @@ export default function Layout({ children }) {
   const showProfileDropdown = mounted && hasAnyUser && ready;
   const cachedName = mounted ? (user?.name || "") : "";
 
+  // Bildirimler (sadece login iken poll et)
+  const { unreadCount } = useNotifications(Boolean(hasAnyUser));
+  const hasUnread = unreadCount > 0;
+
   const isActive = (path) => pathname === path;
   const navItemClass = (path) =>
     `inline-flex items-center gap-2 ${
@@ -119,9 +127,7 @@ export default function Layout({ children }) {
 
   function handleLogout() {
     try {
-      // En güvenlisi: tam sayfa yönlendirme; cookie'leri server temizler
       if (typeof window !== "undefined") {
-        // (Opsiyonel) Eski custom cookie temizliği
         document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
         document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
         setUser && setUser(null);
@@ -143,7 +149,7 @@ export default function Layout({ children }) {
           Cabo
         </h1>
 
-        {/* DESKTOP NAV — hiç değiştirilmedi */}
+        {/* DESKTOP NAV */}
         {!isMobile ? (
           <nav aria-label="Main navigation">
             <ul className="flex gap-8 text-sm font-medium items-center">
@@ -208,6 +214,22 @@ export default function Layout({ children }) {
                 </Link>
               </li>
 
+              {/* DESKTOP NOTIFICATIONS (zil + badge) */}
+              <li className="relative">
+                <Link
+                  prefetch={false}
+                  href="/notifications"
+                  className="inline-flex items-center gap-2 text-gray-200 hover:text-[#81d742] px-2 py-1"
+                  aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : t("notifications")}
+                >
+                  <span className="relative inline-block">
+                    <Bell size={22} />
+                    <NotificationBadge show={hasUnread} size={10} offsetX={-3} offsetY={-3} />
+                  </span>
+                  <span className="hidden md:inline">{t("notifications")}</span>
+                </Link>
+              </li>
+
               <li suppressHydrationWarning>
                 {showProfileDropdown ? (
                   <ProfileDropdown />
@@ -221,22 +243,25 @@ export default function Layout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE HEADER — MerchantLayout ile aynı: sağda hamburger
+          // MOBILE HEADER — hamburger (badge üstünde)
           <div className="flex items-center">
-            <button
-              onClick={() => setMobileOpen((v) => !v)}
-              className="text-white"
-              type="button"
-              aria-label="Toggle menu"
-              aria-expanded={mobileOpen}
-            >
-              <Menu size={24} />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setMobileOpen((v) => !v)}
+                className="text-white"
+                type="button"
+                aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : "Toggle menu"}
+                aria-expanded={mobileOpen}
+              >
+                <Menu size={24} />
+              </button>
+              <NotificationBadge show={hasUnread} size={9} offsetX={-2} offsetY={-3} />
+            </div>
           </div>
         )}
       </header>
 
-      {/* MOBILE PANEL — MerchantLayout tarzı (başlık altına açılır) */}
+      {/* MOBILE PANEL */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {mobileLinks.map(({ href, icon, label }) => (
@@ -258,6 +283,24 @@ export default function Layout({ children }) {
 
           {/* Profil bölümü (ikonlu alt menü) */}
           <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
+            {/* Notifications satırı (inline dot) */}
+            <Link
+              href="/notifications"
+              prefetch={false}
+              className="flex items-center gap-3 px-0 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-transparent transition"
+              onClick={() => {
+                setProfileOpen(false);
+                setMobileOpen(false);
+              }}
+              aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : t("notifications")}
+            >
+              <span className="relative inline-flex items-center">
+                <Bell size={16} />
+                {hasUnread && <span className="ml-2 w-2 h-2 rounded-full bg-red-500 animate-pulse" aria-hidden="true" />}
+              </span>
+              {t("notifications")}
+            </Link>
+
             <button
               className="w-full flex items-center gap-2 py-2 px-0 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
               style={{ minHeight: 40 }}
@@ -276,17 +319,6 @@ export default function Layout({ children }) {
 
             {profileOpen && (
               <div className="w-full mt-1 rounded-lg border border-[#232323] bg-[#191919] shadow-xl">
-                <Link
-                  href="/notifications"
-                  prefetch={false}
-                  className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                  onClick={() => {
-                    setProfileOpen(false);
-                    setMobileOpen(false);
-                  }}
-                >
-                  <Bell size={16} /> {t("notifications")}
-                </Link>
                 <Link
                   href="/settings"
                   prefetch={false}
@@ -329,8 +361,9 @@ export default function Layout({ children }) {
         </div>
       )}
 
-      {/* main:min-h-0 → iç grid taşsa bile footer her zaman dipte */}
-      <main id="cabo-main" className="flex-1 min-h-0">
+      {/* main:min-h-0 → iç grid taşsa bile footer her zaman dipte
+          mobile-untrap-scroll → globalde tanımlı; nested scroll kilidi çözülür */}
+      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll">
         {children}
       </main>
 
