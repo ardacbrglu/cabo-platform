@@ -2,36 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ===== Masaüstü (varsayılan) ===== */
-body {
-  /* Eski arka plan (yorumda bırakıldı)
-  background:
-    linear-gradient(0deg, rgba(17,17,17,0.8) 75%, rgba(17,17,17,1) 100%),
-    url('/background.png');
-  background-size: cover;
-  background-repeat: no-repeat;
-  background-position: center center;
-  background-attachment: fixed;
-  */
+/* =========================================================
+   Base / Theme
+   ========================================================= */
+:root { color-scheme: dark; }
 
-  /* Yeni: mat siyah düz arka plan */
+/* Body’yi sabit yüksekliğe kilitleme — mobil scroll için kritik */
+html {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;                 /* yatay taşma koruması */
+  overscroll-behavior-x: contain;
+}
+
+body {
+  height: auto;
+  min-height: 100dvh;                 /* dinamik viewport (mobil adres çubuğu) */
   background-color: #0f0f0f;
   color: #f6f6f6;
   font-family: 'Inter', 'ui-sans-serif', 'system-ui', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
-/* Ana kutu container yapısı */
+/* =========================================================
+   Container
+   ========================================================= */
 @media (min-width: 769px) {
   .container {
-    max-width: 940px;  /* max-w-3xl ya da 4xl kadar */
+    max-width: 940px;                 /* max-w-3xl/4xl arası */
     margin-left: auto;
     margin-right: auto;
     padding-left: 0.75rem;
     padding-right: 0.75rem;
   }
 }
-
-/* Mobil: arka plan zaten tek renk; sadece container ayarı */
 @media (max-width: 768px) {
   .container {
     max-width: 100vw !important;
@@ -40,12 +45,49 @@ body {
   }
 }
 
-/* Scrollbar gizle */
-html, body, main, * {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
+/* =========================================================
+   İçerik yardımcıları
+   ========================================================= */
+/* Grid içindeki content alanlarında min-height çakışmalarını önle */
+#cabo-main { min-height: 0; }
+
+/* =========================================================
+   Scrollbar — TAMAMEN GİZLE (scroll açık kalır)
+   ========================================================= */
+
+/* Root scroller’lar */
+html,
+body {
+  overflow-y: auto;                   /* dikey scroll açık */
+  scrollbar-width: none;              /* Firefox */
+  -ms-overflow-style: none;           /* Legacy Edge/IE */
 }
-::-webkit-scrollbar {
-  display: none !important;
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;           /* WebKit/Blink */
 }
-html, body { min-height: 100%; height: auto; }
+
+/* Tüm iç scroll yüzeylerinde de gizle */
+*,
+*::before,
+*::after {
+  scrollbar-width: none !important;   /* Firefox */
+}
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;           /* WebKit/Blink */
+}
+
+/* (Opsiyonel) belirli bir elemanda scrollbar’ı göstermek istersen */
+.allow-scrollbar {
+  scrollbar-width: auto !important;
+  -ms-overflow-style: auto !important;
+}
+.allow-scrollbar::-webkit-scrollbar {
+  display: initial !important;
+  width: 8px !important;
+  height: 8px !important;
+}

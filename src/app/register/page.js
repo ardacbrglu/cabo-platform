@@ -180,6 +180,23 @@ export default function RegisterPage() {
   const [termsHintVisible, setTermsHintVisible] = useState(false);
   const firstInvalidRef = useRef(null);
 
+  // Parola önerisini bastır: input readonly başlar, ilk etkileşimde kaldırılır
+  const pwdRef = useRef(null);
+  useEffect(() => {
+    const el = pwdRef.current;
+    if (!el) return;
+    const enable = () => el.removeAttribute("readonly");
+    el.setAttribute("readonly", "readonly");
+    el.setAttribute("data-lpignore", "true");   // LastPass
+    el.setAttribute("data-1p-ignore", "true");  // 1Password
+    el.addEventListener("focus", enable, { once: true });
+    el.addEventListener("pointerdown", enable, { once: true });
+    return () => {
+      el.removeEventListener("focus", enable);
+      el.removeEventListener("pointerdown", enable);
+    };
+  }, []);
+
   useEffect(() => {
     if (!termsHintVisible) return;
     const close = () => setTermsHintVisible(false);
@@ -246,12 +263,10 @@ export default function RegisterPage() {
           termsAccepted: true,
           captcha,
         },
-
-        // 🛑 kritik: otomatik redirect & retry kapalı
+        // kritik: otomatik redirect & retry kapalı
         noAuthRedirect: true,
         noRetry: true,
       });
-
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
         setServerError(data?.message || t("failed"));
@@ -298,7 +313,7 @@ export default function RegisterPage() {
         <form
           onSubmit={onSubmit}
           className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
-          autoComplete="off"
+          autoComplete="off"   // Register'da otomatik doldurma/öneri kapalı
           noValidate
         >
           <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-2">{t("title")}</h3>
@@ -313,7 +328,7 @@ export default function RegisterPage() {
               ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
               type="text"
               spellCheck={false}
-              autoComplete="username"
+              autoComplete="off"                 // öneri kapalı
               value={name}
               onChange={(e) => setName(e.target.value.replace(/[^A-Za-z0-9_]/g, ""))}
               placeholder={t("usernamePH")}
@@ -335,7 +350,7 @@ export default function RegisterPage() {
               ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
               type="email"
               spellCheck={false}
-              autoComplete="email"
+              autoComplete="off"                 // öneri kapalı
               value={email}
               onChange={(e) => setEmail(e.target.value.trimStart())}
               placeholder={t("emailPH")}
@@ -352,11 +367,16 @@ export default function RegisterPage() {
             </label>
             <input
               id="password"
-              ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
+              name="new-password"                // tarayıcıya “yeni parola” olduğunu söyle
+              ref={(el) => {
+                if (needsRef("password")) firstInvalidRef.current = el;
+                pwdRef.current = el;
+              }}
               type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              inputMode="text"
+              autoComplete="new-password"       // güçlü parola önerisini tetiklemeyi azaltır
+              autoCorrect="off"
+              spellCheck="false"
               placeholder={t("passwordPH")}
               minLength={8}
               required
