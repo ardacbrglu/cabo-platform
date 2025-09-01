@@ -1,3 +1,4 @@
+/* src/app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -7,87 +8,105 @@
    ========================================================= */
 :root { color-scheme: dark; }
 
-/* Body’yi sabit yüksekliğe kilitleme — mobil scroll için kritik */
-html {
-  height: auto;
-  min-height: 100%;
-  overflow-x: hidden;                 /* yatay taşma koruması */
+/* Yalnız body scroller olsun (çift scroller jank yapar) */
+html{
+  height:auto;
+  min-height:100%;
+  overflow-x:hidden;
+  overflow-y:hidden;                 /* <— önemli: sadece body kaydırır */
   overscroll-behavior-x: contain;
+  overscroll-behavior-y: contain;    /* mobil üst/alt çarpma etkisini azaltır */
+  -webkit-text-size-adjust:100%;
 }
 
-body {
-  height: auto;
-  min-height: 100dvh;                 /* dinamik viewport (mobil adres çubuğu) */
-  background-color: #0f0f0f;
-  color: #f6f6f6;
-  font-family: 'Inter', 'ui-sans-serif', 'system-ui', sans-serif;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-text-size-adjust: 100%;
+body{
+  height:auto;
+  min-height:100dvh;
+  background:#0f0f0f;
+  color:#f6f6f6;
+  font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
+  -webkit-tap-highlight-color:transparent;
+  overflow-y:auto;                   /* tek dikey scroller */
+  -webkit-overflow-scrolling: touch; /* iOS momentum */
+  touch-action: pan-y;               /* yalnız dikey kaydırma */
 }
 
 /* =========================================================
    Container
    ========================================================= */
-@media (min-width: 769px) {
-  .container {
-    max-width: 940px;                 /* max-w-3xl/4xl arası */
-    margin-left: auto;
-    margin-right: auto;
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
+@media (min-width:769px){
+  .container{
+    max-width:940px;
+    margin:0 auto;
+    padding-left:.75rem;
+    padding-right:.75rem;
   }
 }
-@media (max-width: 768px) {
-  .container {
-    max-width: 100vw !important;
-    padding-left: 0.25rem;
-    padding-right: 0.25rem;
+@media (max-width:768px){
+  .container{
+    max-width:100vw !important;
+    padding-left:.25rem;
+    padding-right:.25rem;
   }
 }
 
 /* =========================================================
-   İçerik yardımcıları
+   Scrollbar — TAM GİZLE (scroll açık kalır)
    ========================================================= */
-/* Grid içindeki content alanlarında min-height çakışmalarını önle */
-#cabo-main { min-height: 0; }
+body{
+  scrollbar-width:none;          /* Firefox */
+  -ms-overflow-style:none;       /* Eski Edge/IE */
+}
+body::-webkit-scrollbar{
+  width:0 !important;
+  height:0 !important;
+  display:none !important;       /* WebKit/Blink */
+}
+
+/* İç scroll yüzeylerinde de gizle (isteğe göre .allow-scrollbar kullan) */
+*,*::before,*::after{ scrollbar-width:none !important; }
+*::-webkit-scrollbar{
+  width:0 !important; height:0 !important; display:none !important;
+}
+.allow-scrollbar{ scrollbar-width:auto !important; -ms-overflow-style:auto !important; }
+.allow-scrollbar::-webkit-scrollbar{ display:initial !important; width:8px !important; height:8px !important; }
 
 /* =========================================================
-   Scrollbar — TAMAMEN GİZLE (scroll açık kalır)
+   Form — Autofill her zaman beyaz kalsın (Chrome/Edge/Safari/Firefox)
    ========================================================= */
-
-/* Root scroller’lar */
-html,
-body {
-  overflow-y: auto;                   /* dikey scroll açık */
-  scrollbar-width: none;              /* Firefox */
-  -ms-overflow-style: none;           /* Legacy Edge/IE */
-}
-html::-webkit-scrollbar,
-body::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none !important;           /* WebKit/Blink */
+input, textarea, select{
+  background:#fff;
+  color:#000;
 }
 
-/* Tüm iç scroll yüzeylerinde de gizle */
-*,
-*::before,
-*::after {
-  scrollbar-width: none !important;   /* Firefox */
-}
-*::-webkit-scrollbar {
-  width: 0 !important;
-  height: 0 !important;
-  display: none !important;           /* WebKit/Blink */
+/* WebKit/Blink */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill{
+  -webkit-text-fill-color:#000 !important;
+  caret-color:#111;
+  /* arka planı gerçekten beyaz yapmak için inset shadow hack */
+  -webkit-box-shadow:0 0 0 1000px #fff inset !important;
+          box-shadow:0 0 0 1000px #fff inset !important;
 }
 
-/* (Opsiyonel) belirli bir elemanda scrollbar’ı göstermek istersen */
-.allow-scrollbar {
-  scrollbar-width: auto !important;
-  -ms-overflow-style: auto !important;
+/* Standart (destekleyen tarayıcılar) */
+input:autofill,
+textarea:autofill,
+select:autofill{
+  background:#fff !important;
+  color:#000 !important;
 }
-.allow-scrollbar::-webkit-scrollbar {
-  display: initial !important;
-  width: 8px !important;
-  height: 8px !important;
+
+/* Firefox */
+input:-moz-autofill,
+textarea:-moz-autofill,
+select:-moz-autofill{
+  background:#fff !important;
+  color:#000 !important;
 }
+
+/* Grid içindeki içerik alanı taşmalarında footer'ın ittirilmemesi için */
+#cabo-main{ min-height:0; }

@@ -433,7 +433,10 @@
   "deleteRejectedConfirm": "Reddedilen çekim talebini silmek istiyor musunuz?",
   "pendingNet": "Bekleyen (net)",
   
-  "netPaidTotal": "Net ödenmiş tutar"
+  "netPaidTotal": "Net ödenmiş tutar",
+
+  "lockedUpdateWindowPassed": "Güncelleme süresi doldu. Bu talep için banka bilgilerini artık güncelleyemezsiniz."
+
 }
 
 

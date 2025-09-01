@@ -418,7 +418,9 @@
   "minThresholdNotMet": "Minimum payout not reached",
   "deleteRejectedConfirm": "Delete the rejected payout request?",
   "pendingNet": "Pending (net)",
-  "netPaidTotal": "Net paid"
+  "netPaidTotal": "Net paid",
+  "lockedUpdateWindowPassed": "The edit window has expired. You can no longer update the bank details for this request."
+
 
 
 }
