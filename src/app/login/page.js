@@ -307,7 +307,7 @@ export default function LoginPage() {
 
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
             {/* Email */}
-            <div className="relative" onFocus={handleFocus}>
+            <div className="relative cabo-input-surface" onFocus={handleFocus}>
               <label className="sr-only" htmlFor="email">
                 {t("emailPlaceholder")}
               </label>
@@ -337,7 +337,7 @@ export default function LoginPage() {
             </div>
 
             {/* Password */}
-            <div className="relative" onFocus={handleFocus}>
+            <div className="relative cabo-input-surface" onFocus={handleFocus}>
               <label className="sr-only" htmlFor="password">
                 {t("passwordPlaceholder")}
               </label>
@@ -431,10 +431,31 @@ export default function LoginPage() {
         </div>
       </div>
 
+      {/* Sadece bu sayfada: wrapper içindeki inputlar her durumda beyaz kalsın (autofill dahil) */}
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space { margin-top: 1rem !important; }
           .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
+        }
+        .cabo-input-surface input {
+          background: #fff !important;
+          color: #000 !important;
+        }
+        .cabo-input-surface input:focus {
+          background: #fff !important;
+          color: #000 !important;
+        }
+        .cabo-input-surface input:-webkit-autofill,
+        .cabo-input-surface input:-webkit-autofill:hover,
+        .cabo-input-surface input:-webkit-autofill:focus {
+          -webkit-text-fill-color: #000 !important;
+          caret-color: #111;
+          -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+                  box-shadow: 0 0 0 1000px #fff inset !important;
+        }
+        .cabo-input-surface input:-moz-autofill {
+          background: #fff !important;
+          color: #000 !important;
         }
       `}</style>
     </PublicLayout>
