@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Security Docblock (UI)
- * - All requests via apiFetch (credentials: include, X-Requested-With, X-Request-Id).
- * - CSRF header is auto-added by apiFetch when available.
- * - No sensitive details leaked in UI errors.
- * - Mobile-only UI tweaks below DO NOT affect desktop layout.
- */
-
 import { useState, useEffect, useMemo } from "react";
 import Layout from "@/components/Layout";
 import {
@@ -22,7 +14,6 @@ import { normalizeIban, isIbanTR } from "@/lib/iban";
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
 
-/* 4’lü gruplama – sadece gösterim için */
 function formatIbanGroups(raw) {
   const only = normalizeIban(raw).slice(0, 26);
   return only.replace(/(.{4})/g, "$1 ").trim();
@@ -37,9 +28,18 @@ function WalletProgress({ value, max }) {
     <div className="relative w-[120px] h-[120px] flex items-center justify-center mb-2 select-none">
       <svg width={120} height={120} className="absolute left-0 top-0 z-0">
         <circle cx={center} cy={center} r={radius} fill="none" stroke="#232323" strokeWidth={stroke} />
-        <circle cx={center} cy={center} r={radius} fill="none" stroke={COLOR_GREEN} strokeWidth={stroke}
-          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 1s" }} />
+        <circle
+          cx={center}
+          cy={center}
+          r={radius}
+          fill="none"
+          stroke={COLOR_GREEN}
+          strokeWidth={stroke}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1s" }}
+        />
       </svg>
       <Wallet2 className="absolute" style={{ color: COLOR_CABO, width: 56, height: 56, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
     </div>
@@ -88,7 +88,6 @@ export default function WalletPage() {
   const [minPayout, setMinPayout] = useState(100);
   const [platformCommissionPercent, setPlatformCommissionPercent] = useState(0);
 
-  // Profil (users) için banka
   const [iban, setIban] = useState("");
   const [bankName, setBankName] = useState("");
   const [realName, setRealName] = useState("");
@@ -101,7 +100,6 @@ export default function WalletPage() {
   const [payoutState, setPayoutState] = useState({ status: "", message: "" });
   const [activeRequestCount, setActiveRequestCount] = useState(0);
 
-  // Talep detay modalı (sadece snapshot’ı etkiler)
   const [detailsModal, setDetailsModal] = useState({
     open: false,
     sales: [],
@@ -219,7 +217,7 @@ export default function WalletPage() {
       const res = await apiFetch("/api/wallet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: { iban: ibanNorm, bankName, realName }, // PROFİL (users) güncelle
+        body: { iban: ibanNorm, bankName, realName },
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -247,7 +245,7 @@ export default function WalletPage() {
           "Content-Type": "application/json",
           "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
         },
-        body: { requestPayout: true }, // USERS’daki son bankayı snapshotla
+        body: { requestPayout: true },
       });
       await res.json().catch(() => ({}));
       if (res.ok) {
@@ -359,7 +357,6 @@ export default function WalletPage() {
 
     setDetailsModal((m) => ({ ...m, editSaving: true, editError: "" }));
     try {
-      // SADECE TALEP SNAPSHOT’I — users tablosu etkilenmez
       const res = await apiFetch("/api/payout_request_details", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -438,7 +435,6 @@ export default function WalletPage() {
 
   return (
     <Layout>
-      {/* mobilde kenar boşluklarını artır: px-3; md ve üstü olduğu gibi */}
       <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-center mt-5 gap-8 px-3 md:px-4">
         <div className="flex flex-col md:flex-row gap-5 md:gap-8 w-full">
           {/* Wallet Balance */}
@@ -479,7 +475,6 @@ export default function WalletPage() {
               )}
             </div>
 
-            {/* MOBİL: buton tam ortalı ve simetrik */}
             <div className="w-full flex justify-center">
               <button
                 className={`mt-4 w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono text-[#181818] ${
@@ -519,7 +514,7 @@ export default function WalletPage() {
             )}
           </div>
 
-          {/* IBAN / Bank Form (USERS) */}
+          {/* IBAN / Bank Form */}
           <div className="bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-7 flex-1 flex flex-col items-center min-w-[240px]">
             <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
               {t("paymentDetails")}
@@ -579,7 +574,6 @@ export default function WalletPage() {
               />
               {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
 
-              {/* MOBİL: kaydet butonu da tam ortalı ve simetrik */}
               <div className="w-full flex justify-center">
                 <button
                   type="submit"
@@ -605,21 +599,29 @@ export default function WalletPage() {
             </span>
           </div>
 
-          {/* MOBİL: yatay taşmayı tamamen engelle — method+bank sütunları mobilde gizli, paddings/pill küçüldü */}
           <div className="w-full overflow-x-hidden">
-            {/* Değişiklik: table-auto (mobilde içerik bazlı genişlik) */}
+            {/* ✅ Mobilde sütun genişliklerini kilitlemek için colgroup */}
             <table className="w-full text-[11px] sm:text-xs font-mono text-left table-auto">
+              <colgroup>
+                <col className="col-date" />
+                <col className="col-amount" />
+                <col className="col-status" />
+                <col className="col-method" />
+                <col className="col-bank" />
+                <col className="col-actions" />
+              </colgroup>
+
               <thead>
                 <tr className="text-gray-400 border-b border-[#232323]">
-                  <th className="py-2 px-2 md:px-3 w-[30%] md:w-auto">{t("date")}</th>
-                  <th className="py-2 px-2 md:px-3 text-right w-[22%] md:w-auto">{t("amount")}</th>
-                  <th className="py-2 px-2 md:px-3 w-[32%] md:w-auto">{t("status")}</th>
+                  <th className="py-2 px-2 md:px-3">{t("date")}</th>
+                  <th className="py-2 px-2 md:px-3 text-right">{t("amount")}</th>
+                  <th className="py-2 px-2 md:px-3">{t("status")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("method")}</th>
                   <th className="py-2 px-2 md:px-3 hidden sm:table-cell">{t("bank")}</th>
-                  {/* Değişiklik: mobilde aksiyon sütunu genişliği %24 */}
-                  <th className="py-2 px-2 md:px-3 w-[24%] md:w-auto"></th>
+                  <th className="py-2 px-2 md:px-3"></th>
                 </tr>
               </thead>
+
               <tbody>
                 {paginatedHistory.length === 0 ? (
                   <tr>
@@ -632,9 +634,12 @@ export default function WalletPage() {
                     item ? (
                       <tr key={i} className="border-b border-[#202020] last:border-none">
                         <td className="py-2 px-2 md:px-3 whitespace-nowrap">{item.date}</td>
-                        <td className="py-2 px-2 md:px-3 font-bold text-right tabular-nums" style={{ color: COLOR_GREEN }}>
+
+                        {/* ✅ 'Tutar' mobilde sabit genişlik + sağ hizalı */}
+                        <td className="py-2 px-2 md:px-3 font-bold text-right tabular-nums amount-cell" style={{ color: COLOR_GREEN }}>
                           ₺{f2(item.amount || 0)}
                         </td>
+
                         <td className="py-2 px-2 md:px-3">
                           <span
                             className={`inline-block align-middle font-bold px-1.5 py-0.5 rounded whitespace-nowrap leading-tight ${
@@ -660,41 +665,44 @@ export default function WalletPage() {
                             </span>
                           )}
                         </td>
+
                         <td className="py-2 px-2 md:px-3 hidden sm:table-cell">{item.method}</td>
                         <td className="py-2 px-2 md:px-3 hidden sm:table-cell truncate max-w-[160px]">{item.bankName || "-"}</td>
-                        {/* Değişiklik: nowrap kaldırıldı; flex-wrap ile kırılma sağlandı */}
+
+                        {/* ✅ Aksiyonlar: mobilde alt alta & sağa hizalı, simetrik */}
                         <td className="py-2 px-2 md:px-3">
-                          <div className="flex justify-end gap-1 flex-wrap">
+                          <div className="flex sm:flex-row flex-col items-end sm:items-center justify-end gap-1">
                             {item.status === "pending" && item.requestId && item.canCancel && (
                               <button
                                 onClick={() => handleCancelRequest(item.requestId)}
                                 disabled={isSubmitting}
-                                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50 shrink-0"
+                                className="btn inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50 w-[72px] sm:w-auto"
                                 title={t("cancel")}
                               >
                                 <X size={14} className="sm:mr-1" />
                                 <span className="hidden sm:inline">{t("cancel")}</span>
-                                <span className="sm:hidden">İptal</span>
+                                <span className="sm:hidden max-[360px]:hidden">İptal</span>
                               </button>
                             )}
+
                             {item.status === "rejected" && item.requestId && item.canDelete && (
                               <button
                                 onClick={() => handleDeleteRequest(item.requestId)}
-                                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-400 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono shrink-0"
+                                className="btn inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-400 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono w-[72px] sm:w-auto"
                                 title={t("delete")}
                               >
                                 <Trash2 size={14} className="sm:mr-1" />
                                 <span className="hidden sm:inline">{t("delete")}</span>
-                                <span className="sm:hidden">Sil</span>
+                                <span className="sm:hidden max-[360px]:hidden">Sil</span>
                               </button>
                             )}
+
                             <button
                               onClick={() => openDetails(item.requestId)}
-                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-blue-400 hover:bg-blue-900/20 transition text-[11px] sm:text-xs font-mono ml-1 shrink-0"
+                              className="btn inline-flex items-center gap-1 px-1.5 py-1 rounded text-blue-400 hover:bg-blue-900/20 transition text-[11px] sm:text-xs font-mono w-[72px] sm:w-auto"
                               title={t("details") || "Detay"}
                             >
                               <FileText size={14} className="sm:mr-1" />
-                              {/* Çok dar ekranlarda metni gizle, sadece ikon kalsın */}
                               <span className="hidden sm:inline">{t("details") || "Detay"}</span>
                               <span className="sm:hidden max-[360px]:hidden">Detay</span>
                             </button>
@@ -734,8 +742,8 @@ export default function WalletPage() {
         {/* Details Modal */}
         {detailsModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-            <div className="bg-[#181818] rounded-lg shadow-lg p-3 sm:p-6 w-full max-w-lg relative">
-              <button className="absolute right-3 top-2 text-gray-400" onClick={closeDetails}>
+            <div className="bg-[#181818] rounded-lg shadow-lg p-3 sm:p-6 w-[94vw] sm:w-full max-w-lg relative max-h-[90svh] overflow-y-auto">
+              <button className="absolute right-3 top-2 text-gray-400" onClick={closeDetails} aria-label="Close">
                 <X size={18} />
               </button>
               <h2 className="font-bold mb-2 text-lg font-mono text-[#d1ffd0]">{t("payoutRequestDetails")}</h2>
@@ -772,7 +780,6 @@ export default function WalletPage() {
                 {detailsModal.platformPaidAt && <span> {t("at")} {new Date(detailsModal.platformPaidAt).toLocaleDateString()}</span>}
               </div>
 
-              {/* request bank edit (snapshot only) */}
               {detailsModal.status === "pending" && (
                 <div className={`mb-3 border rounded p-2 ${detailsModal.canEditBank ? "border-[#2a2a2a]" : "border-[#3a2a2a]"}`}>
                   <div className="flex items-center justify-between mb-2">
@@ -912,6 +919,18 @@ export default function WalletPage() {
           </div>
         )}
       </main>
+
+      {/* mobil hizalama ayarları */}
+      <style jsx>{`
+        /* Sadece <=640px için sütun genişlikleri */
+        @media (max-width: 640px) {
+          .col-date   { width: 34%; }
+          .col-amount { width: 24%; }  /* Tutar — sabit */
+          .col-status { width: 26%; }
+          .col-actions{ width: 16%; }  /* Aksiyonlar */
+          .amount-cell{ min-width: 74px; } /* sayılar sıçramasın */
+        }
+      `}</style>
 
       {/* yalnız tabular-nums yardımcı sınıfı; ekstra global hack yok */}
       <style jsx global>{`
