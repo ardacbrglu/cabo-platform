@@ -110,3 +110,4 @@ select:-moz-autofill{
 
 /* Grid içindeki içerik alanı taşmalarında footer'ın ittirilmemesi için */
 #cabo-main{ min-height:0; }
+html, body { overscroll-behavior-y: contain; }
