@@ -4,8 +4,8 @@ export default function NotificationBadge({
   size = 11,
   bgColor = "#ff5555",
   borderColor = "#181818",
-  offsetX = -4,   // right offset (px, negative = dışa doğru)
-  offsetY = -4,   // top offset
+  offsetX = -4,
+  offsetY = -4,
   style,
 }) {
   if (!show) return null;
