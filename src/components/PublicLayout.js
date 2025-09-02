@@ -57,9 +57,7 @@ function FlagUS({ className = "w-4 h-3" }) {
     </svg>
   );
 }
-function Flag({ code, className }) {
-  return code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />;
-}
+const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
 
 export default function PublicLayout({ children }) {
   const { locale, setLocale, persistLocale, ready } = useLocale();
@@ -80,11 +78,7 @@ export default function PublicLayout({ children }) {
   }, []);
 
   useEffect(() => {
-    const onLocChange = () => {
-      try {
-        setCurrentPath(window.location.pathname || "/");
-      } catch {}
-    };
+    const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
     const patch = (type) => {
       const orig = history[type];
       return function (...args) {
@@ -93,10 +87,7 @@ export default function PublicLayout({ children }) {
         return ret;
       };
     };
-    try {
-      history.pushState = patch("pushState");
-      history.replaceState = patch("replaceState");
-    } catch {}
+    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -105,7 +96,7 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // Mobilde hover transformlarını kapatmak için işaret
+  // mobil hover → transform kapat (globals.css bunu kullanıyor)
   useEffect(() => {
     const el = document.documentElement;
     const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
@@ -128,11 +119,7 @@ export default function PublicLayout({ children }) {
   const t = (k) => (translations[locale] || translations.en)[k] || k;
   const activeLangCode = (locale?.toLowerCase().startsWith("tr") ? "tr" : "en");
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
-
-  const setLangPersist = (code) => {
-    if (typeof persistLocale === "function") persistLocale(code);
-    else if (typeof setLocale === "function") setLocale(code);
-  };
+  const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -142,9 +129,7 @@ export default function PublicLayout({ children }) {
   ];
 
   const linkClassDesktop = (href) =>
-    `transition hover:text-[#81d742] hover:scale-[1.015] inline-block ${
-      currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
-    }`;
+    `transition hover:text-[#81d742] hover:scale-[1.015] inline-block ${currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"}`;
 
   const LangOptionDesktop = ({ code, short }) => {
     const active = activeLang.code === code;
@@ -152,7 +137,9 @@ export default function PublicLayout({ children }) {
       <button
         type="button"
         onClick={() => { setLangPersist(code); setLangOpen(false); }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"}`}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+          active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
+        }`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
         style={{ outline: "none" }}
@@ -169,7 +156,9 @@ export default function PublicLayout({ children }) {
       <button
         type="button"
         onClick={() => { setLangPersist(code); }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+        }`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
         style={{ outline: "none" }}
@@ -181,11 +170,9 @@ export default function PublicLayout({ children }) {
   };
 
   return (
-    <div
-      className="min-h-[100dvh] grid grid-rows-[auto_1fr_auto_auto] bg-[#0b0b0b] text-white font-sans tracking-tight"
-      style={{ contain: "layout style paint" }}
-    >
-      <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm relative">
+    <div className="min-h-[100dvh] grid grid-rows-[auto_1fr_auto] bg-[#0b0b0b] text-white font-sans tracking-tight">
+      {/* HEADER */}
+      <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm">
         <h1
           className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight select-none"
           style={{ color: "#d1ffd0", letterSpacing: "-0.02em", textShadow: "0 2px 12px rgba(129,215,66,0.08)" }}
@@ -218,10 +205,8 @@ export default function PublicLayout({ children }) {
                   onClick={() => setLangOpen((s) => !s)}
                   style={{ outline: "none" }}
                 >
-                  <span aria-hidden="true">
-                    <Globe size={18} />
-                  </span>
-                  <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+                  <Globe size={18} />
+                  <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 {langOpen && (
@@ -230,9 +215,7 @@ export default function PublicLayout({ children }) {
                     aria-label="Language selector"
                     className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-30"
                   >
-                    {LANGS.map((l) => (
-                      <LangOptionDesktop key={l.code} {...l} />
-                    ))}
+                    {LANGS.map((l) => <LangOptionDesktop key={l.code} {...l} />)}
                   </div>
                 )}
               </li>
@@ -253,6 +236,7 @@ export default function PublicLayout({ children }) {
         )}
       </header>
 
+      {/* MOBILE MENU */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
           {navLinks.map((l) => (
@@ -277,67 +261,38 @@ export default function PublicLayout({ children }) {
             style={{ outline: "none" }}
           >
             <span className="flex items-center gap-2">
-              <Globe size={16} aria-hidden="true" />
+              <Globe size={16} />
               <span className="uppercase tracking-wide">{(translations[locale] || translations.en).language}</span>
               <span className="ml-1 text-xs text-gray-400">({activeLang.short})</span>
             </span>
-            <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} aria-hidden="true" />
+            <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
           </button>
 
           {mobileLangOpen && (
             <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]">
-              {LANGS.map((l) => (
-                <LangOptionMobile key={l.code} {...l} />
-              ))}
+              {LANGS.map((l) => <LangOptionMobile key={l.code} {...l} />)}
             </div>
           )}
         </div>
       )}
 
-      {/* Main */}
-      <main
-        id="cabo-main"
-        className="min-h-0 flex flex-col items-center mobile-untrap-scroll"
-        style={{
-          minHeight: isMobile ? "calc(68vh)" : undefined,
-          justifyContent: "center",
-          paddingBottom: isMobile ? 10 : 32,
-          paddingTop: isMobile ? 24 : 32,
-        }}
-      >
+      {/* MAIN */}
+      <main id="cabo-main" className="min-h-0 flex flex-col items-center">
         {children}
       </main>
 
-      {/* Merchant band — sabit yükseklik ve yakın tipografi */}
-      <div className="relative w-full bg-[#111]">
-        <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
-        <div className="h-12 px-3 sm:px-4 flex items-center justify-center gap-2 text-sm md:text-[15px] leading-none">
+      {/* ALT BLOK: band + telif, TEK PARÇA */}
+      <div className="cabo-public-footer">
+        <div className="merchant">
           <span className="text-gray-400">{(translations[locale] || translations.en).merchantQ}</span>
-          <Link
-            href="/merchant/login"
-            className="text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
-            prefetch={false}
-            aria-label={(translations[locale] || translations.en).merchantAccess}
-          >
+          <Link href="/merchant/login" prefetch={false}>
             {(translations[locale] || translations.en).merchantAccess}
           </Link>
         </div>
+        <div className="copy">
+          &copy; 2025 {(translations[locale] || translations.en).copyright}
+        </div>
       </div>
-
-      <footer className="text-center py-4 bg-[#111] text-gray-500 text-xs">
-        &copy; 2025 {(translations[locale] || translations.en).copyright}
-      </footer>
-
-      {/* yalnız mobilde nested-scroll'ü yumuşat */}
-      <style jsx global>{`
-        @media (max-width: 768px) {
-          .mobile-untrap-scroll {
-            overscroll-behavior-y: contain;
-            -webkit-overflow-scrolling: touch;
-            touch-action: pan-y;
-          }
-        }
-      `}</style>
     </div>
   );
 }

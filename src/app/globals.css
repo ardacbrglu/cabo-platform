@@ -2,17 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* =========================================================
-   Base / Theme
-   ========================================================= */
+/* ================= Base / Theme ================= */
 :root { color-scheme: dark; }
 
-/* Sayfa scroll’u: html + body serbest */
 html{
   height:auto;
   min-height:100%;
   margin:0;
-  background:#0B0B0B;
+  background:#0B0B0B;  /* kenarda beyaz kaçak olmasın */
   color:#f6f6f6;
   overflow-x:hidden;
   overflow-y:auto;
@@ -20,6 +17,9 @@ html{
   overscroll-behavior-y: auto;
   -webkit-text-size-adjust:100%;
 }
+/* Scrollbar: tamamen gizle (html + body) */
+html{ scrollbar-width:none; }
+html::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
 body{
   height:auto;
@@ -29,120 +29,102 @@ body{
   color:#f6f6f6;
   font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
   -webkit-tap-highlight-color:transparent;
-  overflow-y:auto;                 /* tek dikey scroller */
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;
+  scrollbar-width:none; -ms-overflow-style:none;
 }
+body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
-/* =========================================================
-   Container
-   ========================================================= */
+/* ================ Container ================= */
 @media (min-width:769px){
   .container{ max-width:940px; margin:0 auto; padding-left:.75rem; padding-right:.75rem; }
 }
 @media (max-width:768px){
-  .container{ max-width:100vw !important; padding-left:.25rem; padding-right:.25rem; }
+  .container{ max-width:100vw!important; padding-left:.25rem; padding-right:.25rem; }
 }
 
-/* =========================================================
-   Scrollbar — gizle (scroll açık kalır)
-   ========================================================= */
-body{ scrollbar-width:none; -ms-overflow-style:none; }
-body::-webkit-scrollbar{ width:0 !important; height:0 !important; display:none !important; }
-/* NOT: Tüm öğelerde scrollbar’ı kapatmak bazı tarayıcılarda jank yapabiliyor.
-   Bu yüzden * yerine yalnızca body’de gizliyoruz. */
-
-/* İç scroll isteyen kutular için:
-   <div class="allow-scrollbar overflow-y-auto"> … </div> */
-.allow-scrollbar{ scrollbar-width:auto !important; -ms-overflow-style:auto !important; }
-.allow-scrollbar::-webkit-scrollbar{ display:initial !important; width:8px !important; height:8px !important; }
-
-/* =========================================================
-   MOBİL: nested-scroll tuzağını kapat
-   ========================================================= */
-@media (max-width:768px){
-  .mobile-untrap-scroll .overflow-y-auto,
-  .mobile-untrap-scroll .overflow-y-scroll,
-  .mobile-untrap-scroll [data-scrollbox]{
-    max-height: initial !important;
-    overflow-y: visible !important;
-    -webkit-overflow-scrolling: auto !important;
-  }
-  .mobile-untrap-scroll .allow-inner-scroll{
-    overflow-y:auto !important;
-    -webkit-overflow-scrolling:touch !important;
-  }
-  .modal-surface{ overscroll-behavior: contain; }
-}
-
-/* =========================================================
-   TOUCH ortamlarda aktif tık transformlarını kaldır
-   (tap → scroll kilitlenmesin)
-   ========================================================= */
+/* ================ Mobil jank önlemleri ================= */
 @media (hover:none) and (pointer:coarse){
-  a:active, button:active, [role="button"]:active { transform:none !important; }
-  a, button, [role="button"] { touch-action: manipulation; }
+  a:hover, button:hover, [role="button"]:hover,
+  .card:hover, [data-card]:hover { transform:none!important; }
+  a, button, [role="button"] { touch-action:manipulation; }
 }
 
-/* =========================================================
-   Login: autofill her zaman beyaz (sadece login kartında)
-   ========================================================= */
+/* İçerik taşsa bile footer yukarı itilmesin */
+#cabo-main{ min-height:0; }
+
+/* ================ Public bottom block (band+footer tek parça) ================ */
+.cabo-public-footer{
+  --row-gap: 6px;          /* iki satır arası boşluk */
+  background:#111;
+  border-top:1px solid #232323;
+  text-align:center;
+  padding:12px 16px;       /* her sayfada aynı kalınlık */
+  position:relative;
+}
+.cabo-public-footer::before{
+  content:"";
+  position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
+  background:linear-gradient(90deg, transparent, #1b1b1b, transparent);
+}
+.cabo-public-footer .merchant{
+  height:44px;             /* sabit yükseklik: band */
+  display:flex; align-items:center; justify-content:center;
+  gap:.6rem;
+  line-height:1;
+}
+.cabo-public-footer .merchant a{ font-weight:600; color:#81d742; }
+.cabo-public-footer .merchant a:hover{ color:#b3ffb3; text-decoration:underline; }
+
+.cabo-public-footer .copy{
+  font-size:12px;
+  color:#8b8b8b;
+  line-height:1;
+  margin-top:var(--row-gap);
+}
+
+/* ================ reCAPTCHA v2 – beyaz kenarı kırp ================ */
+.cabo-recaptcha-clip{
+  --rc-w: 304px;
+  --rc-h: 78px;
+  width:var(--rc-w);
+  height:var(--rc-h);
+  display:inline-block;
+  overflow:hidden;                 /* beyaz kaçakları kırpar */
+  border-radius:10px;
+  background:#111;
+  box-shadow:inset 0 0 0 1px #2a2a2a; /* opsiyonel hafif çerçeve */
+  line-height:0;
+}
+.cabo-recaptcha-box{
+  position:relative;
+  left:-1px; top:-1px;             /* dıştaki beyaz pikseli gizle */
+  width:calc(var(--rc-w) + 2px);
+  height:calc(var(--rc-h) + 2px);
+  background:transparent!important;
+}
+.cabo-recaptcha-clip, .cabo-recaptcha-box, .g-recaptcha{
+  background:transparent!important; border:0!important; box-shadow:none!important;
+}
+iframe[title="reCAPTCHA"]{ background:transparent!important; }
+
+/* ================ Login autofill (sadece login/register kartı) ================ */
 .auth-login input,
 .auth-login textarea,
-.auth-login select{
-  background:#fff !important;
-  color:#000 !important;
-}
+.auth-login select{ background:#fff!important; color:#000!important; }
 .auth-login input:-webkit-autofill,
 .auth-login input:-webkit-autofill:hover,
 .auth-login input:-webkit-autofill:focus,
 .auth-login textarea:-webkit-autofill,
 .auth-login select:-webkit-autofill{
-  -webkit-text-fill-color:#000 !important;
+  -webkit-text-fill-color:#000!important;
   caret-color:#111;
-  -webkit-box-shadow:0 0 0 1000px #fff inset !important;
-          box-shadow:0 0 0 1000px #fff inset !important;
-}
-.auth-login input:autofill,
-.auth-login textarea:autofill,
-.auth-login select:autofill{
-  background:#fff !important;
-  color:#000 !important;
+  -webkit-box-shadow:0 0 0 1000px #fff inset!important;
+          box-shadow:0 0 0 1000px #fff inset!important;
 }
 .auth-login input:-moz-autofill,
 .auth-login textarea:-moz-autofill,
 .auth-login select:-moz-autofill{
-  background:#fff !important;
-  color:#000 !important;
+  background:#fff!important; color:#000!important;
 }
-
-/* Grid içindeki içerik alanı taşmalarında footer itmesin */
-#cabo-main{ min-height:0; }
-
-/* =========================================================
-   reCAPTCHA koyu tema — dıştaki beyaz kaçakları temizle
-   (iframe dışı kapatma: içini değiştiremeyiz ama dış gölge/çerçeve yok edilir)
-   ========================================================= */
-.cabo-recaptcha,
-.cabo-recaptcha > div,
-.g-recaptcha,
-.g-recaptcha > div{
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  outline: 0 !important;
-  filter: none !important;
-  display:inline-block;
-}
-.cabo-recaptcha iframe,
-.g-recaptcha iframe,
-iframe[title="reCAPTCHA"]{
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  outline: 0 !important;
-  filter: none !important;
-}
-
-/* (opsiyonel) Koyu temalı kart içindeki spacing tutarlılığı */
-.rc-anchor-normal{ margin:0 !important; } /* bazı temalarda default margin bırakıyor */
