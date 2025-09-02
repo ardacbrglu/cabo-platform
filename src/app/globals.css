@@ -7,12 +7,12 @@
    ========================================================= */
 :root { color-scheme: dark; }
 
-/* Sayfa scroll’u: html + body serbest; nested-scroll jank yok */
+/* Sayfa scroll’u: html + body serbest */
 html{
   height:auto;
   min-height:100%;
   margin:0;
-  background:#0B0B0B;             /* ⬅ beyaz kenarı kes */
+  background:#0B0B0B;
   color:#f6f6f6;
   overflow-x:hidden;
   overflow-y:auto;
@@ -25,7 +25,7 @@ body{
   height:auto;
   min-height:100dvh;
   margin:0;
-  background:#0B0B0B;             /* ⬅ html ile aynı ton */
+  background:#0B0B0B;
   color:#f6f6f6;
   font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
   -webkit-tap-highlight-color:transparent;
@@ -45,13 +45,15 @@ body{
 }
 
 /* =========================================================
-   Scrollbar — gizle (scroll açık)
+   Scrollbar — gizle (scroll açık kalır)
    ========================================================= */
 body{ scrollbar-width:none; -ms-overflow-style:none; }
 body::-webkit-scrollbar{ width:0 !important; height:0 !important; display:none !important; }
-*,*::before,*::after{ scrollbar-width:none !important; }
-*::-webkit-scrollbar{ width:0 !important; height:0 !important; display:none !important; }
+/* NOT: Tüm öğelerde scrollbar’ı kapatmak bazı tarayıcılarda jank yapabiliyor.
+   Bu yüzden * yerine yalnızca body’de gizliyoruz. */
 
+/* İç scroll isteyen kutular için:
+   <div class="allow-scrollbar overflow-y-auto"> … </div> */
 .allow-scrollbar{ scrollbar-width:auto !important; -ms-overflow-style:auto !important; }
 .allow-scrollbar::-webkit-scrollbar{ display:initial !important; width:8px !important; height:8px !important; }
 
@@ -74,7 +76,8 @@ body::-webkit-scrollbar{ width:0 !important; height:0 !important; display:none !
 }
 
 /* =========================================================
-   TOUCH ortamlarda :active transform kaldır (tap → scroll kilitlenmesin)
+   TOUCH ortamlarda aktif tık transformlarını kaldır
+   (tap → scroll kilitlenmesin)
    ========================================================= */
 @media (hover:none) and (pointer:coarse){
   a:active, button:active, [role="button"]:active { transform:none !important; }
@@ -115,3 +118,31 @@ body::-webkit-scrollbar{ width:0 !important; height:0 !important; display:none !
 
 /* Grid içindeki içerik alanı taşmalarında footer itmesin */
 #cabo-main{ min-height:0; }
+
+/* =========================================================
+   reCAPTCHA koyu tema — dıştaki beyaz kaçakları temizle
+   (iframe dışı kapatma: içini değiştiremeyiz ama dış gölge/çerçeve yok edilir)
+   ========================================================= */
+.cabo-recaptcha,
+.cabo-recaptcha > div,
+.g-recaptcha,
+.g-recaptcha > div{
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  filter: none !important;
+  display:inline-block;
+}
+.cabo-recaptcha iframe,
+.g-recaptcha iframe,
+iframe[title="reCAPTCHA"]{
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  filter: none !important;
+}
+
+/* (opsiyonel) Koyu temalı kart içindeki spacing tutarlılığı */
+.rc-anchor-normal{ margin:0 !important; } /* bazı temalarda default margin bırakıyor */

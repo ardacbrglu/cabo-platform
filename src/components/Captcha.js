@@ -1,15 +1,20 @@
 "use client";
+
 /**
  * reCAPTCHA component (v2 checkbox or v3 invisible)
- * - v2: deterministic load via onload callback + render=explicit
- * - v3: execute + renew token every 90s
- * - Re-loads script on language change; no page refresh needed
+ * - v2: explicit render + theme:dark, dil değişince script yeniden yüklenir ama
+ *       **mevcut geçerli token korunur** (expire olana kadar form gönderilebilir).
+ * - v3: execute + 90 sn’de bir yenile.
+ * - Dil değişiminde otomatik re-render; v2’de token’ı yalnızca expire/error durumunda sıfırla.
  */
 
 import { useEffect, useRef, useState } from "react";
 
 const MODE = (process.env.NEXT_PUBLIC_RECAPTCHA_MODE || "v2").toLowerCase(); // "v2" | "v3"
 const SITE_KEY = (process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
+
+// v2 token’ları ~120s geçerli; güvenli tarafta kalalım.
+const V2_TOKEN_TTL_MS = 110 * 1000;
 
 export default function Captcha({ onChange, lang = "en", action = "form_submit", resetKey = 0 }) {
   const [err, setErr] = useState("");
@@ -19,11 +24,19 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
   const renewTimerRef = useRef(null);
   const epochRef = useRef(0);
 
-  // external reset
+  // v2 için: son geçerli token’ı ve yaşını tut
+  const lastGoodTokenRef = useRef("");
+  const lastGoodTsRef = useRef(0);
+  const expireTimerRef = useRef(null);
+
+  // dış reset (örn. server hatası sonrası)
   useEffect(() => {
     try {
       if (MODE === "v2" && widgetIdRef.current != null && window.grecaptcha?.reset) {
         window.grecaptcha.reset(widgetIdRef.current);
+        // v2: dış reset geldiyse token’ı temizle
+        lastGoodTokenRef.current = "";
+        lastGoodTsRef.current = 0;
         onChange?.("");
       } else if (MODE === "v3" && execRef.current) {
         execRef.current();
@@ -33,19 +46,23 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
   }, [resetKey]);
 
   useEffect(() => {
-    onChange?.(""); // clear token on lang/action change
-
     if (!SITE_KEY) {
       setErr("missing-sitekey");
       return;
     }
-
     setErr("");
+
     const epoch = ++epochRef.current;
 
+    // v3 yenileme timer’ını kapat
     if (renewTimerRef.current) {
       clearInterval(renewTimerRef.current);
       renewTimerRef.current = null;
+    }
+    // v2 token expire timer’ını kapat
+    if (expireTimerRef.current) {
+      clearTimeout(expireTimerRef.current);
+      expireTimerRef.current = null;
     }
 
     const SCRIPT_ID = "recaptcha-script";
@@ -54,10 +71,13 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
         ? `https://www.google.com/recaptcha/api.js?hl=${encodeURIComponent(lang)}&render=${encodeURIComponent(SITE_KEY)}`
         : `https://www.google.com/recaptcha/api.js?hl=${encodeURIComponent(lang)}&onload=__caboRecaptchaOnload&render=explicit`;
 
+    // Dil değiştiyse doğru script’i kullan (gerekirse eskiyi kaldır)
     const old = document.getElementById(SCRIPT_ID);
     if (old && old.getAttribute("src") !== src) {
       old.remove();
-      try { delete window.grecaptcha; } catch {}
+      try {
+        delete window.grecaptcha;
+      } catch {}
     }
 
     function ensureScript() {
@@ -75,18 +95,57 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
       });
     }
 
-    // global onload callback for v2
+    // v2 onload callback
     window.__caboRecaptchaOnload = () => {
       if (epoch !== epochRef.current) return;
       try {
         widgetIdRef.current = window.grecaptcha.render(boxRef.current, {
           sitekey: SITE_KEY,
           theme: "dark",
-          callback: (t) => onChange?.(t || ""),
-          "expired-callback": () => onChange?.(""),
-          "error-callback": () => onChange?.(""),
+          callback: (t) => {
+            if (t) {
+              lastGoodTokenRef.current = t;
+              lastGoodTsRef.current = Date.now();
+              onChange?.(t);
+              // token’ı TTL sonunda sıfırla
+              if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
+              expireTimerRef.current = setTimeout(() => {
+                lastGoodTokenRef.current = "";
+                lastGoodTsRef.current = 0;
+                onChange?.("");
+              }, V2_TOKEN_TTL_MS);
+            } else {
+              onChange?.("");
+            }
+          },
+          "expired-callback": () => {
+            lastGoodTokenRef.current = "";
+            lastGoodTsRef.current = 0;
+            onChange?.("");
+          },
+          "error-callback": () => {
+            lastGoodTokenRef.current = "";
+            lastGoodTsRef.current = 0;
+            onChange?.("");
+          },
         });
+
         setErr("");
+
+        // DİKKAT (v2): Dil değişiminde yeni widget render edilse de,
+        // eğer elde hâlâ geçerli bir token varsa **temizlemiyoruz**.
+        // (onChange("") çağrısı YAPMIYORUZ.)
+        if (
+          lastGoodTokenRef.current &&
+          Date.now() - lastGoodTsRef.current < V2_TOKEN_TTL_MS
+        ) {
+          // Hâlâ geçerli → olduğu gibi bırak.
+        } else {
+          // Geçerli değilse boşalt.
+          lastGoodTokenRef.current = "";
+          lastGoodTsRef.current = 0;
+          onChange?.("");
+        }
       } catch {
         setErr("render-failed");
       }
@@ -123,12 +182,17 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
         clearInterval(renewTimerRef.current);
         renewTimerRef.current = null;
       }
+      if (expireTimerRef.current) {
+        clearTimeout(expireTimerRef.current);
+        expireTimerRef.current = null;
+      }
       try {
         if (MODE === "v2" && widgetIdRef.current != null && window.grecaptcha?.reset) {
           window.grecaptcha.reset(widgetIdRef.current);
         }
       } catch {}
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, action]);
 
   if (err === "missing-sitekey") {
@@ -146,5 +210,15 @@ export default function Captcha({ onChange, lang = "en", action = "form_submit",
     );
   }
 
-  return MODE === "v3" ? <div className="text-[12px] text-gray-500 -mt-2">Protected by reCAPTCHA.</div> : <div ref={boxRef} />;
+  // Beyaz arka planı engellemek için sarmalayıcıya özel sınıf ve stil
+  return MODE === "v3" ? (
+    <div className="text-[12px] text-gray-500 -mt-2">Protected by reCAPTCHA.</div>
+  ) : (
+    <div
+      ref={boxRef}
+      className="cabo-recaptcha"
+      // bazı temalarda parent’a arka plan atanabiliyor → garantiye al
+      style={{ background: "transparent", display: "inline-block" }}
+    />
+  );
 }

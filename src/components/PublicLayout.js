@@ -89,9 +89,7 @@ export default function PublicLayout({ children }) {
       const orig = history[type];
       return function (...args) {
         const ret = orig.apply(this, args);
-        try {
-          window.dispatchEvent(new Event("locationchange"));
-        } catch {}
+        try { window.dispatchEvent(new Event("locationchange")); } catch {}
         return ret;
       };
     };
@@ -107,24 +105,22 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
+  // Mobilde hover transformlarını kapatmak için işaret
   useEffect(() => {
-    const onDocClick = (e) => {
-      if (!langRef.current) return;
-      if (!langRef.current.contains(e.target)) setLangOpen(false);
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") {
-        setLangOpen(false);
-        setMobileOpen(false);
-        setMobileLangOpen(false);
-      }
-    };
+    const el = document.documentElement;
+    const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
+    const apply = () => { mq.matches ? el.setAttribute("data-coarse", "1") : el.removeAttribute("data-coarse"); };
+    apply();
+    try { mq.addEventListener("change", apply); return () => mq.removeEventListener("change", apply); }
+    catch { return () => {}; }
+  }, []);
+
+  useEffect(() => {
+    const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileOpen(false); setMobileLangOpen(false); } };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => { document.removeEventListener("mousedown", onDocClick); document.removeEventListener("keydown", onKey); };
   }, []);
 
   if (!ready) return null;
@@ -155,13 +151,8 @@ export default function PublicLayout({ children }) {
     return (
       <button
         type="button"
-        onClick={() => {
-          setLangPersist(code);
-          setLangOpen(false);
-        }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-          active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
-        }`}
+        onClick={() => { setLangPersist(code); setLangOpen(false); }}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"}`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
         style={{ outline: "none" }}
@@ -177,12 +168,8 @@ export default function PublicLayout({ children }) {
     return (
       <button
         type="button"
-        onClick={() => {
-          setLangPersist(code);
-        }}
-        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
-        }`}
+        onClick={() => { setLangPersist(code); }}
+        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"}`}
         role="menuitem"
         aria-current={active ? "true" : "false"}
         style={{ outline: "none" }}
@@ -194,7 +181,10 @@ export default function PublicLayout({ children }) {
   };
 
   return (
-    <div className="min-h-[100svh] md:min-h-screen grid grid-rows-[auto_1fr_auto_auto] bg-[#0b0b0b] text-white font-sans tracking-tight">
+    <div
+      className="min-h-[100dvh] grid grid-rows-[auto_1fr_auto_auto] bg-[#0b0b0b] text-white font-sans tracking-tight"
+      style={{ contain: "layout style paint" }}
+    >
       <header className="flex justify-between items-center px-4 sm:px-8 md:px-10 py-4 sm:py-6 bg-[#111] shadow-sm relative">
         <h1
           className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight select-none"
@@ -251,10 +241,7 @@ export default function PublicLayout({ children }) {
         ) : (
           <div className="flex items-center">
             <button
-              onClick={() => {
-                setMobileOpen((s) => !s);
-                if (mobileLangOpen) setMobileLangOpen(false);
-              }}
+              onClick={() => { setMobileOpen((s) => !s); if (mobileLangOpen) setMobileLangOpen(false); }}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
@@ -307,8 +294,9 @@ export default function PublicLayout({ children }) {
         </div>
       )}
 
-      {/* ⬇ MOBİL NESTED-SCROLL FIX: mobile-untrap-scroll */}
+      {/* Main */}
       <main
+        id="cabo-main"
         className="min-h-0 flex flex-col items-center mobile-untrap-scroll"
         style={{
           minHeight: isMobile ? "calc(68vh)" : undefined,
@@ -320,20 +308,23 @@ export default function PublicLayout({ children }) {
         {children}
       </main>
 
-      <div className="relative w-full text-center py-3 bg-[#111] text-sm sm:text-base">
+      {/* Merchant band — sabit yükseklik ve yakın tipografi */}
+      <div className="relative w-full bg-[#111]">
         <span className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-[#1b1b1b] to-transparent" />
-        <span className="text-gray-400">{(translations[locale] || translations.en).merchantQ}</span>
-        <Link
-          href="/merchant/login"
-          className="ml-2 text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
-          prefetch={false}
-          aria-label={(translations[locale] || translations.en).merchantAccess}
-        >
-          {(translations[locale] || translations.en).merchantAccess}
-        </Link>
+        <div className="h-12 px-3 sm:px-4 flex items-center justify-center gap-2 text-sm md:text-[15px] leading-none">
+          <span className="text-gray-400">{(translations[locale] || translations.en).merchantQ}</span>
+          <Link
+            href="/merchant/login"
+            className="text-[#81d742] hover:underline hover:text-[#b3ffb3] font-semibold transition"
+            prefetch={false}
+            aria-label={(translations[locale] || translations.en).merchantAccess}
+          >
+            {(translations[locale] || translations.en).merchantAccess}
+          </Link>
+        </div>
       </div>
 
-      <footer className="text-center py-4 sm:py-5 bg-[#111] text-gray-500 text-xs">
+      <footer className="text-center py-4 bg-[#111] text-gray-500 text-xs">
         &copy; 2025 {(translations[locale] || translations.en).copyright}
       </footer>
 

@@ -1,10 +1,11 @@
-// src/components/Layout.jsx
 "use client";
 
 /**
  * Authenticated layout
- * - Desktop & mobile nav + badges
- * - Mobile scroll jank fixes
+ * - Desktop & mobile nav
+ * - Notifications only inside ProfileDropdown (desktop & mobile)
+ * - Profile trigger has unread badge
+ * - Solid dark background to avoid white outer edges
  */
 
 import Link from "next/link";
@@ -12,7 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import ProfileDropdown from "./ProfileDropdown";
 import {
   BarChart2, Link2, ShoppingCart, Wallet2, Home as HomeIcon,
-  Menu, Bell, Settings, Headset, LogOut, User2,
+  Menu, Settings, Headset, LogOut, User2, Bell,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useUser } from "@/context/UserContext";
@@ -97,7 +98,7 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col overflow-x-hidden bg-transparent">
+    <div className="min-h-[100dvh] flex flex-col overflow-x-hidden bg-[#0B0B0B]" style={{ outline: "none" }}>
       {/* HEADER */}
       <header className="flex justify-between items-center px-5 py-4 md:px-10 md:py-5 bg-[#111] shadow-sm">
         <h1
@@ -137,28 +138,23 @@ export default function Layout({ children }) {
                 </Link>
               </li>
 
-              {/* DESKTOP notifications */}
-              <li className="relative">
-                <Link
-                  prefetch={false}
-                  href="/notifications"
-                  className="inline-flex items-center gap-2 text-gray-200 hover:text-[#81d742] px-2 py-1"
-                  aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : t("notifications")}
-                >
-                  <span className="relative inline-block">
-                    <Bell size={22} />
-                    <NotificationBadge show={hasUnread} size={10} offsetX={-3} offsetY={-3} />
-                  </span>
-                  <span className="hidden md:inline">{t("notifications")}</span>
-                </Link>
-              </li>
-
-              <li suppressHydrationWarning>
+              {/* NOT: Bildirim ikonu nav’da yok; yalnızca profil dropdown içinde.
+                 Profil tetikleyicide unread badge göstermek için wrapper kullandık. */}
+              <li className="relative" suppressHydrationWarning>
                 {showProfileDropdown ? (
-                  <ProfileDropdown />
+                  <div className="relative inline-block align-middle">
+                    <ProfileDropdown />
+                    <div className="absolute -top-1 -right-1 pointer-events-none">
+                      <NotificationBadge show={hasUnread} size={10} />
+                    </div>
+                  </div>
                 ) : (
-                  <div className="h-9 px-4 rounded-full border border-white/20 bg-white/5 flex items-center text-gray-200">
-                    <div className="w-4 h-4 rounded-full bg-white/25 mr-2" />
+                  <div className="h-9 px-4 rounded-full border border-white/20 bg-white/5 flex items-center text-gray-200 relative">
+                    <div className="w-4 h-4 rounded-full bg-white/25 mr-2 relative">
+                      <div className="absolute -top-1 -right-1">
+                        <NotificationBadge show={hasUnread} size={10} />
+                      </div>
+                    </div>
                     <span className="max-w-[9rem] truncate">{cachedName || t("profile")}</span>
                   </div>
                 )}
@@ -166,20 +162,17 @@ export default function Layout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE HEADER — hamburger + badge
+          // MOBILE HEADER — hamburger (badge hamburger üstünde değil; profil içinde)
           <div className="flex items-center">
-            <div className="relative">
-              <button
-                onClick={() => setMobileOpen((v) => !v)}
-                className="text-white"
-                type="button"
-                aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : "Toggle menu"}
-                aria-expanded={mobileOpen}
-              >
-                <Menu size={24} />
-              </button>
-              <NotificationBadge show={hasUnread} size={9} offsetX={-2} offsetY={-3} />
-            </div>
+            <button
+              onClick={() => setMobileOpen((v) => !v)}
+              className="text-white"
+              type="button"
+              aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
+            >
+              <Menu size={24} />
+            </button>
           </div>
         )}
       </header>
@@ -212,7 +205,6 @@ export default function Layout({ children }) {
             >
               <span className="relative">
                 <User2 size={18} />
-                {/* profil ikonunda da badge */}
                 <NotificationBadge show={hasUnread} size={9} offsetX={-5} offsetY={-5} />
               </span>
               <span className="truncate w-full">{user?.name || t("profile")}</span>
@@ -228,7 +220,6 @@ export default function Layout({ children }) {
                   prefetch={false}
                   className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
                   onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
-                  aria-label={hasUnread ? `${t("notifications")} (${unreadCount})` : t("notifications")}
                 >
                   <span className="relative inline-flex items-center">
                     <Bell size={16} />
@@ -269,7 +260,7 @@ export default function Layout({ children }) {
       )}
 
       {/* CONTENT */}
-      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll">
+      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll bg-transparent">
         {children}
       </main>
 
