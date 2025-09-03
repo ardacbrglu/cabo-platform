@@ -13,6 +13,9 @@
 
 :root { color-scheme: dark; }
 
+/* temel kutu modeli */
+*,*::before,*::after{ box-sizing:border-box; }
+
 /* ======= Document/Viewport ======= */
 html{
   height:auto;
@@ -26,6 +29,7 @@ html{
   overscroll-behavior-y: auto;
   -webkit-text-size-adjust:100%;
 }
+/* (eski) ana sayfa scrollbarlarını gizle */
 html{ scrollbar-width:none; }
 html::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
@@ -44,6 +48,15 @@ body{
 }
 body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
+/* ======= GLOBAL: TÜM SCROLLBARLARI GİZLE (iç scroller’lar dahil) ======= */
+/* Firefox + eski Edge/IE */
+*{ scrollbar-width:none!important; -ms-overflow-style:none!important; }
+/* WebKit (Chrome, Safari, Edge Chromium) */
+*::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
+/* (İsteğe bağlı) belirli bir öğede tekrar göstermek için kullan: */
+.show-scrollbar{ scrollbar-width:auto!important; -ms-overflow-style:auto!important; }
+.show-scrollbar::-webkit-scrollbar{ width:8px!important; height:8px!important; display:block!important; }
+
 /* ======= Shared brand (public + private) ======= */
 .brand-cabo{
   font-weight:800;
@@ -51,7 +64,7 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
   color:#d1ffd0;
   text-shadow:0 2px 12px rgba(129,215,66,0.08);
   line-height:1;
-  font-size:28px;         /* md- desktop başlangıcı */
+  font-size:28px;
 }
 @media (min-width:1024px){
   .brand-cabo{ font-size:32px; }
@@ -59,27 +72,28 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 
 /* ======= Grid Shell ======= */
 .public-shell{
+  --public-header-h: 72px;
+  --public-footer-h: 68px;
   min-height:100dvh;
   display:grid;
-  grid-template-rows: var(--public-header-h,64px) 1fr var(--public-footer-h,auto);
+  grid-template-rows: var(--public-header-h) 1fr var(--public-footer-h);
   background:#0b0b0b;
   color:#fff;
   font-synthesis-weight:none;
 }
 
-/* ======= Header sabit yükseklik ======= */
+/* ======= Header ======= */
 .public-header{
-  --public-header-h: 64px;
   height:var(--public-header-h);
   background:#111;
   border-bottom:1px solid #1b1b1b;
 }
-@media (min-width:640px){
-  .public-header{ --public-header-h: 72px; }
-}
 
-/* İçerik kısa olsa bile footer yukarı zıplamasın */
-#cabo-main{ min-height:0; }
+/* İçerik kısa olsa bile footer yukarı zıplamasın; gereksiz scroll oluşmasın */
+#cabo-main{ 
+  min-height: calc(100dvh - var(--public-header-h) - var(--public-footer-h));
+  min-height: calc(100svh - var(--public-header-h) - var(--public-footer-h));
+}
 
 /* ======= Container ======= */
 .container{
@@ -99,16 +113,18 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
   a:hover, button:hover, [role="button"]:hover,
   .card:hover, [data-card]:hover { transform:none!important; }
   a, button, [role="button"] { touch-action:manipulation; }
+  .card, [data-card]{ will-change:auto!important; }
 }
 
 /* ======= Footer (band + telif) ======= */
 .cabo-public-footer{
-  --row-gap: 6px;
   background:#111;
   border-top:1px solid #232323;
   text-align:center;
-  padding:12px 16px;
   position:relative;
+  min-height: var(--public-footer-h);
+  display:flex; flex-direction:column; justify-content:center;
+  padding:12px 16px;
 }
 .cabo-public-footer::before{
   content:"";
@@ -122,7 +138,7 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 .cabo-public-footer .merchant a{ font-weight:600; color:#81d742; }
 .cabo-public-footer .merchant a:hover{ color:#b3ffb3; text-decoration:underline; }
 .cabo-public-footer .copy{
-  font-size:12px; color:#8b8b8b; line-height:1; margin-top:var(--row-gap);
+  font-size:12px; color:#8b8b8b; line-height:1;
 }
 
 /* ======= reCAPTCHA v2 – clip & fallback ======= */
@@ -133,20 +149,21 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
   border-radius:10px; background:#111;
   box-shadow:inset 0 0 0 1px #2a2a2a; line-height:0;
 }
-/* -2px/ +4px: iframe içindeki beyaz 1-2px sınırı tamamen gizle */
 .cabo-recaptcha-box{
-  position:relative; left:-2px; top:-2px;
-  width:calc(var(--rc-w) + 4px); height:calc(var(--rc-h) + 4px);
+  position:relative; left:-4px; top:-4px;
+  width:calc(var(--rc-w) + 8px); height:calc(var(--rc-h) + 8px);
   background:transparent!important;
 }
 .cabo-recaptcha-clip, .cabo-recaptcha-box, .g-recaptcha{
   background:transparent!important; border:0!important; box-shadow:none!important;
 }
-/* Hata durumunda koyu placeholder */
 .cabo-recaptcha-fallback{
   width:100%; height:100%;
   display:flex; align-items:center; justify-content:center;
   background:#111; border-radius:10px;
+}
+@media (max-width: 360px){
+  .cabo-recaptcha-clip{ transform:scale(.92); transform-origin:left top; }
 }
 
 /* ======= Login/Register kartları için autofill ======= */

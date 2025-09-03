@@ -79,15 +79,6 @@ export default function PublicLayout({ children }) {
   }, []);
 
   useEffect(() => {
-    const el = document.documentElement;
-    const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
-    const apply = () => { mq.matches ? el.setAttribute("data-coarse", "1") : el.removeAttribute("data-coarse"); };
-    apply();
-    try { mq.addEventListener("change", apply); return () => mq.removeEventListener("change", apply); }
-    catch { return () => {}; }
-  }, []);
-
-  useEffect(() => {
     const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
     const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileOpen(false); setMobileLangOpen(false); } };
     document.addEventListener("mousedown", onDocClick);
@@ -117,16 +108,13 @@ export default function PublicLayout({ children }) {
 
   return (
     <div className="public-shell">
-      {/* HEADER (dashboard ile aynı hizalama) */}
+      {/* HEADER — dashboard ile aynı hiza: sol üstte brand, px-6 lg:px-8 */}
       <header className="public-header">
-        {/* full width row + dashboard pad: px-6 lg:px-8 */}
         <div className="h-full w-full flex items-center justify-between px-6 lg:px-8">
-          {/* Brand — tek tip sınıf */}
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
-          {/* Desktop nav */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -258,7 +246,7 @@ export default function PublicLayout({ children }) {
       </header>
 
       {/* MAIN */}
-      <main id="cabo-main" className="w-full">
+      <main id="cabo-main" className="w-full mobile-untrap-scroll">
         <div className="container py-8 sm:py-12">
           {children}
         </div>

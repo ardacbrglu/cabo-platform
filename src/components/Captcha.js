@@ -17,7 +17,7 @@ export default function Captcha({ onChange, lang = "tr", action = "form_submit",
   const lastGoodTsRef = useRef(0);
   const expireTimerRef = useRef(null);
 
-  // dış reset
+  // dış reset (parent'tan)
   useEffect(() => {
     try {
       if (MODE === "v2" && widgetIdRef.current != null && window.grecaptcha?.reset) {
@@ -33,18 +33,28 @@ export default function Captcha({ onChange, lang = "tr", action = "form_submit",
   useEffect(() => {
     if (!SITE_KEY) { setErr("missing-sitekey"); return; }
     setErr("");
+
+    // her mount/lang-change'te yeni epoch
     const epoch = ++epochRef.current;
 
+    // temizle
     if (renewTimerRef.current) { clearInterval(renewTimerRef.current); renewTimerRef.current = null; }
     if (expireTimerRef.current) { clearTimeout(expireTimerRef.current); expireTimerRef.current = null; }
+    if (MODE === "v2") { try { widgetIdRef.current = null; if (boxRef.current) boxRef.current.innerHTML = ""; } catch {} }
 
-    const SCRIPT_ID = "recaptcha-script";
+    // script kaynakları
+    const base = "https://www.google.com/recaptcha/api.js";
     const src = MODE === "v3"
-      ? `https://www.google.com/recaptcha/api.js?hl=${encodeURIComponent(lang)}&render=${encodeURIComponent(SITE_KEY)}`
-      : `https://www.google.com/recaptcha/api.js?hl=${encodeURIComponent(lang)}&onload=__caboRecaptchaOnload&render=explicit`;
+      ? `${base}?hl=${encodeURIComponent(lang)}&render=${encodeURIComponent(SITE_KEY)}`
+      : `${base}?hl=${encodeURIComponent(lang)}&onload=__caboRecaptchaOnload&render=explicit`;
 
+    // script'i (hl değişmişse) yeniden yükle
+    const SCRIPT_ID = "recaptcha-script";
     const old = document.getElementById(SCRIPT_ID);
-    if (old && old.getAttribute("src") !== src) { old.remove(); try { delete window.grecaptcha; } catch {} }
+    if (old && old.getAttribute("src") !== src) {
+      old.remove();
+      try { delete window.grecaptcha; } catch {}
+    }
 
     function ensureScript() {
       return new Promise((resolve) => {
@@ -57,6 +67,7 @@ export default function Captcha({ onChange, lang = "tr", action = "form_submit",
       });
     }
 
+    // v2: global onload
     window.__caboRecaptchaOnload = () => {
       if (epoch !== epochRef.current) return;
       try {

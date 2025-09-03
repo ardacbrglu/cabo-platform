@@ -5,7 +5,7 @@
  * - Desktop & mobile nav
  * - Notifications only inside ProfileDropdown (desktop & mobile)
  * - Profile trigger has unread badge
- * - Solid dark background to avoid white outer edges
+ * - Solid dark background; footer always sticks to bottom
  */
 
 import Link from "next/link";
@@ -21,10 +21,8 @@ import useTranslation from "@/hooks/useTranslation";
 import { useNotifications } from "@/hooks/useNotifications";
 import NotificationBadge from "@/components/NotificationBadge";
 
-const COLOR_CABO = "#d1ffd0";
 const FOOTER_H = 56;
 
-/* ------- güvenli pathname ------- */
 function usePathnameSafe() {
   const [path, setPath] = useState("");
   useEffect(() => {
@@ -98,17 +96,13 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col overflow-x-hidden bg-[#0B0B0B]" style={{ outline: "none" }}>
-      {/* HEADER */}
-      <header className="flex justify-between items-center px-5 py-4 md:px-10 md:py-5 bg-[#111] shadow-sm">
-        <h1
-          className="text-3xl md:text-5xl font-extrabold tracking-tight select-none"
-          style={{ color: COLOR_CABO, letterSpacing: "-0.02em" }}
-        >
+    <div className="min-h-[100dvh] flex flex-col overflow-x-hidden bg-[#0B0B0B]">
+      {/* HEADER — public ile aynı: sol üst brand, px-6 lg:px-8 */}
+      <header className="flex justify-between items-center px-6 lg:px-8 py-4 bg-[#111] shadow-sm">
+        <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
           Cabo
-        </h1>
+        </Link>
 
-        {/* DESKTOP NAV */}
         {!isMobile ? (
           <nav aria-label="Main navigation">
             <ul className="flex gap-8 text-sm font-medium items-center">
@@ -138,8 +132,6 @@ export default function Layout({ children }) {
                 </Link>
               </li>
 
-              {/* NOT: Bildirim ikonu nav’da yok; yalnızca profil dropdown içinde.
-                 Profil tetikleyicide unread badge göstermek için wrapper kullandık. */}
               <li className="relative" suppressHydrationWarning>
                 {showProfileDropdown ? (
                   <div className="relative inline-block align-middle">
@@ -162,7 +154,6 @@ export default function Layout({ children }) {
             </ul>
           </nav>
         ) : (
-          // MOBILE HEADER — hamburger (badge hamburger üstünde değil; profil içinde)
           <div className="flex items-center">
             <button
               onClick={() => setMobileOpen((v) => !v)}
@@ -192,10 +183,9 @@ export default function Layout({ children }) {
             </Link>
           ))}
 
-          {/* Profil bölümü & notifications dropdown içinde */}
           <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
             <button
-              className="w-full flex items-center gap-2 py-2 px-0 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
+              className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
               style={{ minHeight: 40 }}
               onClick={() => setProfileOpen((v) => !v)}
               aria-haspopup="true"
