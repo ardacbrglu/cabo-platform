@@ -185,3 +185,42 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 .auth-login select:-moz-autofill{
   background:#fff!important; color:#000!important;
 }
+
+
+
+
+/* ======= Mobile only: hover kaynaklı kart hareketlerini kapat =======
+   - Tailwind'in hover:-translate-*, hover:shadow-* sınıflarını evrensel seçiciyle nötrlüyoruz
+   - data-card veya role="region" kullanan kutuları da kapsıyoruz
+   - Scroll'un ana akışta kalması için touch-action veriyoruz
+===================================================================== */
+@media (hover:none) and (pointer:coarse){
+  /* 1) Kart/istatistik kutuları: genel hedefleme */
+  [data-card],
+  [role="region"],
+  [class*="hover:-translate-"],
+  [class*="hover:translate-"],
+  [class*="hover:scale-"],
+  [class*="hover:shadow"]{
+    transition: none !important;
+    will-change: auto !important;
+  }
+
+  /* 2) Hover etkilerini fiilen iptal et (mobilde hover kalıcı olabiliyor) */
+  [data-card]:hover,
+  [role="region"]:hover,
+  [class*="hover:-translate-"]:hover,
+  [class*="hover:translate-"]:hover,
+  [class*="hover:scale-"]:hover,
+  [class*="hover:shadow"]:hover{
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  /* 3) Scroll yakalanmasın; dikey pan serbest kalsın */
+  body, #cabo-main, .container{
+    touch-action: pan-y !important;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
