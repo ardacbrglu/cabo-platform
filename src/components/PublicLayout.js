@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
+import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
 
 /**
  * Security Docblock (PublicLayout)
@@ -11,6 +11,7 @@ import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
  * - Active link from location.pathname only
  * - Fixed header/footer heights; no layout shift
  * - No third-party inline scripts
+ * - Mobile menu is a fixed overlay with backdrop; body scroll locked when open
  */
 
 const translations = {
@@ -49,8 +50,9 @@ export default function PublicLayout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileLangOpen, setMobileLangOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const langRef = useRef(null);
+  const langRef = useRef<HTMLLIElement | null>(null);
 
+  // viewport & path watchers
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -58,18 +60,17 @@ export default function PublicLayout({ children }) {
     setCurrentPath(window.location?.pathname || "/");
     return () => window.removeEventListener("resize", check);
   }, []);
-
   useEffect(() => {
     const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
-    const patch = (type) => {
+    const patch = (type: "pushState" | "replaceState") => {
       const orig = history[type];
-      return function (...args) {
-        const ret = orig.apply(this, args);
+      return function (...args: any[]) {
+        const ret = (orig as any).apply(this, args);
         try { window.dispatchEvent(new Event("locationchange")); } catch {}
         return ret;
       };
     };
-    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
+    try { (history as any).pushState = patch("pushState"); (history as any).replaceState = patch("replaceState"); } catch {}
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -78,9 +79,10 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
+  // outside click + Esc close
   useEffect(() => {
-    const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileOpen(false); setMobileLangOpen(false); } };
+    const onDocClick = (e: MouseEvent) => { if (!langRef.current) return; if (!langRef.current.contains(e.target as Node)) setLangOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setLangOpen(false); setMobileLangOpen(false); setMobileOpen(false); } };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -89,12 +91,21 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
+  // body scroll lock when mobile menu open
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    return () => { document.documentElement.style.overflow = prev; };
+  }, [mobileOpen]);
+
   if (!ready) return null;
 
-  const t = (k) => (translations[locale] || translations.en)[k] || k;
-  const activeLangCode = (locale?.toLowerCase().startsWith("tr") ? "tr" : "en");
+  const t = (k: keyof typeof translations["en"]) => (translations[locale] || translations.en)[k] || k;
+  const activeLangCode = (locale?.toLowerCase().startsWith("tr") ? "tr" : "en") as "tr" | "en";
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
-  const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
+  const setLangPersist = (code: "tr" | "en") =>
+    (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -103,18 +114,19 @@ export default function PublicLayout({ children }) {
     { href: "/register", label: t("register") },
   ];
 
-  const linkClassDesktop = (href) =>
+  const linkClassDesktop = (href: string) =>
     `transition inline-block hover:text-[#81d742] ${currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"}`;
 
   return (
     <div className="public-shell">
-      {/* HEADER — dashboard ile aynı hiza: sol üstte brand, px-6 lg:px-8 */}
-      <header className="public-header">
+      {/* HEADER — z-index yüksek (mobil panelin referans katmanı değil; panel fixed) */}
+      <header className="public-header relative z-[1000]">
         <div className="h-full w-full flex items-center justify-between px-6 lg:px-8">
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
+          {/* Desktop nav */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -147,7 +159,7 @@ export default function PublicLayout({ children }) {
                     <div
                       role="menu"
                       aria-label="Language selector"
-                      className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-30"
+                      className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-50"
                     >
                       {LANGS.map((l) => {
                         const active = activeLang.code === l.code;
@@ -155,7 +167,7 @@ export default function PublicLayout({ children }) {
                           <button
                             key={l.code}
                             type="button"
-                            onClick={() => { setLangPersist(l.code); setLangOpen(false); }}
+                            onClick={() => { setLangPersist(l.code as any); setLangOpen(false); }}
                             className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
                               active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
                             }`}
@@ -186,62 +198,92 @@ export default function PublicLayout({ children }) {
           )}
         </div>
 
-        {/* Mobile menu */}
+        {/* MOBILE OVERLAY NAV (fixed + backdrop) */}
         {isMobile && mobileOpen && (
-          <div className="border-t border-[#1b1b1b] bg-[#111]">
-            <div className="px-6 lg:px-8 py-2 text-sm">
-              {navLinks.map((l) => (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  prefetch={false}
-                  className={`block py-2 transition ${currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300"}`}
-                  aria-current={currentPath === l.href ? "page" : undefined}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  {l.label}
-                </Link>
-              ))}
-              <button
-                type="button"
-                className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
-                onClick={() => setMobileLangOpen((s) => !s)}
-                aria-haspopup="menu"
-                aria-expanded={mobileLangOpen}
-                aria-label={(translations[locale] || translations.en).language}
-                style={{ outline: "none" }}
-              >
-                <span className="flex items-center gap-2">
-                  <Globe size={16} />
-                  <span className="uppercase tracking-wide">{(translations[locale] || translations.en).language}</span>
-                </span>
-                <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
-              </button>
-              {mobileLangOpen && (
-                <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]">
-                  {LANGS.map((l) => {
-                    const active = activeLang.code === l.code;
-                    return (
-                      <button
-                        key={l.code}
-                        type="button"
-                        onClick={() => { setLangPersist(l.code); }}
-                        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-                          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
-                        }`}
-                        role="menuitem"
-                        aria-current={active ? "true" : "false"}
-                        style={{ outline: "none" }}
-                      >
-                        <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
-                        <span className="tracking-wide">{l.short}</span>
-                      </button>
-                    );
-                  })}
+          <>
+            {/* Backdrop */}
+            <button
+              aria-label="Close menu"
+              onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+              className="fixed inset-0 bg-black/50 backdrop-blur-[1px] z-[998]"
+              type="button"
+            />
+            {/* Panel */}
+            <div
+              role="dialog"
+              aria-modal="true"
+              className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)]"
+              style={{ top: "var(--public-header-h)" }}
+            >
+              <div className="px-6 lg:px-8 py-2 text-sm">
+                {/* Close row (mobile) */}
+                <div className="flex items-center justify-between py-1">
+                  <span className="uppercase tracking-wide text-gray-400">{(translations[locale] || translations.en).language}</span>
+                  <button
+                    type="button"
+                    aria-label="Close menu"
+                    onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+                    className="p-2 text-gray-300 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
                 </div>
-              )}
+
+                {navLinks.map((l) => (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    prefetch={false}
+                    className={`block py-2 transition ${currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
+                    aria-current={currentPath === l.href ? "page" : undefined}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    {l.label}
+                  </Link>
+                ))}
+
+                <button
+                  type="button"
+                  className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
+                  onClick={() => setMobileLangOpen((s) => !s)}
+                  aria-haspopup="menu"
+                  aria-expanded={mobileLangOpen}
+                  aria-label={(translations[locale] || translations.en).language}
+                  style={{ outline: "none" }}
+                >
+                  <span className="flex items-center gap-2">
+                    <Globe size={16} />
+                    <span className="uppercase tracking-wide">{(translations[locale] || translations.en).language}</span>
+                  </span>
+                  <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
+                </button>
+
+                {mobileLangOpen && (
+                  <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]">
+                    {LANGS.map((l) => {
+                      const active = activeLang.code === l.code;
+                      return (
+                        <button
+                          key={l.code}
+                          type="button"
+                          onClick={() => { setLangPersist(l.code as any); }}
+                          className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+                            active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+                          }`}
+                          role="menuitem"
+                          aria-current={active ? "true" : "false"}
+                          style={{ outline: "none" }}
+                        >
+                          <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
+                          <span className="tracking-wide">{l.short}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </header>
 
