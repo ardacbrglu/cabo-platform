@@ -4,19 +4,24 @@
 
 /* ───────────────── Security Docblock (Frontend Layout)
    - No inline third-party CSS injections
-   - Consistent dark theme; no mixed content
-   - Prevent layout jank; hide scrollbars (opt-in show class)
-   - Mobile: allow scroll chaining, disable hover transforms on cards
-   - reCAPTCHA v2: clip white edges
-   - Header/Footer fixed heights across public pages
+   - Consistent dark theme, no mixed content
+   - Prevent layout jank & overflow; hide scrollbars
+   - Touch/overscroll hardened for mobile
+   - reCAPTCHA box visually clipped (no iframes styled beyond)
+   - Header/Footer fixed heights across public & private pages
 ───────────────── */
 
-:root { color-scheme: dark; }
+:root {
+  color-scheme: dark;
+  /* ⚠️ Private layout’lar için güvenli defaultlar (public’te override ediliyor) */
+  --public-header-h: 0px;
+  --public-footer-h: 0px;
+}
 
-/* base box model */
+/* temel kutu modeli */
 *,*::before,*::after{ box-sizing:border-box; }
 
-/* ======= Document / Viewport ======= */
+/* ======= Document/Viewport ======= */
 html{
   height:auto;
   min-height:100%;
@@ -26,11 +31,10 @@ html{
   overflow-x:hidden;
   overflow-y:auto;
   overscroll-behavior-x: contain;
-  overscroll-behavior-y: auto;     /* <- önemli: scroll chaining açık */
+  overscroll-behavior-y: auto; /* zincirleme açık */
   -webkit-text-size-adjust:100%;
 }
-
-/* Global scrollbar hide (opt-in show with .show-scrollbar) */
+/* scrollbarlar global olarak gizli */
 html{ scrollbar-width:none; }
 html::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
@@ -44,103 +48,96 @@ body{
   -webkit-tap-highlight-color:transparent;
   overflow-y:auto;
   -webkit-overflow-scrolling:touch;
-  touch-action:pan-y;
+  touch-action:pan-y;              /* dikey pan açık */
   scrollbar-width:none; -ms-overflow-style:none;
 }
 body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
-/* All scrollbars hidden by default (inner scrollers too) */
+/* İç scroller’larda da gizli; gerektiğinde .show-scrollbar ile geri aç */
 *{ scrollbar-width:none!important; -ms-overflow-style:none!important; }
 *::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
-
-/* Use .show-scrollbar on any element to re-enable */
 .show-scrollbar{ scrollbar-width:auto!important; -ms-overflow-style:auto!important; }
 .show-scrollbar::-webkit-scrollbar{ width:8px!important; height:8px!important; display:block!important; }
 
 /* ======= Shared brand ======= */
 .brand-cabo{
-  font-weight:800; letter-spacing:-0.02em; color:#d1ffd0;
+  font-weight:800;
+  letter-spacing:-0.02em;
+  color:#d1ffd0;
   text-shadow:0 2px 12px rgba(129,215,66,0.08);
-  line-height:1; font-size:28px;
+  line-height:1;
+  font-size:28px;
 }
-@media (min-width:1024px){ .brand-cabo{ font-size:32px; } }
+@media (min-width:1024px){
+  .brand-cabo{ font-size:32px; }
+}
 
-/* ======= Public grid shell / header / footer ======= */
+/* ======= Public shell (public sayfalar) ======= */
 .public-shell{
   --public-header-h: 72px;
   --public-footer-h: 68px;
   min-height:100dvh;
   display:grid;
   grid-template-rows: var(--public-header-h) 1fr var(--public-footer-h);
-  background:#0b0b0b; color:#fff;
+  background:#0b0b0b;
+  color:#fff;
   font-synthesis-weight:none;
 }
+
 .public-header{
   height:var(--public-header-h);
-  background:#111; border-bottom:1px solid #1b1b1b;
+  background:#111;
+  border-bottom:1px solid #1b1b1b;
 }
 
-/* Keep footer at the bottom even with short content */
+/* ======= Ana içerik yüksekliği — Fallback’li ======= */
 #cabo-main{
-  min-height: calc(100dvh - var(--public-header-h) - var(--public-footer-h));
-  min-height: calc(100svh - var(--public-header-h) - var(--public-footer-h));
+  /* var() fallback’ları sayesinde private layout’ta da geçerli */
+  min-height: calc(100svh - var(--public-header-h, 0px) - var(--public-footer-h, 0px));
+}
+/* Yeni viewport ünitelerini destekleyenlerde daha pürüzsüz */
+@supports (height: 100dvb) {
+  #cabo-main{
+    min-height: calc(100dvb - var(--public-header-h, 0px) - var(--public-footer-h, 0px));
+  }
 }
 
+/* ======= Container ======= */
 .container{
-  width:100%; max-width:1100px; margin-left:auto; margin-right:auto;
-  padding-left:1rem; padding-right:1rem;
+  width:100%;
+  max-width:1100px;
+  margin-left:auto;
+  margin-right:auto;
+  padding-left:1rem;
+  padding-right:1rem;
 }
 @media (min-width:1024px){
   .container{ padding-left:1.25rem; padding-right:1.25rem; }
 }
 
+/* ======= Footer ======= */
 .cabo-public-footer{
-  background:#111; border-top:1px solid #232323;
-  text-align:center; position:relative;
+  background:#111;
+  border-top:1px solid #232323;
+  text-align:center;
+  position:relative;
   min-height: var(--public-footer-h);
   display:flex; flex-direction:column; justify-content:center;
   padding:12px 16px;
 }
 .cabo-public-footer::before{
-  content:""; position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
+  content:"";
+  position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
   background:linear-gradient(90deg, transparent, #1b1b1b, transparent);
 }
 .cabo-public-footer .merchant{
-  height:44px; display:flex; align-items:center; justify-content:center; gap:.6rem; line-height:1;
+  height:44px; display:flex; align-items:center; justify-content:center;
+  gap:.6rem; line-height:1;
 }
 .cabo-public-footer .merchant a{ font-weight:600; color:#81d742; }
 .cabo-public-footer .merchant a:hover{ color:#b3ffb3; text-decoration:underline; }
-.cabo-public-footer .copy{ font-size:12px; color:#8b8b8b; line-height:1; }
-
-/* ======= Mobile jank fixes ======= */
-@media (hover:none) and (pointer:coarse){
-  /* Scroll chaining açık; yatay taşmaları bastır */
-  html, body, .public-shell, #cabo-main, .container{
-    overscroll-behavior-y: auto !important;   /* eski: contain -> zıplama yapıyordu */
-    overscroll-behavior-x: contain;
-    touch-action: pan-y !important;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* Kart/istatistikler mobilde hover ile hareket etmesin; iç scroller olmasın */
-  [role="region"],
-  [class*="hover:-translate-"],
-  [class*="hover:translate-"],
-  [class*="hover:scale-"],
-  [class*="hover:shadow"]{
-    transition:none!important;
-    transform:none!important;
-    box-shadow:none!important;
-    will-change:auto!important;
-    overflow:visible!important; /* kart içinde ayrı scroll alanı oluşmasın */
-  }
-}
-
-/* Coarse pointers (mobil) için global hover kapatmaları */
-@media (hover:none) and (pointer:coarse){
-  a:hover, button:hover, [role="button"]:hover,
-  .card:hover, [data-card]:hover { transform:none!important; }
-  a, button, [role="button"] { touch-action:manipulation; }
+.cabo-public-footer .copy{
+  font-size:12px; color:#8b8b8b; line-height:1;
 }
 
 /* ======= reCAPTCHA v2 – clip & fallback ======= */
@@ -151,7 +148,6 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
   border-radius:10px; background:#111;
   box-shadow:inset 0 0 0 1px #2a2a2a; line-height:0;
 }
-/* -4/+8: iframe içindeki 1–2px beyaz sınırı tamamen gizle */
 .cabo-recaptcha-box{
   position:relative; left:-4px; top:-4px;
   width:calc(var(--rc-w) + 8px); height:calc(var(--rc-h) + 8px);
@@ -165,11 +161,11 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
   display:flex; align-items:center; justify-content:center;
   background:#111; border-radius:10px;
 }
-@media (max-width:360px){
+@media (max-width: 360px){
   .cabo-recaptcha-clip{ transform:scale(.92); transform-origin:left top; }
 }
 
-/* ======= Login/Register autofill (koyu temada okunur kalsın) ======= */
+/* ======= Autofill ======= */
 .auth-login input,
 .auth-login textarea,
 .auth-login select{ background:#fff!important; color:#000!important; }
@@ -187,4 +183,30 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 .auth-login textarea:-moz-autofill,
 .auth-login select:-moz-autofill{
   background:#fff!important; color:#000!important;
+}
+
+/* ======= Mobile iyileştirmeler ======= */
+@media (hover:none) and (pointer:coarse){
+
+  /* Hover kaynaklı “kart zıplatma”yı tamamen nötrle */
+  [data-card],
+  [role="region"],
+  [class*="hover:-translate-"],
+  [class*="hover:translate-"],
+  [class*="hover:scale-"],
+  [class*="hover:shadow"]{
+    transition: none !important;
+    transform: none !important;
+    box-shadow: none !important;
+    will-change: auto !important;
+    /* İlk dokunuş nereye gelirse gelsin dikey pan çalışsın */
+    touch-action: pan-y !important;
+  }
+
+  /* Ana scroll konteynerlerde zincirlemeyi tekrar aç (ilk dokunuş takılmaz) */
+  body, #cabo-main, .container{
+    touch-action: pan-y !important;
+    overscroll-behavior-y: auto;      /* ⬅ contain yerine auto */
+    -webkit-overflow-scrolling: touch;
+  }
 }
