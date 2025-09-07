@@ -1,9 +1,11 @@
 "use client";
 
 /**
- * Authenticated layout — stable footer gap + smooth mobile scroll
- * - Uses .public-shell grid so footer is always just below initial viewport
- * - No inner page scrollers; #cabo-main is sized by the grid
+ * Authenticated layout
+ * - Desktop & mobile nav
+ * - Notifications only inside ProfileDropdown (desktop & mobile)
+ * - Profile trigger has unread badge
+ * - Solid dark background; footer always sticks to bottom
  */
 
 import Link from "next/link";
@@ -19,7 +21,7 @@ import useTranslation from "@/hooks/useTranslation";
 import { useNotifications } from "@/hooks/useNotifications";
 import NotificationBadge from "@/components/NotificationBadge";
 
-const FOOTER_H = 68; // keep in sync with --public-footer-h
+const FOOTER_H = 56;
 
 function usePathnameSafe() {
   const [path, setPath] = useState("");
@@ -56,6 +58,7 @@ export default function Layout({ children }) {
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
   useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [pathname]);
 
   const hasAnyUser = !!(user && (user.id || user.userId || user.name || user.email));
@@ -83,18 +86,19 @@ export default function Layout({ children }) {
 
   function handleLogout() {
     try {
-      if (typeof window === "undefined") return;
-      document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
-      document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
-      setUser && setUser(null);
-      window.location.assign("/api/logout");
+      if (typeof window !== "undefined") {
+        document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+        document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
+        setUser && setUser(null);
+        window.location.assign("/api/logout");
+      }
     } catch { window.location.href = "/api/logout"; }
   }
 
   return (
-    <div className="public-shell"> {/* grid shell controls header/main/footer heights */}
-      {/* HEADER */}
-      <header className="public-header flex justify-between items-center px-6 lg:px-8">
+    <div className="min-h-[100dvh] flex flex-col overflow-x-hidden bg-[#0B0B0B]">
+      {/* HEADER — public ile aynı: sol üst brand, px-6 lg:px-8 */}
+      <header className="flex justify-between items-center px-6 lg:px-8 py-4 bg-[#111] shadow-sm">
         <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
           Cabo
         </Link>
@@ -143,7 +147,7 @@ export default function Layout({ children }) {
                         <NotificationBadge show={hasUnread} size={10} />
                       </div>
                     </div>
-                    <span className="max-w-[9rem] truncate">{(user?.name || "") || t("profile")}</span>
+                    <span className="max-w-[9rem] truncate">{cachedName || t("profile")}</span>
                   </div>
                 )}
               </li>
@@ -167,40 +171,93 @@ export default function Layout({ children }) {
       {/* MOBILE PANEL */}
       {isMobile && mobileOpen && (
         <div className="px-6 pb-3 pt-2 bg-[#111] text-sm">
-          {[
-            { href: "/dashboard", icon: <HomeIcon size={22} />, label: t("home") },
-            { href: "/products", icon: <ShoppingCart size={22} />, label: t("productMarket") },
-            { href: "/mylinks", icon: <Link2 size={22} />, label: t("myLinks") },
-            { href: "/performance", icon: <BarChart2 size={22} />, label: t("performance") },
-            { href: "/wallet", icon: <Wallet2 size={22} />, label: t("wallet") },
-          ].map(({ href, icon, label }) => (
+          {mobileLinks.map(({ href, icon, label }) => (
             <Link
               key={href}
               href={href}
               prefetch={false}
               onClick={() => setMobileOpen(false)}
-              className={`block py-2 transition ${ (pathname === href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white" }`}
+              className={`block py-2 transition ${isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
             >
               <span className="inline-flex items-center gap-2">{icon}<span>{label}</span></span>
             </Link>
           ))}
 
           <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
-            {/* … (unchanged profile menu) … */}
+            <button
+              className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
+              style={{ minHeight: 40 }}
+              onClick={() => setProfileOpen((v) => !v)}
+              aria-haspopup="true"
+              aria-expanded={profileOpen}
+              aria-label={t("profile")}
+              type="button"
+            >
+              <span className="relative">
+                <User2 size={18} />
+                <NotificationBadge show={hasUnread} size={9} offsetX={-5} offsetY={-5} />
+              </span>
+              <span className="truncate w-full">{user?.name || t("profile")}</span>
+              <svg width="14" height="14" className="ml-1 align-middle relative top-[1px]">
+                <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
+              </svg>
+            </button>
+
+            {profileOpen && (
+              <div className="w-full mt-1 rounded-lg border border-[#232323] bg-[#191919] shadow-xl allow-inner-scroll">
+                <Link
+                  href="/notifications"
+                  prefetch={false}
+                  className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                  onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                >
+                  <span className="relative inline-flex items-center">
+                    <Bell size={16} />
+                    <NotificationBadge show={hasUnread} size={9} />
+                  </span>
+                  {t("notifications")}
+                </Link>
+                <Link
+                  href="/settings"
+                  prefetch={false}
+                  className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                  onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                >
+                  <Settings size={16} /> {t("settings")}
+                </Link>
+                <Link
+                  href="/support"
+                  prefetch={false}
+                  className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                  onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                >
+                  <Headset size={16} /> {t("support")}
+                </Link>
+                <div className="border-t border-[#232323]" />
+                <button
+                  onClick={() => { setProfileOpen(false); setMobileOpen(false); handleLogout(); }}
+                  className="flex items-center gap-3 px-4 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff6666] transition w-full"
+                  style={{ background: "transparent", outline: "none" }}
+                  type="button"
+                >
+                  <LogOut size={16} />
+                  <span>{t("logout")}</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* CONTENT — sized by grid; no extra min-heights */}
-      <main id="cabo-main" className="bg-transparent">
+      {/* CONTENT */}
+      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll bg-transparent">
         {children}
       </main>
 
-      {/* FOOTER — always just below first viewport (constant tiny scroll) */}
       <footer
-        className="cabo-public-footer w-full text-center text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0"
+        className="w-full text-center bg-[#111] text-gray-500 text-xs font-mono mt-auto border-t border-[#232323] shrink-0"
         role="contentinfo"
-        style={{ minHeight: FOOTER_H }}
+        style={{ height: FOOTER_H, lineHeight: `${FOOTER_H}px` }}
       >
         &copy; 2025 Cabo Affiliate | Built by Arda Cabaroğlu
       </footer>
