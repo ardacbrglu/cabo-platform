@@ -2,17 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ───────────────── Security Docblock (Frontend Layout)
+/* ── Security Docblock (Frontend Layout)
    - Dark theme, unified scroll behavior
-   - Root-only Firefox scrollbar hiding; WebKit global track hiding (jank yok)
-   - Mobile: first-try scroll smooth (pan-y), desktop: doğal scroll
-   - Overlays/Dropdowns z-stack safe
-───────────────── */
+   - Footer kept at a constant distance (small scroll) on desktop
+   - Mobile: first-try smooth scroll; all hover/transform motions killed
+   - Scrollbars hidden (WebKit/Firefox/legacy Edge)
+   - Overlay/dropdown safe stacking
+────────────────────────────── */
 
 :root{
   color-scheme: dark;
-  --public-header-h: 0px;
-  --public-footer-h: 0px;
+  --public-header-h: 72px;   /* desktop header */
+  --public-footer-h: 68px;   /* desktop footer */
 }
 
 /* Base box model */
@@ -24,7 +25,6 @@ html{
   background:#0B0B0B;
   color:#f6f6f6;
 
-  /* Tek gerçek scroller => html */
   overflow-x:hidden;
   overflow-y:auto;
 
@@ -32,10 +32,9 @@ html{
   overscroll-behavior-y: auto;
 
   -webkit-text-size-adjust:100%;
-  scroll-snap-type:none;
 }
 
-/* Body: scroller html, body overflow visible */
+/* Body is not a scroller */
 body{
   min-height:100dvh;
   margin:0;
@@ -44,51 +43,56 @@ body{
   font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
   -webkit-tap-highlight-color:transparent;
   overflow:visible;
-  scroll-snap-type:none;
 }
 
-/* ===== Scrollbar Hiding ===== */
-/* WebKit (Chrome/Safari/Edge): Tüm elemanlarda görünmez — jank yaratmaz */
+/* ===== Scrollbar hiding (desktop + mobile) ===== */
+/* WebKit */
 *::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
-/* Firefox: SADECE root scroller’larda gizle (wildcard yok) */
+/* Firefox / legacy Edge */
 html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-overflow-style:none; }
 
-/* ===== Public shell ===== */
+/* ===== Shell with constant footer distance =====
+   We *intentionally* do NOT subtract the footer height from the middle row,
+   so there is ALWAYS a small scroll equal to the footer height.
+*/
 .public-shell{
-  --public-header-h:72px;
-  --public-footer-h:68px;
   min-height:100dvh;
   display:grid;
-  grid-template-rows: var(--public-header-h) 1fr var(--public-footer-h);
+  grid-template-rows:
+    var(--public-header-h)
+    minmax(calc(100svh - var(--public-header-h)), auto)  /* fills viewport minus header */
+    var(--public-footer-h);                               /* sits just below viewport */
   background:#0b0b0b;
   color:#fff;
-  font-synthesis-weight:none;
-  isolation:isolate; /* overlay güvenli */
+  isolation:isolate;
 }
+@supports (height: 100dvb){
+  .public-shell{
+    grid-template-rows:
+      var(--public-header-h)
+      minmax(calc(100dvb - var(--public-header-h)), auto)
+      var(--public-footer-h);
+  }
+}
+
 .public-header{
   height:var(--public-header-h);
   background:#111;
   border-bottom:1px solid #1b1b1b;
 }
 
-/* Main height (footer hep dipte) */
+/* Main area: let grid size it; never create inner scrollers */
 #cabo-main{
-  min-height: calc(100svh - var(--public-header-h,0px) - var(--public-footer-h,0px));
-}
-@supports (height: 100dvb){
-  #cabo-main{
-    min-height: calc(100dvb - var(--public-header-h,0px) - var(--public-footer-h,0px));
-  }
+  min-height:0;
+  overflow:visible;
 }
 
 /* Container */
 .container{
   width:100%;
   max-width:1100px;
-  margin-left:auto;
-  margin-right:auto;
-  padding-left:1rem;
-  padding-right:1rem;
+  margin-left:auto; margin-right:auto;
+  padding-left:1rem; padding-right:1rem;
 }
 @media (min-width:1024px){
   .container{ padding-left:1.25rem; padding-right:1.25rem; }
@@ -128,7 +132,8 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
 .cabo-recaptcha-clip{
   --rc-w:304px; --rc-h:78px;
   width:var(--rc-w); height:var(--rc-h);
-  display:inline-block; overflow:hidden; border-radius:10px; background:#111;
+  display:inline-block; overflow:hidden;
+  border-radius:10px; background:#111;
   box-shadow:inset 0 0 0 1px #2a2a2a; line-height:0;
 }
 .cabo-recaptcha-box{ position:relative; left:-4px; top:-4px; width:calc(var(--rc-w) + 8px); height:calc(var(--rc-h) + 8px); background:transparent!important; }
@@ -136,7 +141,7 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
 .cabo-recaptcha-fallback{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#111; border-radius:10px; }
 @media (max-width:360px){ .cabo-recaptcha-clip{ transform:scale(.92); transform-origin:left top; } }
 
-/* ===== Settings form (autofill koyu tema) ===== */
+/* Settings autofill (dark) */
 .settings-input:-webkit-autofill,
 .settings-input:-webkit-autofill:hover,
 .settings-input:-webkit-autofill:focus{
@@ -145,11 +150,9 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
   -webkit-box-shadow:0 0 0 1000px #1f1f1f inset!important;
           box-shadow:0 0 0 1000px #1f1f1f inset!important;
 }
-.settings-input:-moz-autofill{
-  background:#1f1f1f!important; color:#fff!important;
-}
+.settings-input:-moz-autofill{ background:#1f1f1f!important; color:#fff!important; }
 
-/* ===== Dropdown/overlay katmanı — kütüphane bağımsız güvenli seçiciler ===== */
+/* Dropdown/overlay stacking (select libs, portals, etc.) */
 [class*="select-menu"], [class*="Select__menu"],
 .custom-select-menu, .select-dropdown, [data-select-menu]{
   position:absolute;
@@ -159,31 +162,32 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
 
 /* ===== MOBILE ONLY ===== */
 @media (hover:none) and (pointer:coarse){
-
-  /* İlk dokunuşta sorunsuz scroll: tüm yüzey pan-y (form inputları hariç) */
+  /* First-try smooth scroll; don’t require tapping cards */
   html, body, #__next, #cabo-main, main, .container,
   *:not(input):not(textarea):not(select){
     touch-action: pan-y !important;
   }
 
-  /* Momentum scroll sadece mobilde */
+  /* Momentum only on mobile */
   html, body, #__next, #cabo-main, main{ -webkit-overflow-scrolling: touch; }
 
-  /* Pull-to-refresh/bounce zincirini kes — “geri atma” biter */
-  html, body{ overscroll-behavior-y: contain !important; }
+  /* Keep default overscroll chaining (avoid iOS first-scroll cancel) */
+  html, body{ overscroll-behavior-y: auto !important; }
 
-  /* Hover bazlı animasyonları nötrle (mobilde hover yok) */
+  /* Kill all hover/transform motions—even inline styles set by JS */
   [data-card],
   [role="region"],
   [class*="hover:-translate-"],
   [class*="hover:translate-"],
   [class*="hover:scale-"],
-  [class*="hover:shadow"]{
+  [class*="hover:shadow"],
+  [style*="transform"]{
     transition:none !important;
     transform:none !important;
     box-shadow:none !important;
     will-change:auto !important;
   }
 
+  /* No snap */
   [class*="snap-"]{ scroll-snap-type:none !important; }
 }
