@@ -6,19 +6,19 @@
    - No inline third-party CSS injections
    - Consistent dark theme, no mixed content
    - Prevent layout jank & overflow; hide scrollbars
-   - Touch/overscroll hardened for mobile
+   - Touch/overscroll hardened for mobile (no "tap-then-scroll" bug)
    - reCAPTCHA box visually clipped (no iframes styled beyond)
    - Header/Footer fixed heights across public & private pages
 ───────────────── */
 
-:root {
+:root{
   color-scheme: dark;
-  /* ⚠️ Private layout’lar için güvenli defaultlar (public’te override ediliyor) */
+  /* ⚠️ Public shell override ediyor; private için güvenli defaultlar */
   --public-header-h: 0px;
   --public-footer-h: 0px;
 }
 
-/* temel kutu modeli */
+/* Temel kutu modeli */
 *,*::before,*::after{ box-sizing:border-box; }
 
 /* ======= Document/Viewport ======= */
@@ -28,13 +28,24 @@ html{
   margin:0;
   background:#0B0B0B;
   color:#f6f6f6;
+
+  /* Ana scroll her zaman html’de */
   overflow-x:hidden;
   overflow-y:auto;
+
+  /* Yatay zincirlemeyi engelle, dikey zincirleme kontrollü */
   overscroll-behavior-x: contain;
-  overscroll-behavior-y: auto; /* zincirleme açık */
+  overscroll-behavior-y: auto;
+
+  /* iOS metin büyütmeyi kapat */
   -webkit-text-size-adjust:100%;
+
+  /* Scroll snap/anchor geri zıplatmayı azalt */
+  scroll-snap-type: none;
+  overflow-anchor: none;
 }
-/* scrollbarlar global olarak gizli */
+
+/* Scrollbarları global olarak gizle (ana scroller) */
 html{ scrollbar-width:none; }
 html::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
@@ -45,17 +56,27 @@ body{
   background:#0B0B0B;
   color:#f6f6f6;
   font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
+
   -webkit-tap-highlight-color:transparent;
-  overflow-y:auto;
+
+  /* Ana scroll html’de olduğu için body’nin overflow’unu görünür bırak */
+  overflow:visible;
+
+  /* iOS momentum scroll alt scroller’larda efektif olsun */
   -webkit-overflow-scrolling:touch;
-  touch-action:pan-y;              /* dikey pan açık */
+
+  /* Dikey pan izni */
+  touch-action:pan-y;
+
+  /* Snap/anchor ters tepmesini azalt */
+  scroll-snap-type: none;
+  overflow-anchor: none;
+
   scrollbar-width:none; -ms-overflow-style:none;
 }
 body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 
-/* İç scroller’larda da gizli; gerektiğinde .show-scrollbar ile geri aç */
-*{ scrollbar-width:none!important; -ms-overflow-style:none!important; }
-*::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
+/* ⚠️ Alt scroller’larda gerekirse açmak için .show-scrollbar kullan */
 .show-scrollbar{ scrollbar-width:auto!important; -ms-overflow-style:auto!important; }
 .show-scrollbar::-webkit-scrollbar{ width:8px!important; height:8px!important; display:block!important; }
 
@@ -92,7 +113,6 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 
 /* ======= Ana içerik yüksekliği — Fallback’li ======= */
 #cabo-main{
-  /* var() fallback’ları sayesinde private layout’ta da geçerli */
   min-height: calc(100svh - var(--public-header-h, 0px) - var(--public-footer-h, 0px));
 }
 /* Yeni viewport ünitelerini destekleyenlerde daha pürüzsüz */
@@ -188,7 +208,18 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
 /* ======= Mobile iyileştirmeler ======= */
 @media (hover:none) and (pointer:coarse){
 
-  /* Hover kaynaklı “kart zıplatma”yı tamamen nötrle */
+  /* 💡 İlk dokunuş nereye gelirse gelsin dikey pan çalışsın */
+  html, body, #cabo-main, main, .container, [data-scroll-root],
+  *:not(input):not(textarea):not(select){
+    touch-action: pan-y !important;
+  }
+
+  /* Pull-to-refresh ve geri zıplatma etkilerini azalt */
+  html, body{
+    overscroll-behavior-y: contain !important;
+  }
+
+  /* Hover kaynaklı “kart zıplatma”yı tamamen nötrle (mobilde hover yok) */
   [data-card],
   [role="region"],
   [class*="hover:-translate-"],
@@ -199,14 +230,11 @@ body::-webkit-scrollbar{ width:0!important; height:0!important; display:none!imp
     transform: none !important;
     box-shadow: none !important;
     will-change: auto !important;
-    /* İlk dokunuş nereye gelirse gelsin dikey pan çalışsın */
-    touch-action: pan-y !important;
   }
 
-  /* Ana scroll konteynerlerde zincirlemeyi tekrar aç (ilk dokunuş takılmaz) */
-  body, #cabo-main, .container{
-    touch-action: pan-y !important;
-    overscroll-behavior-y: auto;      /* ⬅ contain yerine auto */
-    -webkit-overflow-scrolling: touch;
-  }
+  /* Olası snap class’larını by-pass et */
+  [class*="snap-"]{ scroll-snap-type: none !important; }
 }
+
+/* ======= Yardımcılar ======= */
+#cabo-main{ -webkit-overflow-scrolling: touch; }
