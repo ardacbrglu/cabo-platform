@@ -250,19 +250,18 @@ export default function ProductsPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px) scale(1.01)")}
                     onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0) scale(1)")}
                   >
-                    {/* Top row chips: Fiyat solda (içeride), Komisyon sağda ve hafif dışarı taşan */}
-                    <div className="flex items-start justify-between gap-2 px-4 pt-4 relative">
+                    {/* Top row chips: Fiyat (sol), Komisyon (sağ) — İÇERİDE */}
+                    <div className="flex items-start justify-between gap-2 px-4 pt-4">
                       <Chip text={`${t("productPrice")}: ${money(p.price || 0)}`} />
                       <Chip
                         icon={<BadgePercent size={15} />}
                         text={`${Number(p.commissionRate || 0).toFixed(2)}% ${t("productCommission")}`}
                         tone="accent"
-                        pop="upright"
                       />
                     </div>
 
                     {/* Image + title */}
-                    <div className="flex gap-4 px-5 pt-6">
+                    <div className="flex gap-4 px-5 pt-4">
                       <div
                         className="w-28 h-28 rounded-xl overflow-hidden shrink-0"
                         style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
@@ -291,28 +290,34 @@ export default function ProductsPage() {
                       </div>
                     )}
 
-                    {/* Metrics — etiket+ikon üstte (ikon sağda), değer ortada, altta caption */}
-                    <div className="px-5 pt-6 grid grid-cols-2 gap-4">
+                    {/* Metrics — tam simetri: her kutu h-full, 3 satırlı grid (label / value / caption) */}
+                    <div className="px-5 pt-6 grid grid-cols-2 gap-3 md:gap-4 auto-rows-[1fr]">
                       <MetricBox
+                        className="h-full"
                         label={t("clicks")}
                         icon={<MousePointerClick size={16} />}
                         value={p.totalClicks || 0}
                         caption={t("totalClicks")}
                       />
                       <MetricBox
+                        className="h-full"
                         label={t("sales")}
                         icon={<Activity size={16} />}
                         value={p.totalPurchases || 0}
                         caption={t("totalSales")}
                       />
                       <MetricBox
+                        className="h-full"
                         label={t("productEarn")}
                         icon={<Coins size={16} />}
                         value={<span className="font-extrabold" style={{ color: ACCENT }}>{money(earn)}</span>}
+                        caption={t("perSale") || "per sale"}
                       />
                       <MetricBox
+                        className="h-full"
                         label={t("quotaLeft")}
                         value={isFinite(quota) ? quota : "∞"}
+                        caption={t("remaining") || "remaining"}
                       />
                     </div>
 
@@ -392,7 +397,7 @@ export default function ProductsPage() {
 
 /* ---------- UI Bits ---------- */
 
-function Chip({ icon, text, tone = "default", pop = "none" }) {
+function Chip({ icon, text, tone = "default" }) {
   const base = {
     color: tone === "accent" ? "#eaffea" : "#f3f3f3",
     background: tone === "accent" ? "rgba(129,215,66,0.12)" : SURFACE_GREY,
@@ -404,22 +409,10 @@ function Chip({ icon, text, tone = "default", pop = "none" }) {
     borderRadius: "10px",
   };
 
-  const popStyle =
-    pop === "upright"
-      ? {
-          position: "relative",
-          transform: "translate(10px, -12px)", // sağa ve yukarı hafif taşma
-          zIndex: 1,
-          boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-        }
-      : pop === "up"
-      ? { position: "relative", transform: "translateY(-12px)", zIndex: 1 }
-      : {};
-
   return (
     <span
       className="inline-flex items-center gap-2 px-3 py-1 text-[13px] font-semibold whitespace-nowrap"
-      style={{ ...base, ...popStyle }}
+      style={base}
     >
       <span className="opacity-90">{text}</span>
       {icon ? <span className="opacity-90">{icon}</span> : null}
@@ -427,10 +420,10 @@ function Chip({ icon, text, tone = "default", pop = "none" }) {
   );
 }
 
-function MetricBox({ icon, label, value, caption }) {
+function MetricBox({ icon, label, value, caption, className = "" }) {
   return (
     <div
-      className="rounded-xl px-3 py-3 flex flex-col justify-between min-h-[112px]"
+      className={`rounded-xl px-3 py-3 grid grid-rows-[auto,1fr,auto] ${className}`}
       style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
       title={typeof label === "string" ? label : undefined}
     >
@@ -440,19 +433,15 @@ function MetricBox({ icon, label, value, caption }) {
         {icon ? <span className="text-gray-300 shrink-0">{icon}</span> : null}
       </div>
 
-      {/* değer: ortalanmış */}
-      <div className="text-center text-white text-xl font-bold tabnums mt-2 break-words">
+      {/* değer: ortalanmış ve esneyen orta satır */}
+      <div className="flex items-center justify-center text-white text-xl font-bold tabnums mt-2 break-words">
         {value}
       </div>
 
-      {/* caption: küçük, gri — boşluk doldurur */}
-      {caption ? (
-        <div className="text-center text-gray-400 text-[12px] leading-4 mt-1">
-          {caption}
-        </div>
-      ) : (
-        <div className="h-4" />
-      )}
+      {/* caption: küçük ve sabit alt satır (boş olsa bile layout eşit) */}
+      <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">
+        {caption ? caption : "\u00A0"}
+      </div>
     </div>
   );
 }
