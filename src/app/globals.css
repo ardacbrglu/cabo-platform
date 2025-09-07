@@ -2,39 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Security Docblock (Frontend Layout)
-   - Dark theme, unified scroll behavior
-   - Footer kept at a constant distance (small scroll) on desktop
-   - Mobile: first-try smooth scroll; all hover/transform motions killed
-   - Scrollbars hidden (WebKit/Firefox/legacy Edge)
-   - Overlay/dropdown safe stacking
-────────────────────────────── */
+/* ── App shell / scroll behavior ───────────────────────────────────────── */
 
 :root{
   color-scheme: dark;
-  --public-header-h: 72px;   /* desktop header */
-  --public-footer-h: 68px;   /* desktop footer */
+  --public-header-h: 72px;    /* desktop header height */
+  --public-footer-h: 68px;    /* desktop footer height */
 }
 
-/* Base box model */
+/* Baseline */
 *,*::before,*::after{ box-sizing:border-box; }
-
-/* ===== Root scroller (html) ===== */
+html, body { height:100%; }
 html{
-  min-height:100%;
   background:#0B0B0B;
   color:#f6f6f6;
-
   overflow-x:hidden;
-  overflow-y:auto;
-
-  overscroll-behavior-x: contain;
-  overscroll-behavior-y: auto;
-
+  overflow-y:auto;                 /* single real scroller */
   -webkit-text-size-adjust:100%;
 }
-
-/* Body is not a scroller */
 body{
   min-height:100dvh;
   margin:0;
@@ -42,60 +27,43 @@ body{
   color:#f6f6f6;
   font-family:'Inter','ui-sans-serif','system-ui',sans-serif;
   -webkit-tap-highlight-color:transparent;
-  overflow:visible;
+  overflow:visible;                /* no nested scroller here */
 }
 
-/* ===== Scrollbar hiding (desktop + mobile) ===== */
-/* WebKit */
+/* Hide scrollbars (desktop & mobile) */
 *::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
-/* Firefox / legacy Edge */
-html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-overflow-style:none; }
+html, body, #__next, #cabo-main, main{ scrollbar-width:none; -ms-overflow-style:none; }
 
-/* ===== Shell with constant footer distance =====
-   We *intentionally* do NOT subtract the footer height from the middle row,
-   so there is ALWAYS a small scroll equal to the footer height.
-*/
+/* ── Shell: FLEX, no vh math ───────────────────────────────────────────── */
+
 .public-shell{
   min-height:100dvh;
-  display:grid;
-  grid-template-rows:
-    var(--public-header-h)
-    minmax(calc(100svh - var(--public-header-h)), auto)  /* fills viewport minus header */
-    var(--public-footer-h);                               /* sits just below viewport */
+  display:flex;
+  flex-direction:column;
   background:#0b0b0b;
   color:#fff;
   isolation:isolate;
 }
-@supports (height: 100dvb){
-  .public-shell{
-    grid-template-rows:
-      var(--public-header-h)
-      minmax(calc(100dvb - var(--public-header-h)), auto)
-      var(--public-footer-h);
-  }
-}
-
 .public-header{
   height:var(--public-header-h);
   background:#111;
   border-bottom:1px solid #1b1b1b;
 }
 
-/* Main area: let grid size it; never create inner scrollers */
+/* Main content – grows, never its own scroller */
 #cabo-main{
+  flex:1 1 auto;
   min-height:0;
   overflow:visible;
 }
 
-/* Container */
-.container{
-  width:100%;
-  max-width:1100px;
-  margin-left:auto; margin-right:auto;
-  padding-left:1rem; padding-right:1rem;
-}
-@media (min-width:1024px){
-  .container{ padding-left:1.25rem; padding-right:1.25rem; }
+/* Desktop-only: keep footer a tiny scroll away, constant distance */
+@media (min-width: 1024px){
+  #cabo-main.footer-push-desktop::after{
+    content:"";
+    display:block;
+    height:var(--public-footer-h);   /* the “little scroll” spacer you wanted */
+  }
 }
 
 /* Footer */
@@ -108,17 +76,17 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
   text-align:center; padding:12px 16px;
 }
 .cabo-public-footer::before{
-  content:"";
-  position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
+  content:""; position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
   background:linear-gradient(90deg, transparent, #1b1b1b, transparent);
 }
-.cabo-public-footer .merchant{
-  height:44px; display:flex; align-items:center; justify-content:center;
-  gap:.6rem; line-height:1;
-}
+.cabo-public-footer .merchant{ height:44px; display:flex; align-items:center; justify-content:center; gap:.6rem; line-height:1; }
 .cabo-public-footer .merchant a{ font-weight:600; color:#81d742; }
 .cabo-public-footer .merchant a:hover{ color:#b3ffb3; text-decoration:underline; }
 .cabo-public-footer .copy{ font-size:12px; color:#8b8b8b; line-height:1; }
+
+/* Container */
+.container{ width:100%; max-width:1100px; margin-inline:auto; padding-inline:1rem; }
+@media (min-width:1024px){ .container{ padding-inline:1.25rem; } }
 
 /* Brand */
 .brand-cabo{
@@ -128,14 +96,9 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
 }
 @media (min-width:1024px){ .brand-cabo{ font-size:32px; } }
 
-/* reCAPTCHA v2 clip */
-.cabo-recaptcha-clip{
-  --rc-w:304px; --rc-h:78px;
-  width:var(--rc-w); height:var(--rc-h);
-  display:inline-block; overflow:hidden;
-  border-radius:10px; background:#111;
-  box-shadow:inset 0 0 0 1px #2a2a2a; line-height:0;
-}
+/* reCAPTCHA clip */
+.cabo-recaptcha-clip{ --rc-w:304px; --rc-h:78px; width:var(--rc-w); height:var(--rc-h); display:inline-block; overflow:hidden;
+  border-radius:10px; background:#111; box-shadow:inset 0 0 0 1px #2a2a2a; line-height:0; }
 .cabo-recaptcha-box{ position:relative; left:-4px; top:-4px; width:calc(var(--rc-w) + 8px); height:calc(var(--rc-h) + 8px); background:transparent!important; }
 .cabo-recaptcha-clip, .cabo-recaptcha-box, .g-recaptcha{ background:transparent!important; border:0!important; box-shadow:none!important; }
 .cabo-recaptcha-fallback{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#111; border-radius:10px; }
@@ -152,29 +115,25 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
 }
 .settings-input:-moz-autofill{ background:#1f1f1f!important; color:#fff!important; }
 
-/* Dropdown/overlay stacking (select libs, portals, etc.) */
-[class*="select-menu"], [class*="Select__menu"],
-.custom-select-menu, .select-dropdown, [data-select-menu]{
+/* Dropdown/overlay stacking */
+[class*="select-menu"], [class*="Select__menu"], .custom-select-menu, .select-dropdown, [data-select-menu]{
   position:absolute;
   z-index:9999 !important;
   overflow:visible;
 }
 
-/* ===== MOBILE ONLY ===== */
+/* ── MOBILE tweaks (first-scroll reliability) ──────────────────────────── */
 @media (hover:none) and (pointer:coarse){
-  /* First-try smooth scroll; don’t require tapping cards */
-  html, body, #__next, #cabo-main, main, .container,
-  *:not(input):not(textarea):not(select){
+  /* Only the true scrollers get touch-action; avoid the universal selector */
+  html, body, #__next, main, #cabo-main{
     touch-action: pan-y !important;
+    -webkit-overflow-scrolling: touch;
   }
 
-  /* Momentum only on mobile */
-  html, body, #__next, #cabo-main, main{ -webkit-overflow-scrolling: touch; }
-
-  /* Keep default overscroll chaining (avoid iOS first-scroll cancel) */
+  /* Let the browser handle URL-bar resize without cancelling the first swipe */
   html, body{ overscroll-behavior-y: auto !important; }
 
-  /* Kill all hover/transform motions—even inline styles set by JS */
+  /* Neutralize hover/transform transitions on cards & fancy bits */
   [data-card],
   [role="region"],
   [class*="hover:-translate-"],
@@ -188,6 +147,6 @@ html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-
     will-change:auto !important;
   }
 
-  /* No snap */
+  /* Kill accidental snap areas */
   [class*="snap-"]{ scroll-snap-type:none !important; }
 }

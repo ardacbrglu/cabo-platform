@@ -250,9 +250,10 @@ export default function Layout({ children }) {
       )}
 
       {/* CONTENT */}
-      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll bg-transparent">
+      <main id="cabo-main" className="flex-1 min-h-0 mobile-untrap-scroll bg-transparent footer-push-desktop">
         {children}
       </main>
+
 
       <footer
         className="w-full text-center bg-[#111] text-gray-500 text-xs font-mono mt-auto border-t border-[#232323] shrink-0"
