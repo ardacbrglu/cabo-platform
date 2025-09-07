@@ -15,11 +15,32 @@ import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
  */
 
 const translations = {
-  en: { home: "Home", faq: "FAQ", login: "Login", register: "Register", merchantQ: "Are you a product owner?", merchantAccess: "Merchant access", copyright: "Cabo Affiliate | Built by Arda Cabaroğlu", language: "Language" },
-  tr: { home: "Anasayfa", faq: "Sık Sorulanlar", login: "Giriş Yap", register: "Kayıt Ol", merchantQ: "Ürün sahibi misin?", merchantAccess: "Satıcı girişi", copyright: "Cabo Affiliate | Arda Cabaroğlu tarafından geliştirilmiştir", language: "Dil" },
+  en: {
+    home: "Home",
+    faq: "FAQ",
+    login: "Login",
+    register: "Register",
+    merchantQ: "Are you a product owner?",
+    merchantAccess: "Merchant access",
+    copyright: "Cabo Affiliate | Built by Arda Cabaroğlu",
+    language: "Language",
+  },
+  tr: {
+    home: "Anasayfa",
+    faq: "Sık Sorulanlar",
+    login: "Giriş Yap",
+    register: "Kayıt Ol",
+    merchantQ: "Ürün sahibi misin?",
+    merchantAccess: "Satıcı girişi",
+    copyright: "Cabo Affiliate | Arda Cabaroğlu tarafından geliştirilmiştir",
+    language: "Dil",
+  },
 };
 
-const LANGS = [{ code: "tr", short: "TR" }, { code: "en", short: "EN" }];
+const LANGS = [
+  { code: "tr", short: "TR" },
+  { code: "en", short: "EN" },
+];
 
 function FlagTR({ className = "w-4 h-3" }) {
   return (
@@ -50,9 +71,9 @@ export default function PublicLayout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileLangOpen, setMobileLangOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const langRef = useRef<HTMLLIElement | null>(null);
+  const langRef = useRef(null);
 
-  // viewport & path watchers
+  // viewport & initial path
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -60,17 +81,22 @@ export default function PublicLayout({ children }) {
     setCurrentPath(window.location?.pathname || "/");
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // watch SPA navigation
   useEffect(() => {
     const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
-    const patch = (type: "pushState" | "replaceState") => {
+    const patch = (type) => {
       const orig = history[type];
-      return function (...args: any[]) {
-        const ret = (orig as any).apply(this, args);
+      return function (...args) {
+        const ret = orig.apply(this, args);
         try { window.dispatchEvent(new Event("locationchange")); } catch {}
         return ret;
       };
     };
-    try { (history as any).pushState = patch("pushState"); (history as any).replaceState = patch("replaceState"); } catch {}
+    try {
+      history.pushState = patch("pushState");
+      history.replaceState = patch("replaceState");
+    } catch {}
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -79,10 +105,10 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // outside click + Esc close
+  // outside click & Esc handlers
   useEffect(() => {
-    const onDocClick = (e: MouseEvent) => { if (!langRef.current) return; if (!langRef.current.contains(e.target as Node)) setLangOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setLangOpen(false); setMobileLangOpen(false); setMobileOpen(false); } };
+    const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileLangOpen(false); setMobileOpen(false); } };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -91,21 +117,21 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // body scroll lock when mobile menu open
+  // lock scroll when mobile menu is open
   useEffect(() => {
     if (!mobileOpen) return;
-    const prev = document.documentElement.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
-    return () => { document.documentElement.style.overflow = prev; };
+    return () => { document.documentElement.style.overflow = prevHtmlOverflow; };
   }, [mobileOpen]);
 
   if (!ready) return null;
 
-  const t = (k: keyof typeof translations["en"]) => (translations[locale] || translations.en)[k] || k;
-  const activeLangCode = (locale?.toLowerCase().startsWith("tr") ? "tr" : "en") as "tr" | "en";
+  const dict = translations[locale] || translations.en;
+  const t = (k) => dict[k] || k;
+  const activeLangCode = (String(locale).toLowerCase().startsWith("tr") ? "tr" : "en");
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
-  const setLangPersist = (code: "tr" | "en") =>
-    (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
+  const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -114,12 +140,12 @@ export default function PublicLayout({ children }) {
     { href: "/register", label: t("register") },
   ];
 
-  const linkClassDesktop = (href: string) =>
+  const linkClassDesktop = (href) =>
     `transition inline-block hover:text-[#81d742] ${currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"}`;
 
   return (
     <div className="public-shell">
-      {/* HEADER — z-index yüksek (mobil panelin referans katmanı değil; panel fixed) */}
+      {/* HEADER */}
       <header className="public-header relative z-[1000]">
         <div className="h-full w-full flex items-center justify-between px-6 lg:px-8">
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
@@ -167,7 +193,7 @@ export default function PublicLayout({ children }) {
                           <button
                             key={l.code}
                             type="button"
-                            onClick={() => { setLangPersist(l.code as any); setLangOpen(false); }}
+                            onClick={() => { setLangPersist(l.code); setLangOpen(false); }}
                             className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
                               active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
                             }`}
@@ -216,9 +242,9 @@ export default function PublicLayout({ children }) {
               style={{ top: "var(--public-header-h)" }}
             >
               <div className="px-6 lg:px-8 py-2 text-sm">
-                {/* Close row (mobile) */}
+                {/* Close row */}
                 <div className="flex items-center justify-between py-1">
-                  <span className="uppercase tracking-wide text-gray-400">{(translations[locale] || translations.en).language}</span>
+                  <span className="uppercase tracking-wide text-gray-400">{dict.language}</span>
                   <button
                     type="button"
                     aria-label="Close menu"
@@ -248,12 +274,12 @@ export default function PublicLayout({ children }) {
                   onClick={() => setMobileLangOpen((s) => !s)}
                   aria-haspopup="menu"
                   aria-expanded={mobileLangOpen}
-                  aria-label={(translations[locale] || translations.en).language}
+                  aria-label={dict.language}
                   style={{ outline: "none" }}
                 >
                   <span className="flex items-center gap-2">
                     <Globe size={16} />
-                    <span className="uppercase tracking-wide">{(translations[locale] || translations.en).language}</span>
+                    <span className="uppercase tracking-wide">{dict.language}</span>
                   </span>
                   <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
                 </button>
@@ -266,7 +292,7 @@ export default function PublicLayout({ children }) {
                         <button
                           key={l.code}
                           type="button"
-                          onClick={() => { setLangPersist(l.code as any); }}
+                          onClick={() => { setLangPersist(l.code); }}
                           className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
                             active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
                           }`}
@@ -289,22 +315,18 @@ export default function PublicLayout({ children }) {
 
       {/* MAIN */}
       <main id="cabo-main" className="w-full mobile-untrap-scroll">
-        <div className="container py-8 sm:py-12">
-          {children}
-        </div>
+        <div className="container py-8 sm:py-12">{children}</div>
       </main>
 
       {/* FOOTER */}
       <footer className="cabo-public-footer">
         <div className="merchant">
-          <span className="text-gray-400">{(translations[locale] || translations.en).merchantQ}</span>
+          <span className="text-gray-400">{dict.merchantQ}</span>
           <Link href="/merchant/login" prefetch={false}>
-            {(translations[locale] || translations.en).merchantAccess}
+            {dict.merchantAccess}
           </Link>
         </div>
-        <div className="copy">
-          &copy; 2025 {(translations[locale] || translations.en).copyright}
-        </div>
+        <div className="copy">&copy; 2025 {dict.copyright}</div>
       </footer>
     </div>
   );
