@@ -1,12 +1,21 @@
 "use client";
 
+/**
+ * File: src/app/settings/page.jsx
+ * Purpose: Settings — PROD
+ * Security Docblock (Frontend):
+ * - Tek apiFetch wrapper (credentials:include, X-Requested-With, X-Request-Id).
+ * - Form verisi client-side doğrulama + backend validation.
+ * - UI: Koyu tema; dropdown/overlay z-index izolasyonu; mobilde tek kolon.
+ */
+
 import { useState, useEffect, useRef } from "react";
 import Layout from "@/components/Layout";
 import CustomSelect from "@/components/CustomSelect";
 import { useLocale } from "@/context/LocaleContext";
 import useTranslation from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import apiFetch from "@/lib/apiFetch"; // tek wrapper
+import apiFetch from "@/lib/apiFetch";
 
 const INPUT_CLASS =
   "settings-input bg-[#1f1f1f] border border-[#323232] focus:border-[#81d742] focus:ring-0 rounded-md px-3 py-2 text-white text-sm placeholder:text-gray-400 outline-none";
@@ -26,14 +35,13 @@ export default function SettingsPage() {
     new_password_repeat: "",
   });
   const [message, setMessage] = useState("");
-  const [pwHint, setPwHint] = useState(""); // canlı uyarı
+  const [pwHint, setPwHint] = useState("");
   const msgRef = useRef(null);
 
   const { setLocale } = useLocale();
   const { t } = useTranslation();
   const isMobile = useIsMobile();
 
-  // --- API errorKey -> t(key)
   const mapErrorKey = (key) => {
     switch (key) {
       case "too_many": return t("tooManyRequests") || "Too many requests";
@@ -43,7 +51,6 @@ export default function SettingsPage() {
       case "unsupported_media": return t("errorGeneric") || "Unsupported Media Type";
       case "invalid_input": return t("errorGeneric") || "Invalid input";
       case "server": return t("serverError") || "Server error";
-      // password
       case "weak": return t("passwordTooShort") || "Password too weak";
       case "must_different": return t("errorGeneric") || "New password must be different";
       case "no_password_nowarn": return t("hybridPasswordHint") || "No current password needed";
@@ -94,7 +101,7 @@ export default function SettingsPage() {
         const data = await resp.json();
         if (!mounted) return;
 
-        setProfile((prev) => ({
+        setProfile(prev => ({
           ...prev,
           name: data.name || "",
           email: data.email || "",
@@ -122,16 +129,17 @@ export default function SettingsPage() {
   }, [message]);
 
   function handleChange(field, value) {
-    setProfile((prev) => ({ ...prev, [field]: value }));
+    setProfile(prev => ({ ...prev, [field]: value }));
     if (field === "languagePreference") setLocale(value);
 
-    // canlı şifre uyarıları
     if (field === "new_password" || field === "new_password_repeat") {
-      if (profile.current_password === "" && (value?.length ?? 0) > 0) {
+      const np = field === "new_password" ? value : profile.new_password;
+      const nr = field === "new_password_repeat" ? value : profile.new_password_repeat;
+      if (profile.current_password === "" && (np?.length || nr?.length)) {
         setPwHint(t("hybridPasswordHint") || "If you registered with Google, you can set a password without current one.");
-      } else if ((field === "new_password" ? value : profile.new_password) !== (field === "new_password_repeat" ? value : profile.new_password_repeat)) {
+      } else if (np !== nr) {
         setPwHint(t("passwordNoMatch") || "Passwords do not match");
-      } else if (((field === "new_password" ? value : profile.new_password) || "").length > 0 && ((field === "new_password" ? value : profile.new_password) || "").length < 8) {
+      } else if ((np || "").length > 0 && (np || "").length < 8) {
         setPwHint(t("passwordTooShort") || "Password must be at least 8 characters.");
       } else {
         setPwHint("");
@@ -146,7 +154,6 @@ export default function SettingsPage() {
     setMessage("");
 
     try {
-      // profil
       const profileRes = await apiFetch("/api/settings/update", {
         method: "POST",
         body: {
@@ -157,7 +164,6 @@ export default function SettingsPage() {
       });
       const profileData = await profileRes.json().catch(() => ({}));
 
-      // şifre (opsiyonel)
       let passwordMsg = "";
       const wantsPasswordChange =
         profile.new_password || profile.new_password_repeat || profile.current_password;
@@ -201,7 +207,6 @@ export default function SettingsPage() {
         }
       }
 
-      // sonuç mesajı
       if (profileRes.status === 429) {
         setMessage(t("tooManyRequests") || "Too many requests");
       } else if (!profileRes.ok) {
@@ -219,7 +224,7 @@ export default function SettingsPage() {
       setMessage(t("errorGeneric") || "An error occurred");
     } finally {
       setSubmitting(false);
-      setProfile((prev) => ({
+      setProfile(prev => ({
         ...prev,
         current_password: "",
         new_password: "",
@@ -242,19 +247,15 @@ export default function SettingsPage() {
     );
   }
 
-  // Kart ortak stilleri – dikkat: z-index; soldaki karta yüksek z veriyoruz
   const cardBase =
-    "relative bg-[#191919] rounded-2xl shadow-md border border-[#232323] flex flex-col gap-3 px-6 pb-6 pt-6 w-full";
+    "relative bg-[#191919] rounded-2xl shadow-md border border-[#232323] flex flex-col gap-3 px-6 py-6 w-full overflow-visible";
 
   return (
     <Layout>
-      {/* isolate: dropdown'lar sibling üstüne rahat çıksın */}
-      <main
-        id="cabo-main"
-        className="isolate w-full max-w-4xl mx-auto px-3 py-8"
-      >
+      {/* isolate: overlay güvenli; min-height -> footer dipte */}
+      <main id="cabo-main" className="isolate w-full max-w-4xl mx-auto px-3 py-8">
         <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7">
-          {/* Profil Kartı (z yüksek) */}
+          {/* Profil Kartı — daha yüksek katman */}
           <div className={`${cardBase} z-40`}>
             <h3 className="font-extrabold text-lg mb-2 text-[#81d742] font-mono text-center">
               {t("profileInfo")}
@@ -272,8 +273,8 @@ export default function SettingsPage() {
             />
 
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
-            {/* dropdown daha yukarıda olsun diye wrapper'a z-index */}
-            <div className="relative z-50">
+            {/* focus-within → z-boost, dropdown her şeyin üstünde */}
+            <div className="relative z-40 focus-within:z-[9999]">
               <CustomSelect
                 options={languages}
                 value={profile.languagePreference}
@@ -282,7 +283,8 @@ export default function SettingsPage() {
             </div>
 
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currency")}</label>
-            <div className="relative z-50">
+            {/* Bir altta kalsın ki üstteki menüyü asla örtmesin */}
+            <div className="relative z-20 focus-within:z-[9999]">
               <CustomSelect
                 options={currencies}
                 value={profile.currencyCode}
@@ -291,10 +293,7 @@ export default function SettingsPage() {
             </div>
 
             {message ? (
-              <div
-                ref={msgRef}
-                className="text-[#81d742] font-semibold mt-3 text-center max-w-2xl transition-opacity duration-500"
-              >
+              <div ref={msgRef} className="text-[#81d742] font-semibold mt-3 text-center transition-opacity duration-500">
                 {message}
               </div>
             ) : null}
@@ -339,7 +338,6 @@ export default function SettingsPage() {
               placeholder={t("repeatNewPasswordPlaceholder") || ""}
             />
 
-            {/* Canlı uyarı/ipuçları */}
             <div className="min-h-5 text-[12px] mt-1 text-center">
               {pwHint ? (
                 <span className="text-[#ffd66b]">{pwHint}</span>

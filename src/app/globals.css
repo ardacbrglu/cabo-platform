@@ -3,11 +3,10 @@
 @tailwind utilities;
 
 /* ───────────────── Security Docblock (Frontend Layout)
-   - No inline third-party CSS injections
    - Dark theme, unified scroll behavior
-   - Root-only scrollbar hiding (no wildcard)
-   - Mobile: pan-y enabled, no first-touch jank
-   - Dropdown/overlay stacking safe
+   - Root-only Firefox scrollbar hiding; WebKit global track hiding (jank yok)
+   - Mobile: first-try scroll smooth (pan-y), desktop: doğal scroll
+   - Overlays/Dropdowns z-stack safe
 ───────────────── */
 
 :root{
@@ -25,7 +24,7 @@ html{
   background:#0B0B0B;
   color:#f6f6f6;
 
-  /* Root scroll */
+  /* Tek gerçek scroller => html */
   overflow-x:hidden;
   overflow-y:auto;
 
@@ -34,13 +33,9 @@ html{
 
   -webkit-text-size-adjust:100%;
   scroll-snap-type:none;
-  overflow-anchor:none;
-
-  /* iOS momentum */
-  -webkit-overflow-scrolling: touch;
 }
 
-/* Body: scroll root html, body overflow visible */
+/* Body: scroller html, body overflow visible */
 body{
   min-height:100dvh;
   margin:0;
@@ -50,20 +45,13 @@ body{
   -webkit-tap-highlight-color:transparent;
   overflow:visible;
   scroll-snap-type:none;
-  overflow-anchor:none;
 }
 
-/* ===== Scrollbar Hiding — ONLY known scrollers (desktop & mobile) ===== */
-/* Chrome/Safari/Edge */
-html::-webkit-scrollbar,
-body::-webkit-scrollbar,
-#cabo-main::-webkit-scrollbar,
-.public-shell::-webkit-scrollbar,
-main::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
-/* Firefox */
-html, body, #cabo-main, .public-shell, main{ scrollbar-width:none; }
-/* Old IE/Edge */
-html, body, #cabo-main, .public-shell, main{ -ms-overflow-style:none; }
+/* ===== Scrollbar Hiding ===== */
+/* WebKit (Chrome/Safari/Edge): Tüm elemanlarda görünmez — jank yaratmaz */
+*::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
+/* Firefox: SADECE root scroller’larda gizle (wildcard yok) */
+html, body, #__next, .public-shell, #cabo-main, main{ scrollbar-width:none; -ms-overflow-style:none; }
 
 /* ===== Public shell ===== */
 .public-shell{
@@ -148,7 +136,7 @@ html, body, #cabo-main, .public-shell, main{ -ms-overflow-style:none; }
 .cabo-recaptcha-fallback{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#111; border-radius:10px; }
 @media (max-width:360px){ .cabo-recaptcha-clip{ transform:scale(.92); transform-origin:left top; } }
 
-/* ===== Autofill — settings sayfası da koyu kalsın ===== */
+/* ===== Settings form (autofill koyu tema) ===== */
 .settings-input:-webkit-autofill,
 .settings-input:-webkit-autofill:hover,
 .settings-input:-webkit-autofill:focus{
@@ -161,24 +149,30 @@ html, body, #cabo-main, .public-shell, main{ -ms-overflow-style:none; }
   background:#1f1f1f!important; color:#fff!important;
 }
 
-/* ===== MOBILE TUNING ===== */
+/* ===== Dropdown/overlay katmanı — kütüphane bağımsız güvenli seçiciler ===== */
+[class*="select-menu"], [class*="Select__menu"],
+.custom-select-menu, .select-dropdown, [data-select-menu]{
+  position:absolute;
+  z-index:9999 !important;
+  overflow:visible;
+}
+
+/* ===== MOBILE ONLY ===== */
 @media (hover:none) and (pointer:coarse){
 
-  /* İlk dokunuşta jankı kes: root & ana konteynerler pan-y */
-  html, body, #cabo-main, main, .container, [data-scroll-root]{
+  /* İlk dokunuşta sorunsuz scroll: tüm yüzey pan-y (form inputları hariç) */
+  html, body, #__next, #cabo-main, main, .container,
+  *:not(input):not(textarea):not(select){
     touch-action: pan-y !important;
-    -webkit-overflow-scrolling: touch;
   }
 
-  /* Etkileşimliler: tıklama/zoom çakışmasını azalt */
-  a, button, [role="button"], input, textarea, select{
-    touch-action: manipulation !important;
-  }
+  /* Momentum scroll sadece mobilde */
+  html, body, #__next, #cabo-main, main{ -webkit-overflow-scrolling: touch; }
 
-  /* Pull-to-refresh / bounce zinciri kapalı → geri zıplatma azalır */
+  /* Pull-to-refresh/bounce zincirini kes — “geri atma” biter */
   html, body{ overscroll-behavior-y: contain !important; }
 
-  /* Mobilde hover temelli transform/animasyonları nötrle */
+  /* Hover bazlı animasyonları nötrle (mobilde hover yok) */
   [data-card],
   [role="region"],
   [class*="hover:-translate-"],
@@ -191,6 +185,5 @@ html, body, #cabo-main, .public-shell, main{ -ms-overflow-style:none; }
     will-change:auto !important;
   }
 
-  /* Olası scroll-snap sınıflarını etkisizleştir */
   [class*="snap-"]{ scroll-snap-type:none !important; }
 }
