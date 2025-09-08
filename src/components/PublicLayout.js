@@ -6,12 +6,10 @@ import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
 
 /**
- * Security Docblock (PublicLayout)
- * - Client-only; no dynamic HTML injection
- * - Active link from location.pathname only
- * - Fixed header/footer heights; no layout shift
- * - No third-party inline scripts
- * - Mobile menu is a fixed overlay with backdrop; body scroll locked when open
+ * PublicLayout (client-only)
+ * - Header/footer share the same edge-to-edge band with safe padding
+ * - Brand left / nav right like affiliate header
+ * - Mobile menu locks <html> scroll; Esc/outside-click closes dropdowns
  */
 
 const translations = {
@@ -66,6 +64,7 @@ const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={classN
 
 export default function PublicLayout({ children }) {
   const { locale, setLocale, persistLocale, ready } = useLocale();
+
   const [isMobile, setIsMobile] = useState(false);
   const [currentPath, setCurrentPath] = useState("/");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -73,7 +72,6 @@ export default function PublicLayout({ children }) {
   const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef(null);
 
-  // viewport & initial path
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -82,7 +80,7 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // watch SPA navigation
+  // watch SPA navigation (history patch)
   useEffect(() => {
     const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
     const patch = (type) => {
@@ -105,7 +103,7 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // outside click & Esc handlers
+  // outside click & Esc
   useEffect(() => {
     const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
     const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileLangOpen(false); setMobileOpen(false); } };
@@ -117,18 +115,19 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // lock scroll when mobile menu is open
+  // lock scroll when mobile panel open
   useEffect(() => {
     if (!mobileOpen) return;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prev = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
-    return () => { document.documentElement.style.overflow = prevHtmlOverflow; };
+    return () => { document.documentElement.style.overflow = prev; };
   }, [mobileOpen]);
 
   if (!ready) return null;
 
   const dict = translations[locale] || translations.en;
   const t = (k) => dict[k] || k;
+
   const activeLangCode = (String(locale).toLowerCase().startsWith("tr") ? "tr" : "en");
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
   const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
@@ -145,14 +144,15 @@ export default function PublicLayout({ children }) {
 
   return (
     <div className="public-shell">
-      {/* HEADER */}
+      {/* HEADER (edge band) */}
       <header className="public-header relative z-[1000]">
-        <div className="h-full w-full flex items-center justify-between px-6 lg:px-8">
+        <div className="edge-band h-full flex items-center justify-between">
+          {/* brand left */}
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
-          {/* Desktop nav */}
+          {/* Desktop nav right */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -224,25 +224,22 @@ export default function PublicLayout({ children }) {
           )}
         </div>
 
-        {/* MOBILE OVERLAY NAV (fixed + backdrop) */}
+        {/* MOBILE OVERLAY NAV */}
         {isMobile && mobileOpen && (
           <>
-            {/* Backdrop */}
             <button
               aria-label="Close menu"
               onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
               className="fixed inset-0 bg-black/50 backdrop-blur-[1px] z-[998]"
               type="button"
             />
-            {/* Panel */}
             <div
               role="dialog"
               aria-modal="true"
               className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)]"
               style={{ top: "var(--public-header-h)" }}
             >
-              <div className="px-6 lg:px-8 py-2 text-sm">
-                {/* Close row */}
+              <div className="edge-band py-2 text-sm">
                 <div className="flex items-center justify-between py-1">
                   <span className="uppercase tracking-wide text-gray-400">{dict.language}</span>
                   <button
@@ -318,15 +315,17 @@ export default function PublicLayout({ children }) {
         <div className="container py-8 sm:py-12">{children}</div>
       </main>
 
-      {/* FOOTER */}
+      {/* FOOTER (edge band + comfy bottom padding) */}
       <footer className="cabo-public-footer">
-        <div className="merchant">
-          <span className="text-gray-400">{dict.merchantQ}</span>
-          <Link href="/merchant/login" prefetch={false}>
-            {dict.merchantAccess}
-          </Link>
+        <div className="edge-band">
+          <div className="merchant">
+            <span className="text-gray-400">{dict.merchantQ}</span>
+            <Link href="/merchant/login" prefetch={false}>
+              {dict.merchantAccess}
+            </Link>
+          </div>
+          <div className="copy">&copy; 2025 {dict.copyright}</div>
         </div>
-        <div className="copy">&copy; 2025 {dict.copyright}</div>
       </footer>
     </div>
   );

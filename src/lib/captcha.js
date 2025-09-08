@@ -1,6 +1,6 @@
-// File: src/lib/captcha.js
-// Purpose: Server-side Google reCAPTCHA verification (v2 checkbox & v3)
-// Security Docblock:
+// Server-side Google reCAPTCHA verification (v2 checkbox & v3)
+//
+// Security:
 // - Uses only server-side secret (RECAPTCHA_SECRET_KEY). No secrets on client.
 // - Optional dev bypass: NODE_ENV!=="production" && RECAPTCHA_BYPASS_DEV==="1".
 // - Short network timeout; does not log PII by default.
@@ -28,11 +28,9 @@ export async function verifyRecaptcha(token, remoteIp) {
 
   if (!SECRET || !token) return { ok: false, raw: { reason: "missing" } };
 
-  // POST https://www.google.com/recaptcha/api/siteverify
   const body = new URLSearchParams({ secret: SECRET, response: token });
   if (remoteIp) body.set("remoteip", remoteIp);
 
-  // timeout-safe fetch
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
 
@@ -52,8 +50,7 @@ export async function verifyRecaptcha(token, remoteIp) {
       const ok = (data.score ?? 0) >= MIN_SCORE;
       return { ok, raw: data };
     }
-    // v2
-    return { ok: true, raw: data };
+    return { ok: true, raw: data }; // v2
   } catch (e) {
     clearTimeout(timer);
     return { ok: false, raw: { error: "network", detail: String(e?.message || e) } };
@@ -61,8 +58,7 @@ export async function verifyRecaptcha(token, remoteIp) {
 }
 
 /**
- * Convenience wrapper used by API routes:
- * same signature you already use: (req, token) -> boolean
+ * Convenience helper for API routes
  */
 export async function verifyRecaptchaFromRequest(req, token) {
   const ip = clientIpFromRequest(req);

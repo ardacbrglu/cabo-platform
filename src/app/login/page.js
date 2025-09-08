@@ -4,16 +4,19 @@
 /**
  * Affiliate Login (Credentials only) — Google disabled
  *
- * Security Docblock (Cabo PROD):
+ * Security (Cabo PROD):
  * - No page reload on errors; inputs preserved
- * - CSRF preload; POST /api/login (JSON); client-side redirect on success
+ * - CSRF preload; POST /api/login (JSON)
  * - Double-click safe via AbortController
- * - Accessibility: aria-live messages; focus first invalid
- * - UI: Google button disabled (grayed), explanatory label; mobile responsive
+ * - a11y: aria-live messages; focus first invalid
+ * - Google button disabled (grayed)
+ *
+ * NOTE:
+ * - next/navigation hook'ları kaldırıldı (invalid hook call fix)
+ * - redirect => window.location.href (SPA davranışı korunur)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
@@ -77,26 +80,30 @@ const translations = {
 };
 
 export default function LoginPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const { locale, ready } = useLocale();
 
-  // locale → 'en'/'tr'
-  const { t } = useMemo(() => {
-    const norm =
-      String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
+  // i18n
+  const { t, isTR } = useMemo(() => {
+    const norm = String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
     const dict = translations[norm] || translations.en;
-    return {
-      t: (key) => (dict && key in dict ? dict[key] : key),
-    };
+    return { t: (k) => (dict && k in dict ? dict[k] : k), isTR: norm === "tr" };
   }, [locale]);
 
-  // redirect target
-  const rawFrom = searchParams?.get("from");
-  const callbackUrl = useMemo(() => {
-    const f = rawFrom || "/dashboard";
-    return f.startsWith("/") && !f.startsWith("//") ? f : "/dashboard";
-  }, [rawFrom]);
+  // redirect target (?from=...) ve activated banner
+  const callbackUrlRef = useRef("/dashboard");
+  const [justActivated, setJustActivated] = useState(false);
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const f = url.searchParams.get("from");
+      if (f && f.startsWith("/") && !f.startsWith("//")) callbackUrlRef.current = f;
+      if (url.searchParams.get("activated") === "1") {
+        setJustActivated(true);
+        url.searchParams.delete("activated");
+        window.history.replaceState({}, "", url.toString());
+      }
+    } catch {}
+  }, []);
 
   // mount flag
   const [mounted, setMounted] = useState(false);
@@ -111,33 +118,10 @@ export default function LoginPage() {
   // CSRF preload
   const [csrfToken, setCsrfToken] = useState("");
   const [csrfReady, setCsrfReady] = useState(false);
-
-  const [justActivated, setJustActivated] = useState(false);
-
-  // hints
-  const [submitted, setSubmitted] = useState(false);
-  const [hintsVisible, setHintsVisible] = useState(false);
-  const firstInvalidRef = useRef(null);
-  const programmaticFocusRef = useRef(false);
-
-  // inflight cancel
-  const abortRef = useRef(null);
-  function cancelInflight() {
-    try { abortRef.current?.abort(); } catch {}
-    abortRef.current = null;
-  }
-
-  const handleFocus = () => {
-    if (!programmaticFocusRef.current) setHintsVisible(false);
-  };
-
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/auth/csrf", {
-          credentials: "include",
-          cache: "no-store",
-        });
+        const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
         const j = await r.json().catch(() => ({}));
         if (j?.csrfToken) setCsrfToken(j.csrfToken);
       } catch {}
@@ -145,28 +129,25 @@ export default function LoginPage() {
     })();
   }, []);
 
-  // activated=1 banner (query temizle)
-  useEffect(() => {
-    if (searchParams?.get("activated") === "1") {
-      setJustActivated(true);
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("activated");
-        window.history.replaceState({}, "", url.toString());
-      } catch {}
-    }
-  }, [searchParams]);
+  // hints
+  const [submitted, setSubmitted] = useState(false);
+  const [hintsVisible, setHintsVisible] = useState(false);
+  const firstInvalidRef = useRef(null);
+  const programmaticFocusRef = useRef(false);
+  const handleFocus = () => { if (!programmaticFocusRef.current) setHintsVisible(false); };
+
+  // inflight cancel
+  const abortRef = useRef(null);
+  function cancelInflight() { try { abortRef.current?.abort(); } catch {} abortRef.current = null; }
 
   // validation
   const validate = () => {
     const errs = {};
     if (!email) errs.email = t("errorFill");
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      errs.email = t("errorEmailFormat");
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = t("errorEmailFormat");
     if (!password) errs.password = t("errorFill");
     return errs;
   };
-
   const errors = submitted ? validate() : {};
   const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
 
@@ -176,7 +157,7 @@ export default function LoginPage() {
   const ringErr = "focus:ring-red-400 border-red-500";
 
   async function onSubmit(e) {
-    e.preventDefault();                 // ✅ tam sayfa submit’i durdur
+    e.preventDefault();
     if (loading) return;
 
     setSubmitted(true);
@@ -188,17 +169,11 @@ export default function LoginPage() {
       programmaticFocusRef.current = true;
       requestAnimationFrame(() => {
         firstInvalidRef.current?.focus?.();
-        setTimeout(() => {
-          programmaticFocusRef.current = false;
-          setHintsVisible(true);
-        }, 80);
+        setTimeout(() => { programmaticFocusRef.current = false; setHintsVisible(true); }, 80);
       });
       return;
     }
-    if (!csrfReady) {
-      setError(t("csrfWait"));
-      return;
-    }
+    if (!csrfReady) { setError(t("csrfWait")); return; }
 
     cancelInflight();
     const ac = new AbortController();
@@ -214,23 +189,17 @@ export default function LoginPage() {
         },
         body: { email: email.trim().toLowerCase(), password },
         signal: ac.signal,
-
-        // 🔑 KRİTİK: 401/403’te otomatik redirect’i kapat
+        // kritik: otomatik redirect & retry kapalı
         noAuthRedirect: true,
-        noRetry: true,              // (opsiyonel) backoff/retry kapat
+        noRetry: true,
       });
 
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data?.success) {
-        router.push(callbackUrl);   // başarılıysa yönlendir
+        window.location.href = callbackUrlRef.current; // redirect (router yok)
       } else {
-        // 401/403/429/5xx dahil: sayfa YENİLENMEDEN mesaj göster
-        setError(
-          typeof data?.message === "string" && data.message
-            ? data.message
-            : t("serverError")
-        );
+        setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
       }
     } catch (err) {
       if (err?.name !== "AbortError") setError(t("serverError"));
@@ -248,17 +217,10 @@ export default function LoginPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t("infoTitle")}
-            </h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t("infoStrong")}
-            </p>
-            <ul
-              className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
-              style={{ maxWidth: 340 }}
-            >
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
+            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
               <li>{t("li1")}</li>
               <li>{t("li2")}</li>
               <li>{t("li3")}</li>
@@ -266,14 +228,8 @@ export default function LoginPage() {
             </ul>
             <div className="text-gray-400 text-sm mb-2">
               {t("faq")}
-              <Link
-                prefetch={false}
-                href="/faq"
-                className="text-[#81d742] underline hover:text-[#b3ffb3]"
-              >
-                {String(locale || "").toLowerCase().startsWith("tr")
-                  ? "SSS"
-                  : "FAQ"}
+              <Link prefetch={false} href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                {isTR ? "SSS" : "FAQ"}
               </Link>
             </div>
           </div>
@@ -281,26 +237,16 @@ export default function LoginPage() {
 
         {/* FORM */}
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">
-            {t("title")}
-          </h3>
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
 
           {justActivated && (
-            <div
-              className="text-green-400 text-base text-center mb-3"
-              role="status"
-              aria-live="polite"
-            >
+            <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
               {t("activatedBanner")}
             </div>
           )}
 
           {!csrfReady && (
-            <div
-              className="text-gray-400 text-sm text-center mb-3"
-              role="status"
-              aria-live="polite"
-            >
+            <div className="text-gray-400 text-sm text-center mb-3" role="status" aria-live="polite">
               {t("csrfWait")}
             </div>
           )}
@@ -308,13 +254,9 @@ export default function LoginPage() {
           <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
             {/* Email */}
             <div className="relative cabo-input-surface" onFocus={handleFocus}>
-              <label className="sr-only" htmlFor="email">
-                {t("emailPlaceholder")}
-              </label>
+              <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
               <input
-                ref={(el) => {
-                  if (needsRef("email")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
                 id="email"
                 type="email"
                 inputMode="email"
@@ -338,13 +280,9 @@ export default function LoginPage() {
 
             {/* Password */}
             <div className="relative cabo-input-surface" onFocus={handleFocus}>
-              <label className="sr-only" htmlFor="password">
-                {t("passwordPlaceholder")}
-              </label>
+              <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
               <input
-                ref={(el) => {
-                  if (needsRef("password")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
                 id="password"
                 type="password"
                 placeholder={t("passwordPlaceholder")}
@@ -366,21 +304,17 @@ export default function LoginPage() {
             </div>
 
             <div className="flex items-center justify-between -mt-2">
-              <button
-                type="button"
+              <Link
+                prefetch={false}
+                href="/password_reset"
                 className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition"
-                onClick={() => router.push("/password_reset")}
               >
                 {t("forgot")}
-              </button>
+              </Link>
             </div>
 
             {error && (
-              <div
-                className="text-red-500 text-base text-center"
-                role="alert"
-                aria-live="assertive"
-              >
+              <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
                 {error}
               </div>
             )}
@@ -395,9 +329,7 @@ export default function LoginPage() {
 
             <div className="flex items-center my-4">
               <span className="flex-1 h-px bg-[#232323]" />
-              <span className="px-3 text-gray-400 text-sm font-semibold">
-                {t("or")}
-              </span>
+              <span className="px-3 text-gray-400 text-sm font-semibold">{t("or")}</span>
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
 
@@ -420,18 +352,14 @@ export default function LoginPage() {
 
           <div className="mt-6 text-gray-400 text-sm">
             {t("noAccount")}{" "}
-            <Link
-              prefetch={false}
-              href="/register"
-              className="text-[#81d742] underline hover:text-[#b3ffb3]"
-            >
+            <Link prefetch={false} href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t("registerHere")}
             </Link>
           </div>
         </div>
       </div>
 
-      {/* Sadece bu sayfada: wrapper içindeki inputlar her durumda beyaz kalsın (autofill dahil) */}
+      {/* Sadece bu sayfada: beyaz input yüzeyi (autofill dahil) */}
       <style jsx global>{`
         @media (max-width: 768px) {
           .cabo-mobile-top-space { margin-top: 1rem !important; }

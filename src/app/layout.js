@@ -3,11 +3,12 @@ import { cookies } from "next/headers";
 import Providers from "./providers";
 
 /**
- * Security Docblock (RootLayout)
- * - No inline scripts; CSP set server-side in headers middleware
- * - Locale read from cookie only; no query param trust
- * - Viewport/meta kept minimal; theme-color fixed
+ * RootLayout
+ * - Minimal head; theme-color fixed
+ * - Locale from cookie only
+ * - Body has no scrolling role (the scroller is <html>)
  */
+
 export const metadata = {
   title: "Cabo",
   description: "Affiliate platform for monetization",
@@ -29,7 +30,6 @@ export default function RootLayout({ children }) {
         className="bg-[#0B0B0B] text-white"
         suppressHydrationWarning
         translate="no"
-        data-mobile-hover="off"
       >
         <Providers>{children}</Providers>
       </body>
