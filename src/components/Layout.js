@@ -172,7 +172,7 @@ export default function Layout({ children }) {
 
         {/* MOBILE panel */}
         {isMobile && mobileOpen && (
-          <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll border-t border-[#191919]">
+          <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
             {mobileLinks.map(({ href, icon, label }) => (
               <Link
                 key={href}

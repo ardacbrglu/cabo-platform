@@ -3,27 +3,19 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
 
 /**
  * ──────────────────────────────────────────────────────────────────────────────
  * Security Docblock (Cabo PROD)
- * - Client-only UI bileşeni; gizli anahtar/credential barındırmaz.
- * - Auth/authorization kararı vermez; yalnızca navigation ve dil seçimi UI’sı.
- * - XSS: Metinler sabit sözlükten gelir; kullanıcı girdisi render edilmez.
- * - Navigation: Next <Link> (prefetch=false); dış alan adlarına yönlendirme yok.
- * - UX: Mobil menü açıkken <html> scroll kilitlenir; Esc/outside-click kapanır.
- * - Performans: Dinleyiciler mount/unmount’ta düzgün eklenip kaldırılır.
- * - Stil: Mevcut UI/stil korunur; DOM’a inline script enjekte edilmez.
+ * - Sadece client-side UI; gizli anahtar/credential içermez.
+ * - Auth/authorization kararı vermez; public nav + language UI.
+ * - XSS: Metinler sabit sözlükten; kullanıcı girdisi render edilmez.
+ * - Linkler Next <Link> (prefetch=false); harici domain yönlendirmesi yok.
+ * - Mobil menü: header altında, edge-band ve ekran genişliğinde (affiliate ile aynı).
+ * - İnce çizgi için border kaldırıldı; shadow/outline yok.
+ * - Event listener’lar mount/unmount’ta düzgün yönetilir.
  * ──────────────────────────────────────────────────────────────────────────────
- */
-
-/**
- * PublicLayout
- * - Desktop: brand solda, nav sağda; kenarlara yakın ama güvenli padding (edge-band)
- * - Mobile: eski sade görünüm (affiliate mobile’a benzer) — container genişliği, kompakt paddingle
- * - Mobile menü açılınca <html> scroll kilitlenir; Esc / overlay tık kapatır
- * - Dil menüsü: dışarı tık/Esc ile kapanır
  */
 
 const translations = {
@@ -54,6 +46,7 @@ const LANGS = [
   { code: "en", short: "EN" },
 ];
 
+/* ——— Flags ——— */
 function FlagTR({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
@@ -67,7 +60,6 @@ function FlagTR({ className = "w-4 h-3" }) {
     </svg>
   );
 }
-
 function FlagUS({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
@@ -82,35 +74,18 @@ function FlagUS({ className = "w-4 h-3" }) {
     </svg>
   );
 }
-
 const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
 
-export default function PublicLayout({ children }) {
-  const { locale, setLocale, persistLocale, ready } = useLocale();
-
-  const [isMobile, setIsMobile] = useState(false);
-  const [currentPath, setCurrentPath] = useState("/");
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [mobileLangOpen, setMobileLangOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
-  const langRef = useRef(null);
-
-  // viewport & initial path
+/* ——— SPA path watcher ——— */
+function usePathnameSafe() {
+  const [path, setPath] = useState("/");
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    setCurrentPath(window.location?.pathname || "/");
-    return () => window.removeEventListener("resize", check);
-  }, []);
-
-  // SPA navigation watcher (pushState/replaceState patch)
-  useEffect(() => {
-    const onLocChange = () => {
+    const update = () => {
       try {
-        setCurrentPath(window.location.pathname || "/");
+        setPath(window.location.pathname || "/");
       } catch {}
     };
+    update();
 
     const patch = (type) => {
       try {
@@ -132,13 +107,41 @@ export default function PublicLayout({ children }) {
       history.replaceState = patch("replaceState");
     } catch {}
 
-    window.addEventListener("popstate", onLocChange);
-    window.addEventListener("locationchange", onLocChange);
+    window.addEventListener("popstate", update);
+    window.addEventListener("locationchange", update);
     return () => {
-      window.removeEventListener("popstate", onLocChange);
-      window.removeEventListener("locationchange", onLocChange);
+      window.removeEventListener("popstate", update);
+      window.removeEventListener("locationchange", update);
     };
   }, []);
+  return path;
+}
+
+export default function PublicLayout({ children }) {
+  const { locale, setLocale, persistLocale, ready } = useLocale();
+
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileLangOpen, setMobileLangOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false); // desktop language
+  const langRef = useRef(null);
+
+  const currentPath = usePathnameSafe();
+
+  // viewport
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  // path değişince panelleri kapat
+  useEffect(() => {
+    setMobileOpen(false);
+    setMobileLangOpen(false);
+    setLangOpen(false);
+  }, [currentPath]);
 
   // outside click & Esc
   useEffect(() => {
@@ -161,16 +164,6 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // lock <html> scroll when mobile panel open
-  useEffect(() => {
-    if (!mobileOpen) return;
-    const prev = document.documentElement.style.overflow;
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.documentElement.style.overflow = prev;
-    };
-  }, [mobileOpen]);
-
   if (!ready) return null;
 
   const dict = translations[locale] || translations.en;
@@ -186,23 +179,22 @@ export default function PublicLayout({ children }) {
     { href: "/login", label: t("login") },
     { href: "/register", label: t("register") },
   ];
-
+  const isActive = (href) => currentPath === href;
   const linkClassDesktop = (href) =>
-    `transition inline-block hover:text-[#81d742] ${
-      currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
+    `inline-block transition hover:text-[#81d742] ${
+      isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-200"
     }`;
 
   return (
     <div className="public-shell">
-      {/* HEADER (desktop kenarlara yakın; edge-band) */}
+      {/* HEADER — affiliate ile aynı edge-band */}
       <header className="public-header relative z-[1000]">
         <div className="edge-band h-full flex items-center justify-between">
-          {/* brand left */}
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
-          {/* Desktop nav right */}
+          {/* Desktop nav */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -212,16 +204,18 @@ export default function PublicLayout({ children }) {
                       href={item.href}
                       className={linkClassDesktop(item.href)}
                       prefetch={false}
-                      aria-current={currentPath === item.href ? "page" : undefined}
+                      aria-current={isActive(item.href) ? "page" : undefined}
                     >
                       {item.label}
                     </Link>
                   </li>
                 ))}
+
+                {/* Desktop language (bayraklı) */}
                 <li className="ml-2 relative" ref={langRef}>
                   <button
                     type="button"
-                    className="px-2 py-1 rounded transition flex items-center gap-1 text-gray-200 hover:text-[#b0f7a2]"
+                    className="px-2 py-1 rounded transition flex items-center gap-2 text-gray-200 hover:text-[#b0f7a2]"
                     aria-label="Change language"
                     aria-haspopup="menu"
                     aria-expanded={langOpen}
@@ -229,8 +223,10 @@ export default function PublicLayout({ children }) {
                     style={{ outline: "none" }}
                   >
                     <Globe size={18} />
+                    <span className="hidden sm:inline-block">{activeLang.short}</span>
                     <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} />
                   </button>
+
                   {langOpen && (
                     <div
                       role="menu"
@@ -266,10 +262,7 @@ export default function PublicLayout({ children }) {
             </nav>
           ) : (
             <button
-              onClick={() => {
-                setMobileOpen((s) => !s);
-                if (mobileLangOpen) setMobileLangOpen(false);
-              }}
+              onClick={() => setMobileOpen((s) => !s)}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
@@ -280,117 +273,99 @@ export default function PublicLayout({ children }) {
           )}
         </div>
 
-        {/* MOBILE OVERLAY NAV — eski sade (container, compact padding) */}
+        {/* MOBILE panel — header altında, edge-band, BORDER YOK (ince çizgi kaldırıldı) */}
         {isMobile && mobileOpen && (
-          <>
-            <button
-              aria-label="Close menu"
-              onClick={() => {
-                setMobileOpen(false);
-                setMobileLangOpen(false);
-              }}
-              className="fixed inset-0 bg-black/50 backdrop-blur-[1px] z-[998]"
-              type="button"
-            />
-            <div
-              role="dialog"
-              aria-modal="true"
-              className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)] allow-inner-scroll"
-              style={{ top: "var(--public-header-h)" }}
-            >
-              <div className="container py-2 text-sm">
-                <div className="flex items-center justify-between py-1">
-                  <span className="uppercase tracking-wide text-gray-400">{dict.language}</span>
-                  <button
-                    type="button"
-                    aria-label="Close menu"
-                    onClick={() => {
-                      setMobileOpen(false);
-                      setMobileLangOpen(false);
-                    }}
-                    className="p-2 text-gray-300 hover:text-white"
-                  >
-                    <X size={20} />
-                  </button>
+          <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
+            {/* nav links */}
+            {navLinks.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                prefetch={false}
+                onClick={() => setMobileOpen(false)}
+                className={`block py-2 transition ${
+                  isActive(l.href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
+                }`}
+                aria-current={isActive(l.href) ? "page" : undefined}
+              >
+                {l.label}
+              </Link>
+            ))}
+
+            {/* language (dokununca bayraklı TR/EN açılır) */}
+            <div className="mt-2 pt-2">
+              <button
+                type="button"
+                className="w-full flex items-center justify-between py-2 text-gray-300 hover:text-white transition"
+                onClick={() => setMobileLangOpen((s) => !s)}
+                aria-haspopup="menu"
+                aria-expanded={mobileLangOpen}
+                aria-label={dict.language}
+                style={{ outline: "none" }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Globe size={16} />
+                  <span className="uppercase tracking-wide">{dict.language}</span>
+                </span>
+                <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
+              </button>
+
+              {mobileLangOpen && (
+                <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-lg bg-[#101010]">
+                  {LANGS.map((l) => {
+                    const active = activeLang.code === l.code;
+                    return (
+                      <button
+                        key={l.code}
+                        type="button"
+                        onClick={() => setLangPersist(l.code)}
+                        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+                          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+                        }`}
+                        role="menuitem"
+                        aria-current={active ? "true" : "false"}
+                        style={{ outline: "none" }}
+                      >
+                        <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
+                        <span className="tracking-wide">{l.short}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-
-                {navLinks.map((l) => (
-                  <Link
-                    key={l.href}
-                    href={l.href}
-                    prefetch={false}
-                    className={`block py-2 transition ${
-                      currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
-                    }`}
-                    aria-current={currentPath === l.href ? "page" : undefined}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {l.label}
-                  </Link>
-                ))}
-
-                <button
-                  type="button"
-                  className="w-full mt-1 py-2 flex items-center justify-between text-gray-300 hover:text-white transition"
-                  onClick={() => setMobileLangOpen((s) => !s)}
-                  aria-haspopup="menu"
-                  aria-expanded={mobileLangOpen}
-                  aria-label={dict.language}
-                  style={{ outline: "none" }}
-                >
-                  <span className="flex items-center gap-2">
-                    <Globe size={16} />
-                    <span className="uppercase tracking-wide">{dict.language}</span>
-                  </span>
-                  <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
-                </button>
-
-                {mobileLangOpen && (
-                  <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-md border border-[#222] bg-[#101010]">
-                    {LANGS.map((l) => {
-                      const active = activeLang.code === l.code;
-                      return (
-                        <button
-                          key={l.code}
-                          type="button"
-                          onClick={() => {
-                            setLangPersist(l.code);
-                          }}
-                          className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-                            active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
-                          }`}
-                          role="menuitem"
-                          aria-current={active ? "true" : "false"}
-                          style={{ outline: "none" }}
-                        >
-                          <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
-                          <span className="tracking-wide">{l.short}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
-          </>
+          </div>
         )}
       </header>
 
       {/* MAIN */}
-      <main id="cabo-main" className="w-full mobile-untrap-scroll">
-        <div className="container py-8 sm:py-12">{children}</div>
+      <main id="cabo-main" className="bg-transparent">
+        <div className="container">{children}</div>
       </main>
 
-      {/* FOOTER */}
-      <footer className="cabo-public-footer">
-        <div className="edge-band">
-          <div className="merchant">
-            <span className="text-gray-400">{dict.merchantQ}</span>
-            <Link href="/merchant/login" prefetch={false}>
-              {dict.merchantAccess}
-            </Link>
+      {/* FOOTER — mobil kompakt, hizalama iyileştirildi; desktop aynı */}
+      <footer className="cabo-public-footer text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0">
+        <div className="edge-band py-2 md:py-3">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            {/* Merchant callout */}
+            <div className="merchant text-center md:text-left">
+              <span className="block md:inline text-[11px] md:text-xs text-gray-400">
+                {dict.merchantQ}
+              </span>
+              <Link
+                href="/merchant/login"
+                prefetch={false}
+                className="inline-block mt-1 md:mt-0 md:ml-2 text-[11px] md:text-xs px-2 py-1 rounded-full border border-[#2b2b2b] text-[#81d742] hover:opacity-90 transition"
+              >
+                {dict.merchantAccess}
+              </Link>
+            </div>
+
+            {/* Copyright */}
+            <div className="copy text-center md:text-right text-[10px] md:text-xs">
+              &copy; 2025 {dict.copyright}
+            </div>
           </div>
-          <div className="copy">&copy; 2025 {dict.copyright}</div>
         </div>
       </footer>
     </div>
