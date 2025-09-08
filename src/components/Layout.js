@@ -2,10 +2,10 @@
 
 /**
  * Clean layout (AFFILIATE/PRIVATE)
- * - Header: edge-to-edge band (brand left / nav right) — public ile birebir
+ * - Header: edge-to-edge band (brand left / nav right)
+ * - Mobile menü: header altında, ekran genişliğinde, her zaman içerik üstünde
  * - Main scroller değil
  * - Footer sticky ve edge-band ile ortalı
- * - Mobile menü + profil dropdown korunur
  */
 
 import Link from "next/link";
@@ -23,6 +23,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 
 const FOOTER_H = 56;
 
+/* ---- SPA-safe pathname ---- */
 function usePathnameSafe() {
   const [path, setPath] = useState("");
   useEffect(() => {
@@ -62,7 +63,21 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
+  // Sayfa değiştikçe panelleri kapat
   useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [pathname]);
+
+  // ESC ile kapat + mobil menü açıkken scroll kilidi
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { setMobileOpen(false); setProfileOpen(false); } };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    return () => { document.documentElement.style.overflow = prev; };
+  }, [mobileOpen]);
 
   const hasAnyUser = !!(user && (user.id || user.userId || user.name || user.email));
   const showProfileDropdown = mounted && hasAnyUser && ready;
@@ -100,8 +115,8 @@ export default function Layout({ children }) {
 
   return (
     <div className="app-shell">
-      {/* HEADER — public ile aynı bant ve pedler */}
-      <header className="app-header relative z-[1000]">
+      {/* HEADER — relative + yüksek z-index (mobil panel bunun içinde absolute çizilecek) */}
+      <header className="app-header relative z-[2000]">
         <div className="edge-band h-full flex items-center justify-between">
           <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
             Cabo
@@ -170,85 +185,96 @@ export default function Layout({ children }) {
           )}
         </div>
 
-        {/* MOBILE panel */}
+        {/* MOBILE panel — header içinde ABSOLUTE + yüksek z-index + BORDER YOK */}
         {isMobile && mobileOpen && (
-          <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
-            {mobileLinks.map(({ href, icon, label }) => (
-              <Link
-                key={href}
-                href={href}
-                prefetch={false}
-                onClick={() => setMobileOpen(false)}
-                className={`block py-2 transition ${isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
-              >
-                <span className="inline-flex items-center gap-2">{icon}<span>{label}</span></span>
-              </Link>
-            ))}
+          <>
+            {/* İsteğe bağlı saydam overlay: panel dışına tık kapatsın ve altı tıklanmasın */}
+            <button
+              type="button"
+              aria-label="Close menu"
+              onClick={() => { setMobileOpen(false); setProfileOpen(false); }}
+              className="fixed inset-0 z-[1999] bg-black/0"
+            />
+            <div className="absolute left-0 right-0 top-full z-[2001]">
+              <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll shadow-[0_12px_32px_rgba(0,0,0,.45)]">
+                {mobileLinks.map(({ href, icon, label }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    prefetch={false}
+                    onClick={() => setMobileOpen(false)}
+                    className={`block py-2 transition ${isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
+                  >
+                    <span className="inline-flex items-center gap-2">{icon}<span>{label}</span></span>
+                  </Link>
+                ))}
 
-            <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
-              <button
-                className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
-                style={{ minHeight: 40 }}
-                onClick={() => setProfileOpen((v) => !v)}
-                aria-haspopup="true"
-                aria-expanded={profileOpen}
-                aria-label={t("profile")}
-                type="button"
-              >
-                <span className="relative">
-                  <User2 size={18} />
-                  <NotificationBadge show={hasUnread} size={9} offsetX={-5} offsetY={-5} />
-                </span>
-                <span className="truncate w-full">{user?.name || t("profile")}</span>
-                <svg width="14" height="14" className="ml-1 align-middle relative top-[1px]">
-                  <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
-                </svg>
-              </button>
-
-              {profileOpen && (
-                <div className="w-full mt-1 rounded-lg border border-[#232323] bg-[#191919] shadow-xl allow-inner-scroll">
-                  <Link
-                    href="/notifications"
-                    prefetch={false}
-                    className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                    onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
-                  >
-                    <span className="relative inline-flex items-center">
-                      <Bell size={16} />
-                      <NotificationBadge show={hasUnread} size={9} />
-                    </span>
-                    {t("notifications")}
-                  </Link>
-                  <Link
-                    href="/settings"
-                    prefetch={false}
-                    className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                    onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
-                  >
-                    <Settings size={16} /> {t("settings")}
-                  </Link>
-                  <Link
-                    href="/support"
-                    prefetch={false}
-                    className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                    onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
-                  >
-                    <Headset size={16} /> {t("support")}
-                  </Link>
-                  <div className="border-t border-[#232323]" />
+                <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
                   <button
-                    onClick={() => { setProfileOpen(false); setMobileOpen(false); handleLogout(); }}
-                    className="flex items-center gap-3 px-4 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff6666] transition w-full"
-                    style={{ background: "transparent", outline: "none" }}
+                    className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
+                    style={{ minHeight: 40 }}
+                    onClick={() => setProfileOpen((v) => !v)}
+                    aria-haspopup="true"
+                    aria-expanded={profileOpen}
+                    aria-label={t("profile")}
                     type="button"
                   >
-                    <LogOut size={16} />
-                    <span>{t("logout")}</span>
+                    <span className="relative">
+                      <User2 size={18} />
+                      <NotificationBadge show={hasUnread} size={9} offsetX={-5} offsetY={-5} />
+                    </span>
+                    <span className="truncate w-full">{user?.name || t("profile")}</span>
+                    <svg width="14" height="14" className="ml-1 align-middle relative top-[1px]">
+                      <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
+                    </svg>
                   </button>
+
+                  {profileOpen && (
+                    <div className="w-full mt-1 rounded-lg border border-[#232323] bg-[#191919] shadow-xl allow-inner-scroll">
+                      <Link
+                        href="/notifications"
+                        prefetch={false}
+                        className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                        onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      >
+                        <span className="relative inline-flex items-center">
+                          <Bell size={16} />
+                          <NotificationBadge show={hasUnread} size={9} />
+                        </span>
+                        {t("notifications")}
+                      </Link>
+                      <Link
+                        href="/settings"
+                        prefetch={false}
+                        className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                        onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      >
+                        <Settings size={16} /> {t("settings")}
+                      </Link>
+                      <Link
+                        href="/support"
+                        prefetch={false}
+                        className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
+                        onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      >
+                        <Headset size={16} /> {t("support")}
+                      </Link>
+                      <div className="border-t border-[#232323]" />
+                      <button
+                        onClick={() => { setProfileOpen(false); setMobileOpen(false); handleLogout(); }}
+                        className="flex items-center gap-3 px-4 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff6666] transition w-full"
+                        style={{ background: "transparent", outline: "none" }}
+                        type="button"
+                      >
+                        <LogOut size={16} />
+                        <span>{t("logout")}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </header>
 
