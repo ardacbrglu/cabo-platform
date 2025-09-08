@@ -6,10 +6,24 @@ import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
 
 /**
+ * ──────────────────────────────────────────────────────────────────────────────
+ * Security Docblock (Cabo PROD)
+ * - Client-only UI bileşeni; gizli anahtar/credential barındırmaz.
+ * - Auth/authorization kararı vermez; yalnızca navigation ve dil seçimi UI’sı.
+ * - XSS: Metinler sabit sözlükten gelir; kullanıcı girdisi render edilmez.
+ * - Navigation: Next <Link> (prefetch=false); dış alan adlarına yönlendirme yok.
+ * - UX: Mobil menü açıkken <html> scroll kilitlenir; Esc/outside-click kapanır.
+ * - Performans: Dinleyiciler mount/unmount’ta düzgün eklenip kaldırılır.
+ * - Stil: Mevcut UI/stil korunur; DOM’a inline script enjekte edilmez.
+ * ──────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
  * PublicLayout
- * - Desktop: edge-band header (brand left / nav right)
- * - Mobile: eski (affiliate benzeri) panel — header altında açılan, container içerikli
- * - Mobile menü açıkken <html> scroll kilitlenir; Esc/outside-click kapatır
+ * - Desktop: brand solda, nav sağda; kenarlara yakın ama güvenli padding (edge-band)
+ * - Mobile: eski sade görünüm (affiliate mobile’a benzer) — container genişliği, kompakt paddingle
+ * - Mobile menü açılınca <html> scroll kilitlenir; Esc / overlay tık kapatır
+ * - Dil menüsü: dışarı tık/Esc ile kapanır
  */
 
 const translations = {
@@ -46,20 +60,29 @@ function FlagTR({ className = "w-4 h-3" }) {
       <rect width="18" height="12" fill="#E30A17" />
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
-      <polygon fill="#fff" points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22" />
+      <polygon
+        fill="#fff"
+        points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
+      />
     </svg>
   );
 }
+
 function FlagUS({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="19" height="12" fill="#B22234" />
-      {[1, 3, 5, 7, 9, 11].map((y) => <rect key={y} x="0" y={y} width="19" height="1" fill="#fff" />)}
+      {[1, 3, 5, 7, 9, 11].map((y) => (
+        <rect key={y} x="0" y={y} width="19" height="1" fill="#fff" />
+      ))}
       <rect x="0" y="0" width="8" height="7" fill="#3C3B6E" />
-      {[1.2, 3.6, 2.4, 4.8].map((x, i) => <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />)}
+      {[1.2, 3.6, 2.4, 4.8].map((x, i) => (
+        <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />
+      ))}
     </svg>
   );
 }
+
 const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
 
 export default function PublicLayout({ children }) {
@@ -81,18 +104,34 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // SPA navigation watcher
+  // SPA navigation watcher (pushState/replaceState patch)
   useEffect(() => {
-    const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
-    const patch = (type) => {
-      const orig = history[type];
-      return function (...args) {
-        const ret = orig.apply(this, args);
-        try { window.dispatchEvent(new Event("locationchange")); } catch {}
-        return ret;
-      };
+    const onLocChange = () => {
+      try {
+        setCurrentPath(window.location.pathname || "/");
+      } catch {}
     };
-    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
+
+    const patch = (type) => {
+      try {
+        const orig = history[type];
+        return function (...args) {
+          const ret = orig.apply(history, args);
+          try {
+            window.dispatchEvent(new Event("locationchange"));
+          } catch {}
+          return ret;
+        };
+      } catch {
+        return (..._args) => {};
+      }
+    };
+
+    try {
+      history.pushState = patch("pushState");
+      history.replaceState = patch("replaceState");
+    } catch {}
+
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -103,8 +142,17 @@ export default function PublicLayout({ children }) {
 
   // outside click & Esc
   useEffect(() => {
-    const onDocClick = (e) => { if (!langRef.current) return; if (!langRef.current.contains(e.target)) setLangOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") { setLangOpen(false); setMobileLangOpen(false); setMobileOpen(false); } };
+    const onDocClick = (e) => {
+      if (!langRef.current) return;
+      if (!langRef.current.contains(e.target)) setLangOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        setLangOpen(false);
+        setMobileLangOpen(false);
+        setMobileOpen(false);
+      }
+    };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -113,20 +161,22 @@ export default function PublicLayout({ children }) {
     };
   }, []);
 
-  // lock scroll when mobile panel open
+  // lock <html> scroll when mobile panel open
   useEffect(() => {
     if (!mobileOpen) return;
     const prev = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
-    return () => { document.documentElement.style.overflow = prev; };
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
   }, [mobileOpen]);
 
   if (!ready) return null;
 
   const dict = translations[locale] || translations.en;
-  const t = (k) => dict[k] || k;
+  const t = (k) => dict[k] || String(k);
 
-  const activeLangCode = (String(locale).toLowerCase().startsWith("tr") ? "tr" : "en");
+  const activeLangCode = String(locale).toLowerCase().startsWith("tr") ? "tr" : "en";
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
   const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
 
@@ -138,17 +188,21 @@ export default function PublicLayout({ children }) {
   ];
 
   const linkClassDesktop = (href) =>
-    `transition inline-block hover:text-[#81d742] ${currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"}`;
+    `transition inline-block hover:text-[#81d742] ${
+      currentPath === href ? "text-[#81d742] font-semibold" : "text-gray-200"
+    }`;
 
   return (
     <div className="public-shell">
-      {/* HEADER — edge band (desktop düzeni bozulmadan) */}
+      {/* HEADER (desktop kenarlara yakın; edge-band) */}
       <header className="public-header relative z-[1000]">
         <div className="edge-band h-full flex items-center justify-between">
+          {/* brand left */}
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
+          {/* Desktop nav right */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -189,7 +243,10 @@ export default function PublicLayout({ children }) {
                           <button
                             key={l.code}
                             type="button"
-                            onClick={() => { setLangPersist(l.code); setLangOpen(false); }}
+                            onClick={() => {
+                              setLangPersist(l.code);
+                              setLangOpen(false);
+                            }}
                             className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
                               active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
                             }`}
@@ -209,7 +266,10 @@ export default function PublicLayout({ children }) {
             </nav>
           ) : (
             <button
-              onClick={() => { setMobileOpen((s) => !s); if (mobileLangOpen) setMobileLangOpen(false); }}
+              onClick={() => {
+                setMobileOpen((s) => !s);
+                if (mobileLangOpen) setMobileLangOpen(false);
+              }}
               className="text-white"
               type="button"
               aria-label="Toggle menu"
@@ -220,19 +280,22 @@ export default function PublicLayout({ children }) {
           )}
         </div>
 
-        {/* MOBILE PANEL — eski/affiliate benzeri: header altında açılan, container içerikli */}
+        {/* MOBILE OVERLAY NAV — eski sade (container, compact padding) */}
         {isMobile && mobileOpen && (
           <>
             <button
               aria-label="Close menu"
-              onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+              onClick={() => {
+                setMobileOpen(false);
+                setMobileLangOpen(false);
+              }}
               className="fixed inset-0 bg-black/50 backdrop-blur-[1px] z-[998]"
               type="button"
             />
             <div
               role="dialog"
               aria-modal="true"
-              className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)]"
+              className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)] allow-inner-scroll"
               style={{ top: "var(--public-header-h)" }}
             >
               <div className="container py-2 text-sm">
@@ -241,7 +304,10 @@ export default function PublicLayout({ children }) {
                   <button
                     type="button"
                     aria-label="Close menu"
-                    onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+                    onClick={() => {
+                      setMobileOpen(false);
+                      setMobileLangOpen(false);
+                    }}
                     className="p-2 text-gray-300 hover:text-white"
                   >
                     <X size={20} />
@@ -253,7 +319,9 @@ export default function PublicLayout({ children }) {
                     key={l.href}
                     href={l.href}
                     prefetch={false}
-                    className={`block py-2 transition ${currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
+                    className={`block py-2 transition ${
+                      currentPath === l.href ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
+                    }`}
                     aria-current={currentPath === l.href ? "page" : undefined}
                     onClick={() => setMobileOpen(false)}
                   >
@@ -285,7 +353,9 @@ export default function PublicLayout({ children }) {
                         <button
                           key={l.code}
                           type="button"
-                          onClick={() => { setLangPersist(l.code); }}
+                          onClick={() => {
+                            setLangPersist(l.code);
+                          }}
                           className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
                             active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
                           }`}
