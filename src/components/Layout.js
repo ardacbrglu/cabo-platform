@@ -2,10 +2,10 @@
 
 /**
  * Clean layout (AFFILIATE/PRIVATE)
- * - Header: edge-to-edge band (brand left / nav right)
- * - Mobile menü: header altında, ekran genişliğinde, her zaman içerik üstünde
+ * - Header: edge-to-edge band (brand left / nav right) — public ile birebir
  * - Main scroller değil
  * - Footer sticky ve edge-band ile ortalı
+ * - Mobile menü + profil dropdown korunur
  */
 
 import Link from "next/link";
@@ -23,7 +23,6 @@ import { useNotifications } from "@/hooks/useNotifications";
 
 const FOOTER_H = 56;
 
-/* ---- SPA-safe pathname ---- */
 function usePathnameSafe() {
   const [path, setPath] = useState("");
   useEffect(() => {
@@ -63,7 +62,7 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  // Sayfa değiştikçe panelleri kapat
+  // Sayfa değişince panelleri kapat
   useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [pathname]);
 
   // ESC ile kapat + mobil menü açıkken scroll kilidi
@@ -115,8 +114,8 @@ export default function Layout({ children }) {
 
   return (
     <div className="app-shell">
-      {/* HEADER — relative + yüksek z-index (mobil panel bunun içinde absolute çizilecek) */}
-      <header className="app-header relative z-[2000]">
+      {/* HEADER — relative + yüksek z-index; mobil panel bunun içinde absolute çizilir */}
+      <header className="app-header relative z-[5000]">
         <div className="edge-band h-full flex items-center justify-between">
           <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
             Cabo
@@ -185,18 +184,18 @@ export default function Layout({ children }) {
           )}
         </div>
 
-        {/* MOBILE panel — header içinde ABSOLUTE + yüksek z-index + BORDER YOK */}
+        {/* MOBILE panel — header içinde absolute; içerik üstünde kalır. Stil aynı, border yok. */}
         {isMobile && mobileOpen && (
           <>
-            {/* İsteğe bağlı saydam overlay: panel dışına tık kapatsın ve altı tıklanmasın */}
+            {/* Şeffaf overlay: dışa tıkla kapansın, alt içerik tıklanmasın */}
             <button
               type="button"
               aria-label="Close menu"
               onClick={() => { setMobileOpen(false); setProfileOpen(false); }}
-              className="fixed inset-0 z-[1999] bg-black/0"
+              className="fixed inset-0 z-[4999] bg-transparent"
             />
-            <div className="absolute left-0 right-0 top-full z-[2001]">
-              <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll shadow-[0_12px_32px_rgba(0,0,0,.45)]">
+            <div className="absolute left-0 right-0 top-full z-[5001]" role="dialog" aria-modal="true">
+              <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
                 {mobileLinks.map(({ href, icon, label }) => (
                   <Link
                     key={href}
