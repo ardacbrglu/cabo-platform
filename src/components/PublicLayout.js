@@ -6,10 +6,10 @@ import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight, X } from "lucide-react";
 
 /**
- * PublicLayout (client-only)
- * - Header/footer share the same edge-to-edge band with safe padding
- * - Brand left / nav right like affiliate header
- * - Mobile menu locks <html> scroll; Esc/outside-click closes dropdowns
+ * PublicLayout
+ * - Desktop: edge-band header (brand left / nav right)
+ * - Mobile: eski (affiliate benzeri) panel — header altında açılan, container içerikli
+ * - Mobile menü açıkken <html> scroll kilitlenir; Esc/outside-click kapatır
  */
 
 const translations = {
@@ -72,6 +72,7 @@ export default function PublicLayout({ children }) {
   const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef(null);
 
+  // viewport & initial path
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -80,7 +81,7 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // watch SPA navigation (history patch)
+  // SPA navigation watcher
   useEffect(() => {
     const onLocChange = () => { try { setCurrentPath(window.location.pathname || "/"); } catch {} };
     const patch = (type) => {
@@ -91,10 +92,7 @@ export default function PublicLayout({ children }) {
         return ret;
       };
     };
-    try {
-      history.pushState = patch("pushState");
-      history.replaceState = patch("replaceState");
-    } catch {}
+    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
     window.addEventListener("popstate", onLocChange);
     window.addEventListener("locationchange", onLocChange);
     return () => {
@@ -144,15 +142,13 @@ export default function PublicLayout({ children }) {
 
   return (
     <div className="public-shell">
-      {/* HEADER (edge band) */}
+      {/* HEADER — edge band (desktop düzeni bozulmadan) */}
       <header className="public-header relative z-[1000]">
         <div className="edge-band h-full flex items-center justify-between">
-          {/* brand left */}
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
           </Link>
 
-          {/* Desktop nav right */}
           {!isMobile ? (
             <nav aria-label="Public navigation" className="relative">
               <ul className="flex gap-7 text-sm font-medium items-center">
@@ -224,7 +220,7 @@ export default function PublicLayout({ children }) {
           )}
         </div>
 
-        {/* MOBILE OVERLAY NAV */}
+        {/* MOBILE PANEL — eski/affiliate benzeri: header altında açılan, container içerikli */}
         {isMobile && mobileOpen && (
           <>
             <button
@@ -239,7 +235,7 @@ export default function PublicLayout({ children }) {
               className="fixed inset-x-0 bg-[#111] border-t border-[#1b1b1b] z-[999] shadow-[0_12px_32px_rgba(0,0,0,.5)]"
               style={{ top: "var(--public-header-h)" }}
             >
-              <div className="edge-band py-2 text-sm">
+              <div className="container py-2 text-sm">
                 <div className="flex items-center justify-between py-1">
                   <span className="uppercase tracking-wide text-gray-400">{dict.language}</span>
                   <button
@@ -315,7 +311,7 @@ export default function PublicLayout({ children }) {
         <div className="container py-8 sm:py-12">{children}</div>
       </main>
 
-      {/* FOOTER (edge band + comfy bottom padding) */}
+      {/* FOOTER */}
       <footer className="cabo-public-footer">
         <div className="edge-band">
           <div className="merchant">
