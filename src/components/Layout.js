@@ -5,7 +5,7 @@
  * - Header: edge-to-edge band (brand left / nav right) — public ile birebir
  * - Main scroller değil
  * - Footer sticky ve edge-band ile ortalı
- * - Mobile menü + profil dropdown korunur
+ * - Mobile menü: ekran genişliğinde panel + overlay; profile dropdown aynı genişlikte
  */
 
 import Link from "next/link";
@@ -62,7 +62,7 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  // Sayfa değişince panelleri kapat
+  // sayfa değişince panel/dp kapansın
   useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [pathname]);
 
   // ESC ile kapat + mobil menü açıkken scroll kilidi
@@ -114,7 +114,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="app-shell">
-      {/* HEADER — relative + yüksek z-index; mobil panel bunun içinde absolute çizilir */}
+      {/* HEADER — mobile panel bu elemanın içinde full-width olarak açılır */}
       <header className="app-header relative z-[5000]">
         <div className="edge-band h-full flex items-center justify-between">
           <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
@@ -184,16 +184,17 @@ export default function Layout({ children }) {
           )}
         </div>
 
-        {/* MOBILE panel — header içinde absolute; içerik üstünde kalır. Stil aynı, border yok. */}
+        {/* MOBILE: full-width panel + overlay (public layout ile aynı davranış) */}
         {isMobile && mobileOpen && (
           <>
-            {/* Şeffaf overlay: dışa tıkla kapansın, alt içerik tıklanmasın */}
+            {/* Overlay: dışa tıkla kapansın, alt içerik etkileşimi bloklanır */}
             <button
               type="button"
               aria-label="Close menu"
               onClick={() => { setMobileOpen(false); setProfileOpen(false); }}
-              className="fixed inset-0 z-[4999] bg-transparent"
+              className="fixed inset-0 z-[4999] bg-black/0"
             />
+            {/* Panel: header’ın altından tüm genişlikte açılır */}
             <div className="absolute left-0 right-0 top-full z-[5001]" role="dialog" aria-modal="true">
               <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
                 {mobileLinks.map(({ href, icon, label }) => (
@@ -208,6 +209,7 @@ export default function Layout({ children }) {
                   </Link>
                 ))}
 
+                {/* Profile accordion: panel ile aynı genişlikte */}
                 <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
                   <button
                     className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"

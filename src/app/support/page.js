@@ -6,7 +6,7 @@ import { useUser } from "@/context/UserContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useState, useRef } from "react";
 import Captcha from "@/components/Captcha";
-import { apiFetch } from "@/lib/apiFetch"; // <-- named import
+import { apiFetch } from "@/lib/apiFetch";
 
 export default function SupportPage() {
   const { user } = useUser();
@@ -17,7 +17,7 @@ export default function SupportPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [captchaToken, setCaptchaToken] = useState(null);
-  const [captchaKey, setCaptchaKey] = useState(0); // reset için remount
+  const [captchaKey, setCaptchaKey] = useState(0);
   const msgRef = useRef(null);
 
   const mapError = (codeOrMsg) => {
@@ -54,14 +54,12 @@ export default function SupportPage() {
       const res = await apiFetch("/api/support", {
         method: "POST",
         headers: {
-          // reCAPTCHA token header (server bunu okuyacak)
           "x-recaptcha-token": captchaToken,
           "accept-language": locale || "en",
         },
         body: { message: text },
       });
 
-      // özel 429/401 branch
       if (res.status === 429 || res.status === 401) {
         const data = await res.json().catch(() => ({}));
         setError(mapError(data?.error || res.statusText));
@@ -92,14 +90,16 @@ export default function SupportPage() {
 
   return (
     <Layout>
-      <main className="w-full flex flex-col items-center min-h-[80vh] px-2 py-8">
-        <div className="flex flex-col lg:flex-row items-start justify-center gap-6 w-full max-w-6xl mx-auto">
+      <main className="w-full flex flex-col items-center px-3 py-8">
+        {/* Tek sütun: tüm ekranlarda alt alta */}
+        <div className="w-full max-w-2xl mx-auto flex flex-col gap-8">
           {/* Contact Support */}
-          <div className="bg-[#181818] rounded-2xl shadow py-8 px-7 border border-[#222328]/70 flex-1 max-w-md min-w-[310px] mx-auto">
+          <section className="bg-[#181818] rounded-2xl shadow border border-[#222328]/70 p-6 sm:p-7">
             <div className="flex items-center gap-2 mb-3 text-[#81d742] font-extrabold text-lg">
               <Headset size={21} /> {t("contactSupport")}
             </div>
-            <div className="text-gray-300 font-mono text-xs mb-2">
+
+            <div className="text-gray-300 font-mono text-xs mb-3">
               {user?.name ? (
                 <>
                   {t("loggedInAs")}{" "}
@@ -111,7 +111,6 @@ export default function SupportPage() {
               )}
             </div>
 
-            {/* Flash messages */}
             {sent && (
               <div
                 ref={msgRef}
@@ -137,7 +136,7 @@ export default function SupportPage() {
                 {t("yourMessage")}
               </label>
               <textarea
-                className="bg-[#161616] border border-[#222] rounded px-4 py-2 mb-3 text-white w-full outline-none text-sm font-mono resize-none min-h-[80px] transition"
+                className="bg-[#161616] border border-[#222] rounded px-4 py-2 mb-3 text-white w-full outline-none text-sm font-mono resize-none min-h-[96px] transition"
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -146,12 +145,13 @@ export default function SupportPage() {
                 maxLength={900}
               />
 
-              {/* CAPTCHA */}
+              {/* Doğal (white) reCAPTCHA */}
               <Captcha
                 key={captchaKey}
                 onChange={setCaptchaToken}
-                lang={(user?.languagePreference || "en").toLowerCase()}
-                className="mb-3"
+                lang={(user?.languagePreference || locale || "en").toLowerCase()}
+                theme="light"                 // <-- beyaz tema
+                className="mb-4"
               />
 
               <button
@@ -162,10 +162,10 @@ export default function SupportPage() {
                 {sending ? t("sending") : t("send")}
               </button>
             </form>
-          </div>
+          </section>
 
-          {/* Contact Info Card */}
-          <div className="bg-[#181818] rounded-2xl shadow py-8 px-7 border border-[#222328]/70 flex-1 max-w-md min-w-[310px] mx-auto mt-8 lg:mt-0">
+          {/* Contact Info */}
+          <section className="bg-[#181818] rounded-2xl shadow border border-[#222328]/70 p-6 sm:p-7">
             <div className="flex items-center gap-2 mb-4 text-[#81d742] font-extrabold text-lg">
               <Mail size={21} /> {t("contactInfo")}
             </div>
@@ -183,17 +183,19 @@ export default function SupportPage() {
                 <span className="font-mono text-xs">@caboaff</span>
               </div>
             </div>
-          </div>
+          </section>
 
           {/* FAQ */}
-          <div className="bg-[#181818] rounded-2xl shadow py-8 px-7 border border-[#222328]/70 flex-1 max-w-md min-w-[310px] mx-auto mt-8 lg:mt-0">
+          <section className="bg-[#181818] rounded-2xl shadow border border-[#222328]/70 p-6 sm:p-7">
             <div className="flex items-center gap-2 mb-4 text-[#81d742] font-extrabold text-lg">
               <Info size={21} /> {t("faq")}
             </div>
-            {/* ... mevcut FAQ içeriğin ... */}
-          </div>
+            {/* burada SSS içeriklerini listeleyebilirsin */}
+          </section>
         </div>
       </main>
     </Layout>
   );
 }
+
+export const runtime = "nodejs";
