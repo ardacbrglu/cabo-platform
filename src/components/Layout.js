@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Clean layout (AFFILIATE/PRIVATE):
- * - Single grid shell (.app-shell)
- * - Header: edge-to-edge band (safe edge padding), brand left / nav right
- * - Main is not a scroller
- * - Footer is sticky, centered, same edge band
- * - Mobile menu + profile dropdown preserved
+ * Clean layout (AFFILIATE/PRIVATE)
+ * - Header: edge-to-edge band (brand left / nav right) — public ile birebir
+ * - Main scroller değil
+ * - Footer sticky ve edge-band ile ortalı
+ * - Mobile menü + profil dropdown korunur
  */
 
 import Link from "next/link";
@@ -101,16 +100,16 @@ export default function Layout({ children }) {
 
   return (
     <div className="app-shell">
-      {/* HEADER (edge band, brand left / nav right) */}
-      <header className="bg-[#111] border-b border-[#1b1b1b] shadow-sm">
-        <div className="edge-band h-[var(--header-h)] flex items-center justify-between">
+      {/* HEADER — public ile aynı bant ve pedler */}
+      <header className="app-header relative z-[1000]">
+        <div className="edge-band h-full flex items-center justify-between">
           <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
             Cabo
           </Link>
 
           {!isMobile ? (
             <nav aria-label="Main navigation">
-              <ul className="flex gap-8 text-sm font-medium items-center">
+              <ul className="flex gap-7 text-sm font-medium items-center">
                 <li>
                   <Link prefetch={false} href="/dashboard" className={navItemClass("/dashboard")} style={navItemStyle} aria-current={isActive("/dashboard") ? "page" : undefined}>
                     <HomeIcon size={22} /><span>{t("home")}</span>
@@ -171,7 +170,7 @@ export default function Layout({ children }) {
           )}
         </div>
 
-        {/* MOBILE panel (full width, edge band padding in content) */}
+        {/* MOBILE panel */}
         {isMobile && mobileOpen && (
           <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll border-t border-[#191919]">
             {mobileLinks.map(({ href, icon, label }) => (
@@ -253,12 +252,12 @@ export default function Layout({ children }) {
         )}
       </header>
 
-      {/* CONTENT — not a scroller */}
+      {/* CONTENT */}
       <main id="cabo-main" className="bg-transparent">
         <div className="container">{children}</div>
       </main>
 
-      {/* FOOTER (sticky, centered, same edge band) */}
+      {/* FOOTER */}
       <footer
         className="app-footer text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0"
         role="contentinfo"
