@@ -180,15 +180,15 @@ export default function RegisterPage() {
   const [termsHintVisible, setTermsHintVisible] = useState(false);
   const firstInvalidRef = useRef(null);
 
-  // Parola önerisini bastır: input readonly başlar, ilk etkileşimde kaldırılır
+  // Parola önerisini bastır
   const pwdRef = useRef(null);
   useEffect(() => {
     const el = pwdRef.current;
     if (!el) return;
     const enable = () => el.removeAttribute("readonly");
     el.setAttribute("readonly", "readonly");
-    el.setAttribute("data-lpignore", "true");   // LastPass
-    el.setAttribute("data-1p-ignore", "true");  // 1Password
+    el.setAttribute("data-lpignore", "true");
+    el.setAttribute("data-1p-ignore", "true");
     el.addEventListener("focus", enable, { once: true });
     el.addEventListener("pointerdown", enable, { once: true });
     return () => {
@@ -263,7 +263,6 @@ export default function RegisterPage() {
           termsAccepted: true,
           captcha,
         },
-        // kritik: otomatik redirect & retry kapalı
         noAuthRedirect: true,
         noRetry: true,
       });
@@ -313,7 +312,7 @@ export default function RegisterPage() {
         <form
           onSubmit={onSubmit}
           className="w-full max-w-md bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg p-8 flex flex-col gap-6 items-center"
-          autoComplete="off"   // Register'da otomatik doldurma/öneri kapalı
+          autoComplete="off"
           noValidate
         >
           <h3 className="text-3xl md:text-4xl font-bold text-center text-[#d1ffd0] mb-2">{t("title")}</h3>
@@ -328,7 +327,7 @@ export default function RegisterPage() {
               ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
               type="text"
               spellCheck={false}
-              autoComplete="off"                 // öneri kapalı
+              autoComplete="off"
               value={name}
               onChange={(e) => setName(e.target.value.replace(/[^A-Za-z0-9_]/g, ""))}
               placeholder={t("usernamePH")}
@@ -350,7 +349,7 @@ export default function RegisterPage() {
               ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
               type="email"
               spellCheck={false}
-              autoComplete="off"                 // öneri kapalı
+              autoComplete="off"
               value={email}
               onChange={(e) => setEmail(e.target.value.trimStart())}
               placeholder={t("emailPH")}
@@ -367,14 +366,14 @@ export default function RegisterPage() {
             </label>
             <input
               id="password"
-              name="new-password"                // tarayıcıya “yeni parola” olduğunu söyle
+              name="new-password"
               ref={(el) => {
                 if (needsRef("password")) firstInvalidRef.current = el;
                 pwdRef.current = el;
               }}
               type="password"
               inputMode="text"
-              autoComplete="new-password"       // güçlü parola önerisini tetiklemeyi azaltır
+              autoComplete="new-password"
               autoCorrect="off"
               spellCheck="false"
               placeholder={t("passwordPH")}
@@ -406,11 +405,17 @@ export default function RegisterPage() {
             className={`w-full ${captchaClientError ? "ring-2 ring-red-400 rounded-md p-2" : ""}`}
             aria-invalid={captchaClientError ? "true" : "false"}
           >
-            <Captcha
-              onChange={(val) => { setCaptcha(val || ""); }}
-              lang={locale}
-              resetKey={captchaResetKey}
-            />
+            {/* Sadece bu sayfada halo’yu tıraşlayan sarmalayıcı */}
+            <div className="recaptcha-smooth inline-block overflow-hidden rounded-md">
+              <div className="recaptcha-smooth-inner">
+                <Captcha
+                  onChange={(val) => { setCaptcha(val || ""); }}
+                  lang={locale}
+                  resetKey={captchaResetKey}
+                />
+              </div>
+            </div>
+
             {captchaClientError && (
               <p className="mt-2 text-sm text-red-400" role="alert" aria-live="assertive">
                 {captchaClientError}
@@ -476,6 +481,14 @@ export default function RegisterPage() {
         @media (max-width: 768px) {
           .cabo-mobile-top-space { margin-top: 1rem; }
           .cabo-mobile-bottom-space { margin-bottom: 3rem; }
+        }
+
+        /* Register'a özel: doğal reCAPTCHA'da görülen 1px beyaz halo’yu tıraşla */
+        .recaptcha-smooth .cabo-recaptcha-clip { overflow: hidden; border-radius: 10px; line-height: 0; }
+        .recaptcha-smooth-inner .cabo-recaptcha-box { display: inline-block; margin: -1px; }
+        /* Safari/hi-dpi için biraz daha */
+        @supports (-webkit-touch-callout:none){
+          .recaptcha-smooth-inner .cabo-recaptcha-box { margin: -1.5px; }
         }
       `}</style>
     </PublicLayout>
