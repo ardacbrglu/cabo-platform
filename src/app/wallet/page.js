@@ -8,11 +8,11 @@
  * - Mobile-only UI tweaks below DO NOT affect desktop layout.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "@/components/Layout";
 import {
   Wallet2, BarChart2, Lock, Banknote, Loader2, CheckCircle,
-  XCircle, X, ChevronLeft, ChevronRight, Pencil, Save, Trash2, FileText
+  XCircle, X, ChevronLeft, ChevronRight, Pencil, Save, Trash2, FileText, GripVertical
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
@@ -21,6 +21,19 @@ import { normalizeIban, isIbanTR } from "@/lib/iban";
 
 const COLOR_CABO = "#d1ffd0";
 const COLOR_GREEN = "#81d742";
+
+/* basit mobil tespiti (SSR-safe) */
+function useIsMobile() {
+  const [m, setM] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const fn = () => setM(mq.matches);
+    fn();
+    mq.addEventListener?.("change", fn);
+    return () => mq.removeEventListener?.("change", fn);
+  }, []);
+  return m;
+}
 
 /* 4’lü gruplama – sadece gösterim için */
 function formatIbanGroups(raw) {
@@ -33,15 +46,18 @@ function WalletProgress({ value, max }) {
   const percent = Math.min((value / Math.max(max, 0.0001)) * 100, 100);
   const radius = 46, stroke = 6, center = 60, circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - percent / 100);
+
   return (
-    <div className="relative w-[120px] h-[120px] flex items-center justify-center mb-2 select-none">
-      <svg width={120} height={120} className="absolute left-0 top-0 z-0">
+    <div className="relative shrink-0 w-[120px] h-[120px] flex items-center justify-center mb-2 select-none">
+      <svg width={120} height={120} className="absolute left-0 top-0 z-0 block">
         <circle cx={center} cy={center} r={radius} fill="none" stroke="#232323" strokeWidth={stroke} />
-        <circle cx={center} cy={center} r={radius} fill="none" stroke={COLOR_GREEN} strokeWidth={stroke}
+        <circle
+          cx={center} cy={center} r={radius} fill="none" stroke="#81d742" strokeWidth={stroke}
           strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 1s" }} />
+          style={{ transition: "stroke-dashoffset 1s" }}
+        />
       </svg>
-      <Wallet2 className="absolute" style={{ color: COLOR_CABO, width: 56, height: 56, left: "50%", top: "50%", transform: "translate(-50%, -50%)" }} />
+      <Wallet2 className="relative z-[1] pointer-events-none" style={{ color: "#d1ffd0", width: 56, height: 56, display: "block" }} />
     </div>
   );
 }
@@ -80,6 +96,7 @@ function exportToCSV(sales, date, t) {
 export default function WalletPage() {
   const { t } = useTranslation();
   const { user, setUser } = useUser();
+  const isMobile = useIsMobile();
 
   const [loading, setLoading] = useState(true);
   const [balance, setBalance] = useState(0);
@@ -101,7 +118,7 @@ export default function WalletPage() {
   const [payoutState, setPayoutState] = useState({ status: "", message: "" });
   const [activeRequestCount, setActiveRequestCount] = useState(0);
 
-  // Talep detay modalı (sadece snapshot’ı etkiler)
+  // detay modal
   const [detailsModal, setDetailsModal] = useState({
     open: false,
     sales: [],
@@ -136,10 +153,52 @@ export default function WalletPage() {
   const [ibanMissing, setIbanMissing] = useState(true);
   const [bankMissing, setBankMissing] = useState(true);
   const [realNameMissing, setRealNameMissing] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Ayrı loading’ler — UI jitter fix
+  const [isSavingBank, setIsSavingBank] = useState(false);
+  const [isPayoutSubmitting, setIsPayoutSubmitting] = useState(false);
 
   const PAGE_SIZE = 4;
   const [page, setPage] = useState(1);
+
+  /* ===== Desktop kart sürükle-bırak sırası ===== */
+  const DEFAULT_CARD_ORDER = ["balanceCard", "bankFormCard"];
+  const [cardOrder, setCardOrder] = useState(() => {
+    try {
+      const raw = localStorage.getItem("wallet.cardOrder");
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed) && parsed.every((k) => DEFAULT_CARD_ORDER.includes(k))) return parsed;
+    } catch {}
+    return [...DEFAULT_CARD_ORDER];
+  });
+  const dragFrom = useRef(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  const onCardDragStart = (id) => {
+    if (isMobile) return;
+    dragFrom.current = id;
+  };
+  const onCardDragOver = (e, overId) => {
+    if (isMobile) return;
+    e.preventDefault();
+    setDragOverId(overId);
+  };
+  const onCardDrop = (overId) => {
+    if (isMobile) return;
+    const from = dragFrom.current;
+    dragFrom.current = null;
+    setDragOverId(null);
+    if (!from || from === overId) return;
+    setCardOrder((arr) => {
+      const a = [...arr];
+      const i = a.indexOf(from);
+      const j = a.indexOf(overId);
+      if (i === -1 || j === -1) return a;
+      a.splice(j, 0, ...a.splice(i, 1));
+      try { localStorage.setItem("wallet.cardOrder", JSON.stringify(a)); } catch {}
+      return a;
+    });
+  };
 
   useEffect(() => {
     if (!user?.name) {
@@ -214,7 +273,7 @@ export default function WalletPage() {
       return;
     }
 
-    setIsSubmitting(true);
+    setIsSavingBank(true);
     try {
       const res = await apiFetch("/api/wallet", {
         method: "POST",
@@ -232,20 +291,22 @@ export default function WalletPage() {
     } catch {
       setIbanError(t("unknownError"));
     } finally {
-      setIsSubmitting(false);
+      setIsSavingBank(false);
     }
   }
 
   async function handleRequestPayout() {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
+    if (isPayoutSubmitting) return;
+    setIsPayoutSubmitting(true);
     setPayoutState({ status: "loading", message: "" });
     try {
       const res = await apiFetch("/api/wallet", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-idempotency-key": crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+          "x-idempotency-key": (typeof crypto !== "undefined" && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`
         },
         body: { requestPayout: true }, // USERS’daki son bankayı snapshotla
       });
@@ -259,16 +320,16 @@ export default function WalletPage() {
     } catch {
       setPayoutState({ status: "error", message: t("unknownError") });
     } finally {
-      setIsSubmitting(false);
+      setIsPayoutSubmitting(false);
       setTimeout(() => setPayoutState({ status: "", message: "" }), 2500);
     }
   }
 
   async function handleCancelRequest(requestId) {
-    if (isSubmitting) return;
+    if (isPayoutSubmitting) return;
     if (!window.confirm(t("cancelPayoutConfirm"))) return;
 
-    setIsSubmitting(true);
+    setIsPayoutSubmitting(true);
     setPayoutState({ status: "loading", message: "" });
     try {
       const res = await apiFetch("/api/wallet", {
@@ -286,7 +347,7 @@ export default function WalletPage() {
     } catch {
       setPayoutState({ status: "error", message: t("unknownError") });
     } finally {
-      setIsSubmitting(false);
+      setIsPayoutSubmitting(false);
       setTimeout(() => setPayoutState({ status: "", message: "" }), 2500);
     }
   }
@@ -405,7 +466,7 @@ export default function WalletPage() {
 
   const payoutDisabled =
     loading ||
-    isSubmitting ||
+    isPayoutSubmitting ||
     ibanMissing || bankMissing || realNameMissing ||
     confirmed < minPayout ||
     activeRequestCount >= 2;
@@ -436,169 +497,247 @@ export default function WalletPage() {
     </div>
   );
 
+  /* ==== Kart içerikleri ==== */
+  const renderBalanceCard = () => (
+    <div
+      data-id="balanceCard"
+      draggable={!isMobile}
+      onDragStart={() => onCardDragStart("balanceCard")}
+      onDragOver={(e) => onCardDragOver(e, "balanceCard")}
+      onDrop={() => onCardDrop("balanceCard")}
+      aria-grabbed="false"
+      className={[
+        "bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-8 flex flex-col items-center min-w-[240px] h-full",
+        "md:transition-transform md:duration-150 md:ease-out md:hover:-translate-y-0.5 md:hover:shadow-[0_10px_30px_rgba(0,0,0,.25)]",
+        dragOverId === "balanceCard" ? "ring-1 ring-[#2a2a2a]" : "",
+      ].join(" ")}
+      style={{ willChange: "transform" }}
+    >
+      {/* drag handle (desktop) */}
+      <div className="hidden md:flex w-full justify-end -mt-2 -mr-1">
+        <span className="inline-flex items-center gap-1 text-[10px] text-gray-500 px-1.5 py-0.5 rounded cursor-move select-none">
+          <GripVertical size={14} /> {t("drag") || "Taşı"}
+        </span>
+      </div>
+
+      {/* Başlık rengi diğer kartlarla aynı */}
+      <div className="font-extrabold text-xl sm:text-2xl mb-2 font-mono" style={{ color: COLOR_CABO }}>
+        {t("wallet")}
+      </div>
+      {loading ? <Loader2 className="animate-spin text-gray-400 my-7" size={44} /> : <WalletProgress value={confirmed} max={minPayout} />}
+      <div className="flex flex-col items-center mb-4">
+        <span className="font-mono text-gray-400 text-xs">{t("confirmedBalance")}</span>
+        <span className="text-xl sm:text-2xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>
+          ₺{f2(confirmed)}
+        </span>
+        <span className="text-xs text-gray-400 font-mono mb-1">({t("readyToWithdraw")})</span>
+      </div>
+      <div className="flex items-center gap-2 sm:gap-3 justify-center font-mono text-xs mb-2">
+        <span className="bg-[#222] rounded px-2 py-1 text-[#e3d67d] font-bold">
+          {t("pending")}: ₺{f2(pending)}
+        </span>
+        <span className="bg-[#232323] rounded px-2 py-1 text-[#81d742]">
+          {t("total")}: ₺{f2(balance)}
+        </span>
+      </div>
+      <div className="mb-1 text-xs font-mono">
+        <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
+        <span className="font-bold" style={{ color: COLOR_GREEN }}> ₺{minPayout}</span>
+      </div>
+      <div className="mb-3 text-[11px] font-mono text-[#e3d67d]">
+        {t("platformCommissionShort")}: %{platformCommissionPercent}
+      </div>
+      <div className="mt-2 text-xs font-bold animate-pulse font-mono text-center" style={{ color: confirmed < minPayout ? "#e3d67d" : COLOR_GREEN }}>
+        {confirmed < minPayout ? (
+          <>
+            {t("earnMoreToPayout")} <span style={{ color: COLOR_CABO }}>{f2(minPayout - confirmed)}₺</span>
+          </>
+        ) : (
+          <>{t("eligibleForPayout")}</>
+        )}
+      </div>
+
+      {/* Buton: her durumda merkezde, min-h sabit */}
+      <div className="w-full flex justify-center">
+        <button
+          className={[
+            "mt-4 w-[92%] sm:w-full max-w-[360px] min-h-[44px] rounded font-bold font-mono text-[#181818]",
+            payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition",
+            "text-base mb-1 inline-flex items-center justify-center gap-1 leading-tight",
+          ].join(" ")}
+          style={{ fontSize: "1.05rem" }}
+          disabled={payoutDisabled}
+          onClick={handleRequestPayout}
+          aria-disabled={payoutDisabled}
+          aria-live="polite"
+        >
+          {isPayoutSubmitting ? (
+            <Loader2 className="animate-spin" size={18} />
+          ) : payoutDisabled ? (
+            <>
+              <Lock size={18} />
+              <span className="text-center">
+                {disabledReason === "bank" && t("walletRequirements")}
+                {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
+                {disabledReason === "min" && t("minThresholdNotMet")}
+              </span>
+            </>
+          ) : (
+            <>
+              <Banknote size={18} /> {t("requestPayout")}
+            </>
+          )}
+        </button>
+      </div>
+
+      {!loading && payoutDisabled && disabledReason === "activeLimit" && (
+        <div className="text-[11px] text-yellow-300 font-mono mt-1 text-center">
+          {t("activeRequestLimitReached")}
+        </div>
+      )}
+
+      {payoutState.status === "success" && (
+        <div className="flex items-center gap-1 mt-2 text-green-400 text-xs font-bold font-mono" role="status" aria-live="polite">
+          <CheckCircle size={16} /> {payoutState.message}
+        </div>
+      )}
+      {payoutState.status === "error" && (
+        <div className="flex items-center gap-1 mt-2 text-red-400 text-xs font-bold font-mono" role="alert" aria-live="assertive">
+          <XCircle size={16} /> {payoutState.message}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderBankFormCard = () => (
+    <div
+      data-id="bankFormCard"
+      draggable={!isMobile}
+      onDragStart={() => onCardDragStart("bankFormCard")}
+      onDragOver={(e) => onCardDragOver(e, "bankFormCard")}
+      onDrop={() => onCardDrop("bankFormCard")}
+      aria-grabbed="false"
+      className={[
+        "bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-7 flex flex-col items-center min-w-[240px] h-full",
+        "md:transition-transform md:duration-150 md:ease-out md:hover:-translate-y-0.5 md:hover:shadow-[0_10px_30px_rgba(0,0,0,.25)]",
+        dragOverId === "bankFormCard" ? "ring-1 ring-[#2a2a2a]" : "",
+      ].join(" ")}
+      style={{ willChange: "transform" }}
+    >
+      {/* drag handle (desktop) */}
+      <div className="hidden md:flex w-full justify-end -mt-2 -mr-1">
+        <span className="inline-flex items-center gap-1 text-[10px] text-gray-500 px-1.5 py-0.5 rounded cursor-move select-none">
+          <GripVertical size={14} /> {t("drag") || "Taşı"}
+        </span>
+      </div>
+
+      <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
+        {t("paymentDetails")}
+      </div>
+
+      {showInlineWarn && <InlineWarn />}
+
+      <form className="w-full" onSubmit={handleIbanSave} noValidate>
+        <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("iban")}</label>
+        <input
+          type="text"
+          className={`bg-[#161616] border ${ibanError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono tracking-wider`}
+          placeholder="TR00 0000 0000 0000 0000 0000 00"
+          value={iban}
+          onChange={(e) => setIban(formatIbanGroups(e.target.value))}
+          onBlur={(e) => setIban(formatIbanGroups(e.target.value))}
+          onPaste={(e) => {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData)?.getData?.("text") || "";
+            setIban(formatIbanGroups(text));
+          }}
+          required
+          maxLength={34}
+          autoComplete="off"
+          inputMode="text"
+          aria-invalid={!!ibanError}
+        />
+        {ibanError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{ibanError}</div>}
+
+        <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("bankName")}</label>
+        <input
+          type="text"
+          className={`bg-[#161616] border ${bankError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
+          placeholder="Ziraat Bank, Garanti BBVA..."
+          value={bankName}
+          onChange={(e) => setBankName(e.target.value)}
+          required
+          maxLength={120}
+          autoComplete="off"
+          inputMode="text"
+          aria-invalid={!!bankError}
+        />
+        {bankError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{bankError}</div>}
+
+        <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("fullRealName")}</label>
+        <input
+          type="text"
+          className={`bg-[#161616] border ${realNameError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
+          placeholder={t("yourLegalName")}
+          value={realName}
+          onChange={(e) => setRealName(e.target.value)}
+          required
+          maxLength={120}
+          autoComplete="name"
+          inputMode="text"
+          aria-invalid={!!realNameError}
+        />
+        {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
+
+        {/* Kaydet butonu */}
+        <div className="w-full flex justify-center">
+          <button
+            type="submit"
+            disabled={isSavingBank}
+            className={`w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSavingBank ? "opacity-60 pointer-events-none" : ""}`}
+          >
+            {ibanSaved ? t("saved") : t("saveBankInfo")}
+          </button>
+        </div>
+      </form>
+      <div className="mt-3 text-[11px] sm:text-xs text-gray-400 font-mono text-center leading-snug">
+        {t("bankInfoNote")}
+      </div>
+    </div>
+  );
+
+  /* ====== Render ====== */
   return (
     <Layout>
-      {/* mobilde kenar boşluklarını artır: px-3; md ve üstü olduğu gibi */}
-      <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-center mt-5 gap-8 px-3 md:px-4">
-        <div className="flex flex-col md:flex-row gap-5 md:gap-8 w-full">
-          {/* Wallet Balance */}
-          <div className="bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-8 flex-1 flex flex-col items-center min-w-[240px]">
-            <div className="font-extrabold text-xl sm:text-2xl mb-2 font-mono" style={{ color: COLOR_GREEN }}>
-              {t("wallet")}
+      {/* daha ferah dikey boşluk (footer’a yapışma yok) */}
+      <main className="flex flex-col items-center w-full max-w-5xl mx-auto flex-1 justify-start py-8 md:py-10 gap-8 px-3 md:px-4">
+        {/* Desktop: grid → aynı yükseklikte kartlar */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-8 w-full items-stretch">
+          {cardOrder.map((k) => (
+            <div key={k} className="flex-1 min-w-[240px] h-full">
+              {k === "balanceCard" ? renderBalanceCard() : renderBankFormCard()}
             </div>
-            {loading ? <Loader2 className="animate-spin text-gray-400 my-7" size={44} /> : <WalletProgress value={confirmed} max={minPayout} />}
-            <div className="flex flex-col items-center mb-4">
-              <span className="font-mono text-gray-400 text-xs">{t("confirmedBalance")}</span>
-              <span className="text-xl sm:text-2xl font-extrabold font-mono" style={{ color: COLOR_CABO }}>
-                ₺{f2(confirmed)}
-              </span>
-              <span className="text-xs text-gray-400 font-mono mb-1">({t("readyToWithdraw")})</span>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3 justify-center font-mono text-xs mb-2">
-              <span className="bg-[#222] rounded px-2 py-1 text-[#e3d67d] font-bold">
-                {t("pending")}: ₺{f2(pending)}
-              </span>
-              <span className="bg-[#232323] rounded px-2 py-1 text-[#81d742]">
-                {t("total")}: ₺{f2(balance)}
-              </span>
-            </div>
-            <div className="mb-1 text-xs font-mono">
-              <span style={{ color: "#81d742" }}>{t("minPayout")}:</span>
-              <span className="font-bold" style={{ color: COLOR_GREEN }}> ₺{minPayout}</span>
-            </div>
-            <div className="mb-3 text-[11px] font-mono text-[#e3d67d]">
-              {t("platformCommissionShort")}: %{platformCommissionPercent}
-            </div>
-            <div className="mt-2 text-xs font-bold animate-pulse font-mono text-center" style={{ color: confirmed < minPayout ? "#e3d67d" : COLOR_GREEN }}>
-              {confirmed < minPayout ? (
-                <>
-                  {t("earnMoreToPayout")} <span style={{ color: COLOR_CABO }}>{f2(minPayout - confirmed)}₺</span>
-                </>
-              ) : (
-                <>{t("eligibleForPayout")}</>
-              )}
-            </div>
-
-            {/* MOBİL: buton tam ortalı ve simetrik */}
-            <div className="w-full flex justify-center">
-              <button
-                className={`mt-4 w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono text-[#181818] ${
-                  payoutDisabled ? "bg-[#323232] text-gray-500 cursor-not-allowed" : "bg-[#81d742] hover:bg-[#a9ff72] transition"
-                } text-base mb-1`}
-                style={{ fontSize: "1.05rem" }}
-                disabled={payoutDisabled}
-                onClick={handleRequestPayout}
-                aria-disabled={payoutDisabled}
-              >
-                {loading ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : payoutDisabled ? (
-                  <span className="flex items-center justify-center gap-1">
-                    <Lock size={17} className="mr-1" />
-                    {disabledReason === "bank" && t("walletRequirements")}
-                    {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
-                    {disabledReason === "min" && t("minThresholdNotMet")}
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center gap-1">
-                    <Banknote size={18} className="mr-1" /> {t("requestPayout")}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {payoutState.status === "success" && (
-              <div className="flex items-center gap-1 mt-2 text-green-400 text-xs font-bold font-mono">
-                <CheckCircle size={16} /> {payoutState.message}
-              </div>
-            )}
-            {payoutState.status === "error" && (
-              <div className="flex items-center gap-1 mt-2 text-red-400 text-xs font-bold font-mono">
-                <XCircle size={16} /> {payoutState.message}
-              </div>
-            )}
-          </div>
-
-          {/* IBAN / Bank Form (USERS) */}
-          <div className="bg-[#181818] rounded-xl shadow py-5 px-3 sm:py-7 sm:px-7 flex-1 flex flex-col items-center min-w-[240px]">
-            <div className="font-extrabold text-lg sm:text-xl font-mono mb-3" style={{ color: COLOR_CABO }}>
-              {t("paymentDetails")}
-            </div>
-
-            {showInlineWarn && <InlineWarn />}
-
-            <form className="w-full" onSubmit={handleIbanSave} noValidate>
-              <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("iban")}</label>
-              <input
-                type="text"
-                className={`bg-[#161616] border ${ibanError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono tracking-wider`}
-                placeholder="TR00 0000 0000 0000 0000 0000 00"
-                value={iban}
-                onChange={(e) => setIban(formatIbanGroups(e.target.value))}
-                onBlur={(e) => setIban(formatIbanGroups(e.target.value))}
-                onPaste={(e) => {
-                  e.preventDefault();
-                  const text = (e.clipboardData || window.clipboardData).getData("text");
-                  setIban(formatIbanGroups(text));
-                }}
-                required
-                maxLength={34}
-                autoComplete="off"
-                inputMode="text"
-                aria-invalid={!!ibanError}
-              />
-              {ibanError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{ibanError}</div>}
-
-              <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("bankName")}</label>
-              <input
-                type="text"
-                className={`bg-[#161616] border ${bankError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
-                placeholder="Ziraat Bank, Garanti BBVA..."
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
-                required
-                maxLength={120}
-                autoComplete="off"
-                inputMode="text"
-                aria-invalid={!!bankError}
-              />
-              {bankError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{bankError}</div>}
-
-              <label className="block text-xs font-bold text-[#d1ffd0] font-mono mb-1">{t("fullRealName")}</label>
-              <input
-                type="text"
-                className={`bg-[#161616] border ${realNameError ? "border-red-500" : "border-[#222]"} rounded px-4 py-2 mb-1 text-white w-full outline-none text-sm font-mono`}
-                placeholder={t("yourLegalName")}
-                value={realName}
-                onChange={(e) => setRealName(e.target.value)}
-                required
-                maxLength={120}
-                autoComplete="name"
-                inputMode="text"
-                aria-invalid={!!realNameError}
-              />
-              {realNameError && <div className="text-xs text-red-400 mb-1 font-mono" aria-live="assertive">{realNameError}</div>}
-
-              {/* MOBİL: kaydet butonu da tam ortalı ve simetrik */}
-              <div className="w-full flex justify-center">
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className={`w-[92%] sm:w-full max-w-[360px] py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition mt-2 ${isSubmitting ? "opacity-60 pointer-events-none" : ""}`}
-                >
-                  {ibanSaved ? t("saved") : t("saveBankInfo")}
-                </button>
-              </div>
-            </form>
-            <div className="mt-3 text-[11px] sm:text-xs text-gray-400 font-mono text-center leading-snug">
-              {t("bankInfoNote")}
-            </div>
-          </div>
+          ))}
         </div>
 
-        {/* Payout History */}
-        {/* ⬇️ Mobilde iç scroll'u kapattık; desktop'ta eski davranış devam */}
-        <div className="bg-[#181818] rounded-xl shadow py-6 px-3 sm:px-8 w-full mt-4 sm:max-h-[340px] sm:overflow-y-auto">
+        {/* Payout History — draggable (desktop), hover animasyonu (desktop) */}
+        <div
+          data-id="historyCard"
+          draggable={!isMobile}
+          className={[
+            "bg-[#181818] rounded-xl shadow py-6 px-3 sm:px-8 w-full mt-2 sm:max-h-[340px] sm:overflow-y-auto",
+            "md:transition-transform md:duration-150 md:ease-out md:hover:-translate-y-0.5 md:hover:shadow-[0_10px_30px_rgba(0,0,0,.25)]",
+          ].join(" ")}
+          onDragStart={() => onCardDragStart("historyCard")}
+          aria-grabbed="false"
+          style={{ willChange: "transform" }}
+        >
+          <div className="hidden md:flex w-full justify-end -mt-2 -mr-1">
+            <span className="inline-flex items-center gap-1 text-[10px] text-gray-500 px-1.5 py-0.5 rounded cursor-move select-none">
+              <GripVertical size={14} /> {t("drag") || "Taşı"}
+            </span>
+          </div>
+
           <div className="flex items-center gap-2 mb-4">
             <BarChart2 className="text-[#81d742]" size={19} />
             <span className="font-extrabold text-base font-mono" style={{ color: COLOR_CABO }}>
@@ -643,15 +782,16 @@ export default function WalletPage() {
                         </td>
                         <td className="py-2 px-2 md:px-3">
                           <span
-                            className={`inline-block align-middle font-bold px-1.5 py-0.5 rounded whitespace-nowrap leading-tight ${
+                            className={[
+                              "inline-block align-middle font-bold px-1.5 py-0.5 rounded whitespace-nowrap leading-tight",
                               item.status === "paid"
                                 ? "bg-green-900/60 text-[#81d742]"
                                 : item.status === "rejected"
                                 ? "bg-red-900/60 text-red-400"
                                 : item.status === "approved"
                                 ? "bg-blue-900/60 text-blue-300"
-                                : "bg-yellow-800/60 text-yellow-300"
-                            }`}
+                                : "bg-yellow-800/60 text-yellow-300",
+                            ].join(" ")}
                           >
                             {t(item.status)}
                           </span>
@@ -662,7 +802,7 @@ export default function WalletPage() {
                           )}
                           {item.status === "pending" && !item.canCancel && (
                             <span className="ml-2 text-yellow-400 text-[10px] font-mono hidden sm:inline">
-                              {(t("locked") || "Locked")}
+                              {t("locked") || "Locked"}
                             </span>
                           )}
                         </td>
@@ -673,7 +813,7 @@ export default function WalletPage() {
                             {item.status === "pending" && item.requestId && item.canCancel && (
                               <button
                                 onClick={() => handleCancelRequest(item.requestId)}
-                                disabled={isSubmitting}
+                                disabled={isPayoutSubmitting}
                                 className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-red-500 hover:bg-red-900/30 transition text-[11px] sm:text-xs font-mono disabled:opacity-50 w-[72px] sm:w-auto"
                                 title={t("cancel")}
                               >
@@ -738,7 +878,6 @@ export default function WalletPage() {
         {/* Details Modal */}
         {detailsModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-            {/* overscroll-contain: modal içerisi scroll olurken arka plan kıpırdamaz */}
             <div className="bg-[#181818] rounded-lg shadow-lg p-3 sm:p-6 w-[94vw] sm:w-full max-w-lg relative max-h-[90svh] overflow-y-auto overscroll-contain">
               <button className="absolute right-3 top-2 text-gray-400" onClick={closeDetails}>
                 <X size={18} />

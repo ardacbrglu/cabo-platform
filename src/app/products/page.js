@@ -2,12 +2,13 @@
 
 /**
  * File: src/app/products/page.js
- * Purpose: Product Marketplace (Affiliate) — PROD
- * Security Docblock (Frontend):
- * - Tüm istekler tek apiFetch wrapper’ı ile (credentials:'include', X-Requested-With, X-Request-Id).
- * - Mutasyonlar (promote) backend’de RBAC + status:active + rate-limit + Origin/Referer kontrolü altında.
- * - Custom CSRF/JWT yok; NextAuth mekanizmaları kullanılır.
- * - UI: Koyu tema, erişilebilir kontrast; metrik kutularında metin taşması yok; tabular numerals.
+ * Purpose: Product Marketplace (Affiliate) — PROD (UI refresh)
+ * Highlights:
+ * - Desktop: max container 1840px, 4 sütun, daha GENİŞ kart; dikey yükseklik azaltıldı.
+ * - Mobil: tek sütun, kart içi tüm metrik kutuları eşit yükseklikte.
+ * - Görsel üstte, başlık + açıklama altında; harf harf kırılma yok, içerik alanı geniş.
+ * - "Linkimi Al" bildirimi buton hizasında inline şerit (success/error).
+ * - Ellipsis yok; metinler satıra kırılır (break-words).
  */
 
 import { useEffect, useLayoutEffect, useState } from "react";
@@ -20,12 +21,14 @@ import {
   Link2,
   Search,
   Ban,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
 import { apiFetch } from "@/lib/apiFetch";
 
-const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
+const PLACEHOLDER = "https://placehold.co/240x240?text=Product";
 
 /* -------- Palette -------- */
 const CARD_BG = "#181818";
@@ -107,7 +110,7 @@ export default function ProductsPage() {
         setProducts([]);
         setUserLinks([]);
         setVisibleLinkIds(new Set());
-        setCardMessages({ global: t("productError") });
+        setCardMessages({ global: { kind: "error", text: t("productError") } });
       } finally {
         const left = Math.max(0, MIN - (performance.now() - start));
         setTimeout(() => alive && setLoading(false), left);
@@ -143,10 +146,20 @@ export default function ProductsPage() {
       ? Infinity
       : Math.max(0, Number(p.maxSalesLimit) - Number(p.totalPurchases || 0));
 
+  function flash(productId, text, kind = "success") {
+    setCardMessages((s) => ({ ...s, [productId]: { kind, text } }));
+    setTimeout(() => {
+      setCardMessages((s) => {
+        const copy = { ...s };
+        delete copy[productId];
+        return copy;
+      });
+    }, 2000);
+  }
+
   async function promoteProduct(productId) {
     if (hasVisible(productId)) return;
     setCardLoading((s) => ({ ...s, [productId]: true }));
-    setCardMessages((s) => ({ ...s, [productId]: "" }));
     try {
       const res = await apiFetch("/api/products/promote", {
         method: "POST",
@@ -154,7 +167,7 @@ export default function ProductsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setCardMessages((s) => ({ ...s, [productId]: t("productSuccess") }));
+        flash(productId, t("productSuccess"), "success");
         setUserLinks((prev) => {
           const ex = prev.find((l) => l.productId === productId);
           if (ex) return prev.map((l) => (l.productId === productId ? { ...l, isVisible: true } : l));
@@ -162,13 +175,12 @@ export default function ProductsPage() {
         });
         setVisibleLinkIds((prev) => new Set(prev).add(productId));
       } else {
-        setCardMessages((s) => ({ ...s, [productId]: data?.error || t("productError") }));
+        flash(productId, data?.error || t("productError"), "error");
       }
     } catch {
-      setCardMessages((s) => ({ ...s, [productId]: t("productError") }));
+      flash(productId, t("productError"), "error");
     } finally {
       setCardLoading((s) => ({ ...s, [productId]: false }));
-      setTimeout(() => setCardMessages((s) => ({ ...s, [productId]: "" })), 1700);
     }
   }
 
@@ -190,17 +202,17 @@ export default function ProductsPage() {
         </p>
 
         <div className="mt-5 w-full flex justify-center">
-          <div className="relative w-full max-w-[420px]">
+          <div className="relative w-full max-w-[640px]">
             <input
               type="text"
-              className="w-full rounded-xl px-4 py-2 pl-10 text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-[#888]/30 placeholder:text-gray-400 transition shadow-sm"
+              className="w-full rounded-xl px-4 py-3 pl-11 text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-[#888]/30 placeholder:text-gray-400 transition shadow-sm"
               style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
               placeholder="Search for product..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               autoComplete="off"
             />
-            <Search size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#aaa]" />
+            <Search size={20} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#aaa]" />
             {!!searchTerm && (
               <button
                 type="button"
@@ -215,24 +227,38 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Cards grid */}
-      <div className={`w-full max-w-7xl mx-auto px-3 md:px-8 pb-14 ${loading ? "opacity-60" : "opacity-100"}`}>
-        {cardMessages.global && (
+      {/* Cards grid — geniş container, 4 sütun */}
+      <div
+        className={`w-full mx-auto px-3 md:px-8 pb-14 ${
+          loading ? "opacity-60" : "opacity-100"
+        } max-w-[1840px]`}
+      >
+        {cardMessages.global?.text && (
           <div
             className="mb-5 text-center font-mono font-bold rounded-lg px-5 py-3 max-w-lg mx-auto text-base"
-            style={{ color: ACCENT, background: "#202820", border: "1px solid #263826" }}
+            style={{
+              color: cardMessages.global.kind === "error" ? "#ffd9a8" : ACCENT,
+              background: cardMessages.global.kind === "error" ? "#2a1f12" : "#202820",
+              border:
+                cardMessages.global.kind === "error" ? "1px solid #5a3a14" : "1px solid #263826",
+            }}
           >
-            {cardMessages.global}
+            {cardMessages.global.text}
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 justify-items-center gap-x-9 gap-y-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 justify-items-stretch gap-x-8 gap-y-10">
           {loading
             ? Array.from({ length: 4 }).map((_, i) => (
                 <div
                   key={i}
                   className="animate-pulse rounded-2xl"
-                  style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, height: 430, width: "100%", maxWidth: 380 }}
+                  style={{
+                    background: CARD_BG,
+                    border: `1px solid ${CARD_BORDER}`,
+                    height: 480,
+                    width: "100%",
+                  }}
                 />
               ))
             : filtered.map((p) => {
@@ -245,25 +271,29 @@ export default function ProductsPage() {
                 return (
                   <article
                     key={p.productId}
-                    className="relative rounded-2xl shadow-lg transition-transform duration-200 ease-out will-change-transform"
-                    style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, width: "100%", maxWidth: 380 }}
-                    onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px) scale(1.01)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0) scale(1)")}
+                    className="relative rounded-2xl shadow-lg transition-transform duration-200 ease-out will-change-transform w-full"
+                    style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
+                    onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
                   >
-                    {/* Top row chips: Fiyat (sol), Komisyon (sağ) — İÇERİDE */}
-                    <div className="flex items-start justify-between gap-2 px-4 pt-4">
-                      <Chip text={`${t("productPrice")}: ${money(p.price || 0)}`} />
-                      <Chip
-                        icon={<BadgePercent size={15} />}
-                        text={`${Number(p.commissionRate || 0).toFixed(2)}% ${t("productCommission")}`}
-                        tone="accent"
-                      />
+                    {/* Top chips */}
+                    <div className="px-5 pt-4 grid grid-cols-2 gap-3 items-start">
+                      <div className="min-w-0">
+                        <Chip text={`${t("productPrice")}: ${money(p.price || 0)}`} />
+                      </div>
+                      <div className="min-w-0 justify-self-end max-w-full">
+                        <Chip
+                          icon={<BadgePercent size={16} />}
+                          text={`${Number(p.commissionRate || 0).toFixed(2)}% ${t("productCommission")}`}
+                          tone="accent"
+                        />
+                      </div>
                     </div>
 
-                    {/* Image + title */}
-                    <div className="flex gap-4 px-5 pt-4">
+                    {/* Görsel üstte, başlık + açıklama altında (daha geniş içerik alanı) */}
+                    <div className="px-6 pt-4 flex flex-col items-center text-center">
                       <div
-                        className="w-28 h-28 rounded-xl overflow-hidden shrink-0"
+                        className="w-44 h-44 md:w-52 md:h-52 rounded-xl overflow-hidden"
                         style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
                       >
                         <img
@@ -271,63 +301,93 @@ export default function ProductsPage() {
                           alt={p.name}
                           className="object-cover w-full h-full transition-transform duration-300"
                           onError={handleImgError}
-                          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.04)")}
+                          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.03)")}
                           onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1.0)")}
                         />
                       </div>
-                      <div className="min-w-0">
-                        <h2 className="text-2xl font-black text-white leading-tight mb-1">{p.name}</h2>
-                        <p className="text-gray-300/90 text-[15px] line-clamp-2">{p.description || ""}</p>
-                      </div>
+
+                      <h2
+                        className="mt-4 text-[1.55rem] md:text-[1.7rem] font-extrabold text-white leading-tight break-words"
+                        style={{ wordBreak: "break-word" }}
+                      >
+                        {p.name}
+                      </h2>
+                      <p className="mt-2 text-gray-300 text-[15px] md:text-base leading-6 break-words">
+                        {p.description || ""}
+                      </p>
                     </div>
 
                     {/* status badge */}
                     {disabled && (
-                      <div className="absolute left-4 top-[70px]">
+                      <div className="absolute left-5 top-[78px] md:top-[86px]">
                         <span className="flex items-center gap-1 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs">
                           <Ban size={13} /> {status === "inactive" ? t("productInactive") : t("productQuota")}
                         </span>
                       </div>
                     )}
 
-                    {/* Metrics — tam simetri: her kutu h-full, 3 satırlı grid (label / value / caption) */}
-                    <div className="px-5 pt-6 grid grid-cols-2 gap-3 md:gap-4 auto-rows-[1fr]">
+                    {/* Metrics — eşit kutular, simetrik grid */}
+                    <div className="px-6 pt-5 grid grid-cols-2 gap-4 items-stretch">
                       <MetricBox
-                        className="h-full"
+                        className="h-[110px]"
                         label={t("clicks")}
                         icon={<MousePointerClick size={16} />}
                         value={p.totalClicks || 0}
                         caption={t("totalClicks")}
                       />
                       <MetricBox
-                        className="h-full"
+                        className="h-[110px]"
                         label={t("sales")}
                         icon={<Activity size={16} />}
                         value={p.totalPurchases || 0}
                         caption={t("totalSales")}
                       />
                       <MetricBox
-                        className="h-full"
+                        className="h-[110px]"
                         label={t("productEarn")}
                         icon={<Coins size={16} />}
                         value={<span className="font-extrabold" style={{ color: ACCENT }}>{money(earn)}</span>}
                         caption={t("perSale") || "per sale"}
                       />
                       <MetricBox
-                        className="h-full"
+                        className="h-[110px]"
                         label={t("quotaLeft")}
                         value={isFinite(quota) ? quota : "∞"}
                         caption={t("remaining") || "remaining"}
                       />
                     </div>
 
-                    {/* Actions */}
-                    <div className="px-5 pb-5 pt-4">
+                    {/* Inline card notice (buton hizasında) */}
+                    {cardMessages[p.productId]?.text && (
+                      <div
+                        aria-live="polite"
+                        className="mx-6 mt-4 rounded-lg px-3 py-2 text-sm font-mono flex items-center gap-2"
+                        style={{
+                          background:
+                            cardMessages[p.productId].kind === "error" ? "#2a1f12" : "#202820",
+                          border:
+                            cardMessages[p.productId].kind === "error"
+                              ? "1px solid #5a3a14"
+                              : "1px solid #263826",
+                          color: cardMessages[p.productId].kind === "error" ? "#ffd9a8" : ACCENT,
+                        }}
+                      >
+                        {cardMessages[p.productId].kind === "error" ? (
+                          <AlertTriangle size={16} />
+                        ) : (
+                          <CheckCircle2 size={16} />
+                        )}
+                        <span className="break-words">{cardMessages[p.productId].text}</span>
+                      </div>
+                    )}
+
+                    {/* Actions — her durumda aynı hizada, aşağı taşmıyor */}
+                    <div className="px-6 pb-5 pt-4">
                       {disabled ? (
                         <button
                           type="button"
                           disabled
-                          className="w-full rounded-xl font-mono font-bold py-2.5 text-gray-400 cursor-not-allowed"
+                          className="w-full rounded-xl font-mono font-bold py-3 text-gray-400 cursor-not-allowed"
                           style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
                         >
                           {status === "inactive" ? t("productInactive") : t("productQuota")}
@@ -337,14 +397,19 @@ export default function ProductsPage() {
                           <button
                             type="button"
                             disabled
-                            className="w-full rounded-xl font-mono font-bold py-2.5 text-gray-300"
-                            style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
+                            className="w-full rounded-xl font-mono font-bold py-3 text-gray-200"
+                            style={{
+                              background: "rgba(129,215,66,0.10)",
+                              border: "1px solid #2d5b2d",
+                              color: "#eaffea",
+                            }}
                           >
                             {t("productAdded")}
                           </button>
                           <div className="flex items-center justify-center gap-1 mt-2 text-gray-400 text-xs font-mono">
                             <Link2 size={14} />
-                            {t("productManage")} <span className="underline ml-1">{t("productMyLinks")}</span>
+                            {t("productManage")}{" "}
+                            <span className="underline ml-1">{t("productMyLinks")}</span>
                           </div>
                         </>
                       ) : (
@@ -352,23 +417,13 @@ export default function ProductsPage() {
                           type="button"
                           onClick={() => promoteProduct(p.productId)}
                           disabled={!!cardLoading[p.productId]}
-                          className="w-full rounded-xl font-black font-mono py-2.5 text-[#0e1a0c] shadow-lg hover:shadow-xl transition"
+                          className="w-full rounded-xl font-black font-mono py-3 text-[#0e1a0c] shadow-lg hover:shadow-xl transition"
                           style={{ background: ACCENT, border: "1px solid #6ec43c" }}
                         >
                           {cardLoading[p.productId] ? t("loading") : t("productGetLink")}
                         </button>
                       )}
                     </div>
-
-                    {/* Card toast */}
-                    {cardMessages[p.productId] && (
-                      <div
-                        className="absolute left-1/2 -translate-x-1/2 -top-3 px-4 py-2 rounded-lg text-sm font-mono"
-                        style={{ background: "#202820", border: "1px solid #263826", color: ACCENT }}
-                      >
-                        {cardMessages[p.productId]}
-                      </div>
-                    )}
                   </article>
                 );
               })}
@@ -376,19 +431,9 @@ export default function ProductsPage() {
       </div>
 
       <style jsx global>{`
-        .line-clamp-2 {
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-        .tabnums {
-          font-variant-numeric: tabular-nums;
-        }
+        .tabnums { font-variant-numeric: tabular-nums; }
         @media (max-width: 640px) {
-          .grid {
-            justify-items: center;
-          }
+          .grid { justify-items: stretch; }
         }
       `}</style>
     </Layout>
@@ -406,16 +451,19 @@ function Chip({ icon, text, tone = "default" }) {
       tone === "accent"
         ? "inset 0 1px 0 rgba(255,255,255,0.05)"
         : "inset 0 1px 0 rgba(255,255,255,0.03)",
-    borderRadius: "10px",
+    borderRadius: "12px",
+    whiteSpace: "normal",
+    lineHeight: 1.15,
   };
 
   return (
     <span
-      className="inline-flex items-center gap-2 px-3 py-1 text-[13px] font-semibold whitespace-nowrap"
+      className="inline-flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold"
       style={base}
+      title={typeof text === "string" ? text : undefined}
     >
-      <span className="opacity-90">{text}</span>
-      {icon ? <span className="opacity-90">{icon}</span> : null}
+      <span className="opacity-90 break-words">{text}</span>
+      {icon ? <span className="opacity-90 shrink-0">{icon}</span> : null}
     </span>
   );
 }
@@ -423,22 +471,22 @@ function Chip({ icon, text, tone = "default" }) {
 function MetricBox({ icon, label, value, caption, className = "" }) {
   return (
     <div
-      className={`rounded-xl px-3 py-3 grid grid-rows-[auto,1fr,auto] ${className}`}
+      className={`rounded-xl px-4 py-4 grid grid-rows-[auto,1fr,auto] ${className}`}
       style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
       title={typeof label === "string" ? label : undefined}
     >
-      {/* üst şerit: etiket + ikon (ikon sağda) */}
+      {/* etiket + ikon */}
       <div className="flex items-center justify-center gap-2">
-        <span className="text-gray-300 text-sm font-medium">{label}</span>
+        <span className="text-gray-300 text-sm font-medium text-center break-words">{label}</span>
         {icon ? <span className="text-gray-300 shrink-0">{icon}</span> : null}
       </div>
 
-      {/* değer: ortalanmış ve esneyen orta satır */}
+      {/* değer */}
       <div className="flex items-center justify-center text-white text-xl font-bold tabnums mt-2 break-words">
         {value}
       </div>
 
-      {/* caption: küçük ve sabit alt satır (boş olsa bile layout eşit) */}
+      {/* caption */}
       <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">
         {caption ? caption : "\u00A0"}
       </div>

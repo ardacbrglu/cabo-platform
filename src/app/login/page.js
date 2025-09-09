@@ -1,19 +1,10 @@
-// src/app/login/page.js
 "use client";
 
 /**
- * Affiliate Login (Credentials only) — Google disabled
- *
- * Security (Cabo PROD):
- * - No page reload on errors; inputs preserved
- * - CSRF preload; POST /api/login (JSON)
- * - Double-click safe via AbortController
- * - a11y: aria-live messages; focus first invalid
- * - Google button disabled (grayed)
- *
- * NOTE:
- * - next/navigation hook'ları kaldırıldı (invalid hook call fix)
- * - redirect => window.location.href (SPA davranışı korunur)
+ * Login — centered, single card
+ * - PublicLayout ana <main> kullanılır (ekstra main yok)
+ * - Kart: max-w-md, buton full width
+ * - İç sarma: z-0 (header overlay her zaman üste gelsin)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -25,15 +16,6 @@ import { apiFetch } from "@/lib/apiFetch";
 const translations = {
   en: {
     title: "User Login",
-    infoTitle: "Start earning by sharing",
-    infoDesc:
-      "Share product links with your friends, followers or audience — and earn money when they make a purchase.",
-    infoStrong: "Promote products, earn commission, track your stats in real-time.",
-    li1: "Each product you claim generates a unique referral link",
-    li2: "You get paid when people buy through your link",
-    li3: "Track your clicks, sales, and earnings from your dashboard",
-    li4: "Withdraw your earnings securely",
-    faq: "Learn more in our ",
     emailPlaceholder: "Email",
     passwordPlaceholder: "Password",
     loginBtn: "Log in",
@@ -52,15 +34,6 @@ const translations = {
   },
   tr: {
     title: "Kullanıcı Girişi",
-    infoTitle: "Paylaş, kazanmaya başla",
-    infoDesc:
-      "Ürün linklerini arkadaşlarınla, takipçilerinle ya da kitlenle paylaş — biri alışveriş yaptığında para kazanmaya başla.",
-    infoStrong: "Ürünleri tanıt, komisyon kazan, istatistiklerini anlık takip et.",
-    li1: "Her ürün için sana özel referans linki oluşur",
-    li2: "Birileri senin linkinden alışveriş yaparsa ödeme alırsın",
-    li3: "Tıklama, satış ve kazançlarını panelden takip edebilirsin",
-    li4: "Kazancını güvenle çekebilirsin",
-    faq: "Daha fazlası SSS'de: ",
     emailPlaceholder: "E-posta",
     passwordPlaceholder: "Şifre",
     loginBtn: "Giriş Yap",
@@ -83,10 +56,10 @@ export default function LoginPage() {
   const { locale, ready } = useLocale();
 
   // i18n
-  const { t, isTR } = useMemo(() => {
+  const { t } = useMemo(() => {
     const norm = String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
     const dict = translations[norm] || translations.en;
-    return { t: (k) => (dict && k in dict ? dict[k] : k), isTR: norm === "tr" };
+    return { t: (k) => (dict && k in dict ? dict[k] : k) };
   }, [locale]);
 
   // redirect target (?from=...) ve activated banner
@@ -151,6 +124,7 @@ export default function LoginPage() {
   const errors = submitted ? validate() : {};
   const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
 
+  // inputs
   const inputBase =
     "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
   const ringOk = "focus:ring-[#81d742]";
@@ -189,15 +163,12 @@ export default function LoginPage() {
         },
         body: { email: email.trim().toLowerCase(), password },
         signal: ac.signal,
-        // kritik: otomatik redirect & retry kapalı
         noAuthRedirect: true,
         noRetry: true,
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (res.ok && data?.success) {
-        window.location.href = callbackUrlRef.current; // redirect (router yok)
+        window.location.href = callbackUrlRef.current;
       } else {
         setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
       }
@@ -213,38 +184,16 @@ export default function LoginPage() {
 
   return (
     <PublicLayout>
-      <div className="flex flex-col md:flex-row w-full items-center justify-center gap-12 py-10 px-4 sm:px-6 max-w-5xl mx-auto min-h-[65vh]">
-        {/* LEFT INFO */}
-        <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
-          <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
-            <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
-            <ul className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto" style={{ maxWidth: 340 }}>
-              <li>{t("li1")}</li>
-              <li>{t("li2")}</li>
-              <li>{t("li3")}</li>
-              <li>{t("li4")}</li>
-            </ul>
-            <div className="text-gray-400 text-sm mb-2">
-              {t("faq")}
-              <Link prefetch={false} href="/faq" className="text-[#81d742] underline hover:text-[#b3ffb3]">
-                {isTR ? "SSS" : "FAQ"}
-              </Link>
-            </div>
-          </div>
-        </div>
-
-        {/* FORM */}
-        <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
+      {/* DİKEY ORTALAMA — ekstra <main> yok; z-0: header overlay daima üste */}
+      <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-8 md:py-12 px-4">
+        <div className="bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md">
+          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4 text-center">{t("title")}</h3>
 
           {justActivated && (
             <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
               {t("activatedBanner")}
             </div>
           )}
-
           {!csrfReady && (
             <div className="text-gray-400 text-sm text-center mb-3" role="status" aria-live="polite">
               {t("csrfWait")}
@@ -304,11 +253,7 @@ export default function LoginPage() {
             </div>
 
             <div className="flex items-center justify-between -mt-2">
-              <Link
-                prefetch={false}
-                href="/password_reset"
-                className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition"
-              >
+              <Link href="/password_reset" prefetch={false} className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition">
                 {t("forgot")}
               </Link>
             </div>
@@ -322,7 +267,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !csrfReady}
-              className="bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
+              className="w-full bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
             >
               {loading ? t("loggingIn") : t("loginBtn")}
             </button>
@@ -333,7 +278,6 @@ export default function LoginPage() {
               <span className="flex-1 h-px bg-[#232323]" />
             </div>
 
-            {/* Google disabled notice + disabled button */}
             <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
               {t("googleSoon")}
             </div>
@@ -350,21 +294,17 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-6 text-gray-400 text-sm">
+          <div className="mt-6 text-gray-400 text-sm text-center">
             {t("noAccount")}{" "}
-            <Link prefetch={false} href="/register" className="text-[#81d742] underline hover:text-[#b3ffb3]">
+            <Link href="/register" prefetch={false} className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t("registerHere")}
             </Link>
           </div>
         </div>
       </div>
 
-      {/* Sadece bu sayfada: beyaz input yüzeyi (autofill dahil) */}
+      {/* Beyaz yüzey (autofill dâhil) */}
       <style jsx global>{`
-        @media (max-width: 768px) {
-          .cabo-mobile-top-space { margin-top: 1rem !important; }
-          .cabo-mobile-bottom-space { margin-bottom: 1rem !important; }
-        }
         .cabo-input-surface input {
           background: #fff !important;
           color: #000 !important;

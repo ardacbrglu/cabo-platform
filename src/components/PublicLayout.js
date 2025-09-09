@@ -4,19 +4,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
 import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
+import Portal from "@/components/Portal";
 
-/**
- * ──────────────────────────────────────────────────────────────────────────────
- * Security Docblock (Cabo PROD)
- * - Sadece client-side UI; gizli anahtar/credential içermez.
- * - Auth/authorization kararı vermez; public nav + language UI.
- * - XSS: Metinler sabit sözlükten; kullanıcı girdisi render edilmez.
- * - Linkler Next <Link> (prefetch=false); harici domain yönlendirmesi yok.
- * - Mobil menü: header altında, edge-band ve ekran genişliğinde (affiliate ile aynı).
- * - İnce çizgi için border kaldırıldı; shadow/outline yok.
- * - Event listener’lar mount/unmount’ta düzgün yönetilir.
- * ──────────────────────────────────────────────────────────────────────────────
- */
+/* PublicLayout (JS, prod, mobile panel top-layer & priority) */
 
 const translations = {
   en: {
@@ -46,17 +36,13 @@ const LANGS = [
   { code: "en", short: "EN" },
 ];
 
-/* ——— Flags ——— */
 function FlagTR({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="18" height="12" fill="#E30A17" />
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
-      <polygon
-        fill="#fff"
-        points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
-      />
+      <polygon fill="#fff" points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22" />
     </svg>
   );
 }
@@ -64,68 +50,60 @@ function FlagUS({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="19" height="12" fill="#B22234" />
-      {[1, 3, 5, 7, 9, 11].map((y) => (
-        <rect key={y} x="0" y={y} width="19" height="1" fill="#fff" />
-      ))}
+      {[1, 3, 5, 7, 9, 11].map((y) => <rect key={y} x={0} y={y} width="19" height="1" fill="#fff" />)}
       <rect x="0" y="0" width="8" height="7" fill="#3C3B6E" />
-      {[1.2, 3.6, 2.4, 4.8].map((x, i) => (
-        <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />
-      ))}
+      {[1.2, 3.6, 2.4, 4.8].map((x, i) => <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />)}
     </svg>
   );
 }
 const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
 
-/* ——— SPA path watcher ——— */
+// SPA path watcher — idempotent global history patch
 function usePathnameSafe() {
   const [path, setPath] = useState("/");
+
   useEffect(() => {
-    const update = () => {
-      try {
-        setPath(window.location.pathname || "/");
-      } catch {}
-    };
+    const update = () => { try { setPath(window.location.pathname || "/"); } catch {} };
     update();
 
-    const patch = (type) => {
-      try {
-        const orig = history[type];
-        return function (...args) {
-          const ret = orig.apply(history, args);
-          try {
-            window.dispatchEvent(new Event("locationchange"));
-          } catch {}
-          return ret;
-        };
-      } catch {
-        return (..._args) => {};
-      }
-    };
-
     try {
-      history.pushState = patch("pushState");
-      history.replaceState = patch("replaceState");
+      if (!window.__CABO_HIST_PATCHED__) {
+        const fire = () => { try { window.dispatchEvent(new Event("cabo:locationchange")); } catch {} };
+        const wrap = (type) => {
+          const orig = history[type];
+          history[type] = function (...args) {
+            const ret = orig.apply(this, args);
+            fire();
+            return ret;
+          };
+        };
+        wrap("pushState");
+        wrap("replaceState");
+        window.__CABO_HIST_PATCHED__ = true;
+      }
     } catch {}
 
     window.addEventListener("popstate", update);
-    window.addEventListener("locationchange", update);
+    window.addEventListener("cabo:locationchange", update);
     return () => {
       window.removeEventListener("popstate", update);
-      window.removeEventListener("locationchange", update);
+      window.removeEventListener("cabo:locationchange", update);
     };
   }, []);
+
   return path;
 }
 
 export default function PublicLayout({ children }) {
   const { locale, setLocale, persistLocale, ready } = useLocale();
-
   const [isMobile, setIsMobile] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileLangOpen, setMobileLangOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false); // desktop language
-  const langRef = useRef(null);
+  const [langOpen, setLangOpen] = useState(false);
 
+  const langRef = useRef(null);
+  const headerRef = useRef(null);
+  const panelRef = useRef(null);
   const currentPath = usePathnameSafe();
 
   // viewport
@@ -136,18 +114,18 @@ export default function PublicLayout({ children }) {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // path değişince panelleri kapat
+  // route/breakpoint change -> panelleri kapat
   useEffect(() => {
     setMobileOpen(false);
     setMobileLangOpen(false);
     setLangOpen(false);
-  }, [currentPath]);
+  }, [currentPath, isMobile]);
 
-  // outside click & Esc
+  // outside click + ESC (panel portal'a taşındı; overlay de var ama emniyet için)
   useEffect(() => {
     const onDocClick = (e) => {
-      if (!langRef.current) return;
-      if (!langRef.current.contains(e.target)) setLangOpen(false);
+      const tgt = e.target;
+      if (langRef.current && !langRef.current.contains(tgt)) setLangOpen(false);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -157,12 +135,24 @@ export default function PublicLayout({ children }) {
       }
     };
     document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("touchstart", onDocClick, { passive: true });
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("touchstart", onDocClick);
       document.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  // SCROLL LOCK — HTML scroller kilitlenir (body değil!)
+  useEffect(() => {
+    if (!isMobile) return;
+    const root = document.documentElement; // html scroller
+    const prevOverflow = root.style.overflowY;
+    if (mobileOpen) root.style.overflowY = "hidden";
+    else root.style.overflowY = prevOverflow || "";
+    return () => { root.style.overflowY = prevOverflow || ""; };
+  }, [isMobile, mobileOpen]);
 
   if (!ready) return null;
 
@@ -171,7 +161,8 @@ export default function PublicLayout({ children }) {
 
   const activeLangCode = String(locale).toLowerCase().startsWith("tr") ? "tr" : "en";
   const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
-  const setLangPersist = (code) => (typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code));
+  const setLangPersist = (code) =>
+    typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code);
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -187,8 +178,8 @@ export default function PublicLayout({ children }) {
 
   return (
     <div className="public-shell">
-      {/* HEADER — affiliate ile aynı edge-band */}
-      <header className="public-header relative z-[1000]">
+      {/* HEADER */}
+      <header ref={headerRef} className="public-header relative z-[3000]">
         <div className="edge-band h-full flex items-center justify-between">
           <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
             Cabo
@@ -196,8 +187,8 @@ export default function PublicLayout({ children }) {
 
           {/* Desktop nav */}
           {!isMobile ? (
-            <nav aria-label="Public navigation" className="relative">
-              <ul className="flex gap-7 text-sm font-medium items-center">
+            <nav aria-label="Public navigation" className="relative whitespace-nowrap">
+              <ul className="flex items-center text-sm font-medium gap-6 [--gap:1.5rem] [&>li]:ml-[var(--gap)] [&>li:first-child]:ml-0">
                 {navLinks.map((item) => (
                   <li key={item.href}>
                     <Link
@@ -211,8 +202,8 @@ export default function PublicLayout({ children }) {
                   </li>
                 ))}
 
-                {/* Desktop language (bayraklı) */}
-                <li className="ml-2 relative" ref={langRef}>
+                {/* Desktop language */}
+                <li className="relative ml-[var(--gap)]" ref={langRef}>
                   <button
                     type="button"
                     className="px-2 py-1 rounded transition flex items-center gap-2 text-gray-200 hover:text-[#b0f7a2]"
@@ -272,82 +263,119 @@ export default function PublicLayout({ children }) {
             </button>
           )}
         </div>
+      </header>
 
-        {/* MOBILE panel — header altında, edge-band, BORDER YOK (ince çizgi kaldırıldı) */}
-        {isMobile && mobileOpen && (
-          <div className="edge-band pb-3 pt-2 bg-[#111] text-sm allow-inner-scroll">
-            {/* nav links */}
-            {navLinks.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                prefetch={false}
-                onClick={() => setMobileOpen(false)}
-                className={`block py-2 transition ${
-                  isActive(l.href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
-                }`}
-                aria-current={isActive(l.href) ? "page" : undefined}
-              >
-                {l.label}
-              </Link>
-            ))}
+      {/* MOBILE PANEL — Top-layer Portal (her şeyin üstünde) */}
+      {isMobile && mobileOpen && (
+        <Portal>
+          {/* Fullscreen click-catcher (şeffaf overlay) */}
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile menu"
+            onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 2147483646, // MAX priority (overlay/recaptcha vs)
+              pointerEvents: "auto",
+              background: "transparent",
+            }}
+          >
+            {/* Panel: header'ın hemen altında, overlay tıklaması panel içinde durdurulur */}
+            <div
+              ref={panelRef}
+              className="edge-band text-sm allow-inner-scroll"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "fixed",
+                left: 0,
+                right: 0,
+                top: "var(--public-header-h)",
+                background: "#111",
+                paddingTop: "8px",
+                paddingBottom: "12px",
+                maxHeight: "min(92vh,560px)",
+                overflow: "auto",
+                WebkitOverflowScrolling: "touch",
+                boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
+                borderBottom: "1px solid #232323",
+              }}
+            >
+              {navLinks.map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  prefetch={false}
+                  onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+                  className={`block py-2 transition ${
+                    isActive(l.href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
+                  }`}
+                  aria-current={isActive(l.href) ? "page" : undefined}
+                >
+                  {l.label}
+                </Link>
+              ))}
 
-            {/* language (dokununca bayraklı TR/EN açılır) */}
-            <div className="mt-2 pt-2">
-              <button
-                type="button"
-                className="w-full flex items-center justify-between py-2 text-gray-300 hover:text-white transition"
-                onClick={() => setMobileLangOpen((s) => !s)}
-                aria-haspopup="menu"
-                aria-expanded={mobileLangOpen}
-                aria-label={dict.language}
-                style={{ outline: "none" }}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Globe size={16} />
-                  <span className="uppercase tracking-wide">{dict.language}</span>
-                </span>
-                <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
-              </button>
+              {/* Dil seçimi */}
+              <div className="mt-2 pt-2">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between py-2 text-gray-300 hover:text-white transition"
+                  onClick={() => setMobileLangOpen((s) => !s)}
+                  aria-haspopup="menu"
+                  aria-expanded={mobileLangOpen}
+                  aria-label={dict.language}
+                  style={{ outline: "none" }}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Globe size={16} />
+                    <span className="uppercase tracking-wide">{dict.language}</span>
+                  </span>
+                  <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
+                </button>
 
-              {mobileLangOpen && (
-                <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-lg bg-[#101010]">
-                  {LANGS.map((l) => {
-                    const active = activeLang.code === l.code;
-                    return (
-                      <button
-                        key={l.code}
-                        type="button"
-                        onClick={() => setLangPersist(l.code)}
-                        className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-                          active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
-                        }`}
-                        role="menuitem"
-                        aria-current={active ? "true" : "false"}
-                        style={{ outline: "none" }}
-                      >
-                        <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
-                        <span className="tracking-wide">{l.short}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                {mobileLangOpen && (
+                  <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-lg bg-[#101010]">
+                    {[{ code: "tr", short: "TR" }, { code: "en", short: "EN" }].map((l) => {
+                      const active = activeLang.code === l.code;
+                      return (
+                        <button
+                          key={l.code}
+                          type="button"
+                          onClick={() => setLangPersist(l.code)}
+                          className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+                            active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+                          }`}
+                          role="menuitem"
+                          aria-current={active ? "true" : "false"}
+                          style={{ outline: "none" }}
+                        >
+                          <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
+                          <span className="tracking-wide">{l.short}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        )}
-      </header>
+        </Portal>
+      )}
 
       {/* MAIN */}
       <main id="cabo-main" className="bg-transparent">
         <div className="container">{children}</div>
       </main>
 
-      {/* FOOTER — mobil kompakt, hizalama iyileştirildi; desktop aynı */}
-      <footer className="cabo-public-footer text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0">
-        <div className="edge-band py-2 md:py-3">
+      {/* FOOTER */}
+      <footer
+        className="cabo-public-footer text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0
+                   !pt-2 !pb-[calc(12px+env(safe-area-inset-bottom))]"
+      >
+        <div className="edge-band">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-            {/* Merchant callout */}
             <div className="merchant text-center md:text-left">
               <span className="block md:inline text-[11px] md:text-xs text-gray-400">
                 {dict.merchantQ}
@@ -360,8 +388,6 @@ export default function PublicLayout({ children }) {
                 {dict.merchantAccess}
               </Link>
             </div>
-
-            {/* Copyright */}
             <div className="copy text-center md:text-right text-[10px] md:text-xs">
               &copy; 2025 {dict.copyright}
             </div>

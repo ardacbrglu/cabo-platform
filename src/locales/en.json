@@ -419,11 +419,20 @@
   "deleteRejectedConfirm": "Delete the rejected payout request?",
   "pendingNet": "Pending (net)",
   "netPaidTotal": "Net paid",
-  "lockedUpdateWindowPassed": "The edit window has expired. You can no longer update the bank details for this request."
+  "lockedUpdateWindowPassed": "The edit window has expired. You can no longer update the bank details for this request.",
 
 
 
+  "crHelp": "CR = (confirmed / clicks).",
+  "openChart": "Open chart",
+  "closeChart": "Close chart",
+  "netEarnings": "Net Earnings",
+  "performance.chart_net": "Net Earnings",
+  "time": "Time",
+  "referrer": "referrer",
+  "userAgent": "userAgent"
 }
+
 
 
 

@@ -1,8 +1,7 @@
-// src/app/merchant/dashboard/page.js
 "use client";
 
 /**
- * Merchant Dashboard — Manage Products
+ * Merchant Dashboard — Manage Products (UI fix: responsive edit modal)
  *
  * Security:
  * - requireSession + requireRole('merchant') (UserContext / guards)
@@ -13,7 +12,7 @@
  * UX:
  * - Locales: uses central keys via useTranslation()
  * - A11y: aria-live notices, focus management, disabled states
- * - Mobile friendly cards & modal
+ * - Mobile friendly cards & **modal with sticky header/footer & scrollable body**
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -78,7 +77,6 @@ export default function MerchantDashboardPage() {
   const t = useTranslation();
   const locale = t.locale || "en";
 
-  // tiny interpolation helper for "{min}" style placeholders in your locales
   const tt = (key, params) => {
     const raw = t(key) || key;
     return raw.replace(/\{(\w+)\}/g, (_, k) => (params && params[k] != null ? String(params[k]) : `{${k}}`));
@@ -203,6 +201,7 @@ export default function MerchantDashboardPage() {
         t("validation_maxLimitEdit") || "Max sales limit must be ≥ 1 and cannot be less than the sold count.",
       // tips
       tip_commission: t("formHintCommission") || "Higher commission rates attract more affiliates.",
+      close: t("close") || "Close",
     }),
     [t]
   );
@@ -225,7 +224,7 @@ export default function MerchantDashboardPage() {
       warn(tt("validation_commission", { min: minCommission }));
     }
     return Number(v.toFixed(1));
-    };
+  };
   const clampLimit = (val, sold = 0) => {
     let v = Math.floor(Number(val));
     if (!Number.isInteger(v) || v < 1) {
@@ -476,12 +475,11 @@ export default function MerchantDashboardPage() {
         Math.floor(Number(edit.max_sales_limit)) !== Math.floor(Number(editOriginal.max_sales_limit))
       : false;
 
-  // --- fix: define saveEdit (was missing)
+  // Save edit (diff-based PATCH)
   const saveEdit = async () => {
     if (!editOriginal) return;
     setEditSubmitted(true);
 
-    // normalize
     const normalized = {
       ...edit,
       commissionRate: clampCommission(edit.commissionRate),
@@ -493,7 +491,6 @@ export default function MerchantDashboardPage() {
     setEditErrors(errs);
     if (Object.keys(errs).length) return;
 
-    // build PATCH diff
     const diff = { productId: editOriginal.productId };
     const addIfChanged = (key, val, origVal) => {
       const a = (typeof val === "string" ? val.trim() : val);
@@ -509,7 +506,6 @@ export default function MerchantDashboardPage() {
     addIfChanged("max_sales_limit", Math.floor(Number(normalized.max_sales_limit)), Math.floor(Number(editOriginal.max_sales_limit)));
 
     if (Object.keys(diff).length === 1) {
-      // nothing changed
       setNotice({ type: "success", text: tx.saved });
       closeNoticeSoon();
       closeEdit();
@@ -528,6 +524,14 @@ export default function MerchantDashboardPage() {
       closeNoticeSoon();
     }
   };
+
+  // Close with ESC
+  useEffect(() => {
+    if (!editOpen) return;
+    const onKey = (e) => e.key === "Escape" && closeEdit();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [editOpen]);
 
   return (
     <MerchantLayout>
@@ -793,7 +797,7 @@ export default function MerchantDashboardPage() {
               </div>
 
               <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-gray-400">{tx.productCode}:</span>
+                <span className="text-xs text-gray-400">Code:</span>
                 {showCode[p.productId] ? (
                   <>
                     <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
@@ -854,29 +858,35 @@ export default function MerchantDashboardPage() {
         })}
       </div>
 
-      {/* EDIT MODAL */}
+      {/* EDIT MODAL — responsive, scrollable, closable on mobile */}
       {editOpen && editOriginal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6">
+        <div className="fixed inset-0 z-50 p-2 sm:p-6">
+          {/* Overlay */}
           <div className="absolute inset-0 bg-black/60" onClick={closeEdit} aria-hidden="true" />
+
+          {/* Dialog */}
           <div
             role="dialog"
             aria-modal="true"
-            className="relative w-full max-w-xl md:max-w-2xl bg-[#151716] border border-[#2a2f2a] rounded-2xl shadow-2xl"
+            className="relative mx-auto w-[96vw] sm:w-[min(680px,94vw)] bg-[#151716] border border-[#2a2f2a] rounded-2xl shadow-2xl
+                       h-[calc(100dvh-1rem)] sm:h-auto sm:max-h-[85vh] flex flex-col overflow-hidden"
           >
-            <div className="flex items-center justify-between px-4 md:px-5 py-3 md:py-4 border-b border-[#2a2f2a] rounded-t-2xl">
+            {/* Sticky header */}
+            <div className="sticky top-0 z-10 flex items-center justify-between px-4 md:px-5 py-3 md:py-4 border-b border-[#2a2f2a] bg-[#151716]">
               <h2 className="text-lg md:text-xl font-bold text-[#d1ffd0] truncate">
                 {tx.edit} — {editOriginal.name}
               </h2>
               <button
                 onClick={closeEdit}
                 className="text-gray-300 hover:text-white transition"
-                aria-label={t("close") || "Close"}
+                aria-label={tx.close}
               >
-                <X size={20} />
+                <X size={22} />
               </button>
             </div>
 
-            <div className="p-4 md:p-5">
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-5">
               {sensitiveChanged ? (
                 <div className="mb-4 bg-yellow-900/70 border border-yellow-600 text-yellow-100 px-3 py-2 rounded text-xs md:text-sm font-mono font-bold">
                   ⚠️ {tx.adminApprovalWarn}
@@ -893,7 +903,7 @@ export default function MerchantDashboardPage() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
                     <input
                       type="text"
-                      className={`${inputBase} ${ringOk} md:col-span-2 ${editSubmitted && editErrors.image_url ? "border-red-500 focus:ring-red-400" : ""}`}
+                      className={`${inputBase} focus:ring-[#81d742] md:col-span-2 ${editSubmitted && editErrors.image_url ? "border-red-500 focus:ring-red-400" : ""}`}
                       value={edit.image_url}
                       onChange={(e) => setEdit((s) => ({ ...s, image_url: e.target.value }))}
                       placeholder={tx.productImage}
@@ -916,7 +926,7 @@ export default function MerchantDashboardPage() {
                   <label className="text-xs text-[#9fd59f] font-mono">{tx.productTitle}</label>
                   <input
                     type="text"
-                    className={`${inputBase} ${ringOk} ${editSubmitted && editErrors.name ? "border-red-500 focus:ring-red-400" : ""}`}
+                    className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.name ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.name}
                     onChange={(e) => setEdit((s) => ({ ...s, name: e.target.value }))}
                   />
@@ -929,7 +939,7 @@ export default function MerchantDashboardPage() {
                   <label className="text-xs text-[#9fd59f] font-mono">{tx.productUrl}</label>
                   <input
                     type="url"
-                    className={`${inputBase} ${ringOk} ${editSubmitted && editErrors.merchant_url ? "border-red-500 focus:ring-red-400" : ""}`}
+                    className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.merchant_url ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.merchant_url}
                     onChange={(e) => setEdit((s) => ({ ...s, merchant_url: e.target.value }))}
                   />
@@ -944,7 +954,7 @@ export default function MerchantDashboardPage() {
                     type="number"
                     step="0.01"
                     min="0.01"
-                    className={`${inputBase} ${ringOk} ${editSubmitted && editErrors.price ? "border-red-500 focus:ring-red-400" : ""}`}
+                    className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.price ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.price}
                     onChange={(e) => setEdit((s) => ({ ...s, price: e.target.value }))}
                   />
@@ -960,7 +970,7 @@ export default function MerchantDashboardPage() {
                     step="0.1"
                     min={minCommission}
                     max={99.9}
-                    className={`${inputBase} ${ringOk} ${editSubmitted && editErrors.commissionRate ? "border-red-500 focus:ring-red-400" : ""}`}
+                    className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.commissionRate ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.commissionRate}
                     onChange={(e) => setEdit((s) => ({ ...s, commissionRate: e.target.value }))}
                     onBlur={() =>
@@ -981,7 +991,7 @@ export default function MerchantDashboardPage() {
                     type="number"
                     min={Math.max(1, Number(editOriginal.total_purchases))}
                     step={1}
-                    className={`${inputBase} ${ringOk} ${editSubmitted && editErrors.max_sales_limit ? "border-red-500 focus:ring-red-400" : ""}`}
+                    className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.max_sales_limit ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.max_sales_limit}
                     onChange={(e) => setEdit((s) => ({ ...s, max_sales_limit: e.target.value }))}
                     onBlur={() =>
@@ -1003,29 +1013,31 @@ export default function MerchantDashboardPage() {
                   <label className="text-xs text-[#9fd59f] font-mono">{tx.productDesc}</label>
                   <textarea
                     rows={3}
-                    className={`${inputBase} w-full ${ringOk}`}
+                    className={`${inputBase} w-full focus:ring-[#81d742]`}
                     value={edit.description}
                     onChange={(e) => setEdit((s) => ({ ...s, description: e.target.value }))}
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="flex gap-3 mt-5 justify-end">
-                <button
-                  onClick={saveEdit}
-                  disabled={loading}
-                  className="bg-[#81d742] px-4 py-2 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-sm disabled:opacity-60"
-                >
-                  {tx.save}
-                </button>
-                <button
-                  onClick={closeEdit}
-                  disabled={loading}
-                  className="bg-[#a94a4a] px-4 py-2 rounded font-semibold hover:bg-[#ff6a6a] text-sm disabled:opacity-60 text-white"
-                >
-                  {tx.cancel}
-                </button>
-              </div>
+            {/* Sticky footer (always visible on mobile) */}
+            <div className="sticky bottom-0 z-10 bg-[#151716]/95 backdrop-blur border-t border-[#2a2f2a] px-3 md:px-5 py-3 md:py-4
+                            pb-[max(env(safe-area-inset-bottom,0),0.75rem)] flex gap-3 justify-end">
+              <button
+                onClick={saveEdit}
+                disabled={loading}
+                className="bg-[#81d742] px-4 py-2 rounded font-semibold text-[#0b0b0b] hover:bg-[#aaff6c] text-sm disabled:opacity-60"
+              >
+                {tx.save}
+              </button>
+              <button
+                onClick={closeEdit}
+                disabled={loading}
+                className="bg-[#a94a4a] px-4 py-2 rounded font-semibold hover:bg-[#ff6a6a] text-sm disabled:opacity-60 text-white"
+              >
+                {tx.cancel}
+              </button>
             </div>
           </div>
         </div>

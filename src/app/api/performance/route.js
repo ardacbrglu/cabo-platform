@@ -2,291 +2,374 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Performance API (prod)
- * Auth: NextAuth (role: affiliate|admin, status: active)
- * RL  : 30 req/min (IP+user)
- * Returns:
- *  - products (id, name, imageUrl, isActive)
- *  - totals   (clicks, sales, confirmedSales, earnings, revenue, cr)
- *  - daily    [{date, clicks, sales, confirmed, earnings}]
- *  - perProduct [{productId, name, imageUrl, isActive, clicks, sales, confirmed, earnings, cr}]
- *  - confirmedSales (son 200)
+ * Security Docblock (Cabo PROD)
+ * - Auth: NextAuth session zorunlu; status === 'active'
+ * - RBAC: role ∈ {affiliate, admin}
+ * - Input: Zod ile doğrulama
+ * - Rate limit: GET 60/dk (IP+userId)
+ * - Headers: no-store, nosniff, frame-ancestors 'none', strict-origin-when-cross-origin; HSTS(prod)
+ * - API sözleşmesi: { ok, request_id, ... } | { error, request_id, retry_after? }
+ * - DB: Yalnız Prisma
  */
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import prisma from "@/lib/prisma";
-import { z } from "zod";
+import * as z from "zod";
+import { randomUUID } from "crypto";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 
-const Query = z.object({
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
-  productIds: z
-    .string()
-    .optional()
-    .transform((v) =>
-      v
-        ? v
-            .split(",")
-            .map((s) => Number(s.trim()))
-            .filter((n) => Number.isInteger(n) && n >= 0)
-        : []
-    ),
-});
+/* -------------------- helpers -------------------- */
 
-const sod = (d) => (d ? new Date(`${d}T00:00:00.000Z`) : null);
-const eod = (d) => (d ? new Date(`${d}T23:59:59.999Z`) : null);
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const toNumber = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
 
-function j(data, init = {}) {
-  const res = NextResponse.json(data, init);
-  res.headers.set("Cache-Control", "no-store");
-  res.headers.set("Vary", "Cookie");
+function getRequestId(req) {
+  return req.headers.get("x-request-id") || randomUUID();
+}
+function ipFromRequest(req) {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0].trim();
+  return req.ip || req.headers.get("x-real-ip") || "0.0.0.0";
+}
+function secureHeaders(res, requestId) {
+  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.headers.set("Pragma", "no-cache");
+  res.headers.set("Content-Type", "application/json; charset=utf-8");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set(
+    "Content-Security-Policy",
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox"
+  );
+  if (process.env.NODE_ENV === "production") {
+    res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  }
+  if (requestId) res.headers.set("X-Request-Id", requestId);
   return res;
 }
+function jsonError(status, error, requestId, retryAfterSec) {
+  const res = NextResponse.json(
+    { error, request_id: requestId },
+    { status, headers: retryAfterSec ? { "Retry-After": String(retryAfterSec) } : {} }
+  );
+  return secureHeaders(res, requestId);
+}
+function jsonOk(payload, requestId) {
+  const res = NextResponse.json({ ok: true, request_id: requestId, ...payload }, { status: 200 });
+  return secureHeaders(res, requestId);
+}
+
+// Tarih yardımcıları
+function parseYYYYMMDD(s) {
+  return new Date(`${s}T00:00:00.000Z`);
+}
+function endOfDayUTC(s) {
+  return new Date(`${s}T23:59:59.999Z`);
+}
+function fmtYYYYMMDD_UTC(d) {
+  const y = d.getUTCFullYear();
+  const m = `${d.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getUTCDate()}`.padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function fmtLocalDate(d) {
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function fmtLocalDateTime(d) {
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  const hh = `${d.getHours()}`.padStart(2, "0");
+  const mm = `${d.getMinutes()}`.padStart(2, "0");
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
+
+/* -------------------- validation -------------------- */
+
+const schema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  productIds: z.string().optional(), // "123" veya "123,456"
+  page: z.string().transform((s) => clamp(parseInt(s || "1", 10) || 1, 1, 1_000_000)).optional(),
+  pageSize: z.string().transform((s) => clamp(parseInt(s || "5", 10) || 5, 1, 5)).optional(),
+  clickPage: z.string().transform((s) => clamp(parseInt(s || "1", 10) || 1, 1, 1_000_000)).optional(),
+  clickPageSize: z.string().transform((s) => clamp(parseInt(s || "5", 10) || 5, 1, 5)).optional(),
+});
+
+/* -------------------- GET -------------------- */
 
 export async function GET(req) {
-  // auth
+  const requestId = getRequestId(req);
+
+  // AuthN
   const session = await getServerSession(authOptions);
   const user = session?.user;
-  if (!user?.id) return j({ error: "api.performance.unauthorized" }, { status: 401 });
-  if (user.status !== "active") return j({ error: "forbidden_status" }, { status: 403 });
-  if (!["affiliate", "admin"].includes(user.role)) return j({ error: "forbidden_role" }, { status: 403 });
+  const userId = typeof user?.id === "string" ? parseInt(user.id, 10) : user?.id;
+  if (!userId) return jsonError(401, "unauthorized", requestId);
 
-  // rate limit
+  // AuthZ
+  const role = (user.role || "").toLowerCase();
+  const status = (user.status || "").toLowerCase();
+  if (status !== "active") return jsonError(403, "forbidden_inactive", requestId);
+  if (role !== "affiliate" && role !== "admin") return jsonError(403, "forbidden_role", requestId);
+
+  // Rate limit
+  const ip = ipFromRequest(req);
   try {
-    const key = makeRateLimitKey(req, { scope: "performance", userId: user.id });
-    const { ok, resetMs } = await checkRateLimit({ key, limit: 30, windowMs: 60_000 });
-    if (!ok)
-      return j(
-        { error: "api.performance.ratelimit", retry_after: Math.ceil((resetMs || 0) / 1000) },
-        { status: 429 }
-      );
-  } catch {}
+    const key = makeRateLimitKey("api:performance:get", userId, ip);
+    const rl = await checkRateLimit(key, { limit: 60, window: 60 });
+    if (!rl.allowed) return jsonError(429, "rate_limited", requestId, rl.retryAfter);
+  } catch {
+    // fail-soft
+  }
 
-  // query
-  const { searchParams } = new URL(req.url);
-  const parsed = Query.safeParse({
-    startDate: searchParams.get("startDate"),
-    endDate: searchParams.get("endDate"),
-    productIds: searchParams.get("productIds"),
-  });
-  if (!parsed.success) return j({ error: "invalid_query" }, { status: 400 });
+  // Inputs
+  const url = new URL(req.url);
+  const raw = Object.fromEntries(url.searchParams.entries());
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) return jsonError(400, "invalid_query", requestId);
+  const q = parsed.data;
 
-  const { startDate, endDate, productIds = [] } = parsed.data;
-  const gte = sod(startDate);
-  const lte = eod(endDate);
-  const range = {};
-  if (gte) range.gte = gte;
-  if (lte) range.lte = lte;
-  const useDate = !!(gte || lte);
+  // Tarih aralığı (default: son 365 gün — grafiğin boş kalmaması için)
+  let startDate = q.startDate ? parseYYYYMMDD(q.startDate) : null;
+  let endDate = q.endDate ? endOfDayUTC(q.endDate) : null;
+  if (!startDate || !endDate) {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = new Date(end);
+    start.setDate(end.getDate() - 364);
+    start.setHours(0, 0, 0, 0);
+    startDate = start;
+    endDate = end;
+  }
+  if (startDate > endDate) {
+    const t = startDate;
+    startDate = endDate;
+    endDate = t;
+  }
+
+  // Ürün filtresi
+  let productIdList = [];
+  if (q.productIds && q.productIds.trim() !== "") {
+    productIdList = q.productIds
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+  }
+
+  const page = q.page ?? 1;
+  const pageSize = q.pageSize ?? 5;
+  const clickPage = q.clickPage ?? 1;
+  const clickPageSize = q.clickPageSize ?? 5;
+
+  // WHERE (şemaya birebir)
+  // Click: userId Click tablosunda yok; AffiliateLink üzerinden
+  const whereClick = {
+    clickedAt: { gte: startDate, lte: endDate },
+    affiliateLink: {
+      userId,
+      ...(productIdList.length ? { productId: { in: productIdList } } : {}),
+    },
+  };
+
+  // Sales: AffiliateUserSale (userId, convertedAt)
+  const whereSalesAll = {
+    userId,
+    convertedAt: { gte: startDate, lte: endDate },
+    ...(productIdList.length ? { productId: { in: productIdList } } : {}),
+  };
+  const whereSalesConfirmed = { ...whereSalesAll, status: "confirmed" };
 
   try {
-    // Kullanıcının sahip olduğu ürünler
+    /* ---------- PRODUCTS (kullanıcının linkleri) ---------- */
     const links = await prisma.affiliateLink.findMany({
-      where: { userId: user.id, isVisible: true },
-      select: { productId: true },
-    });
-    const myProductIds = [...new Set(links.map((l) => l.productId))];
-
-    if (myProductIds.length === 0) {
-      return j({
-        ok: true,
-        products: [],
-        totals: { clicks: 0, sales: 0, confirmedSales: 0, earnings: 0, revenue: 0, cr: 0 },
-        daily: [],
-        perProduct: [],
-        confirmedSales: [],
-      });
-    }
-
-    const products = await prisma.merchantProduct.findMany({
-      where: { productId: { in: myProductIds } },
-      select: { productId: true, name: true, imageUrl: true, isActive: true },
-      orderBy: { name: "asc" },
-    });
-
-    // filtre: 0 => hepsi
-    const can = new Set(myProductIds);
-    let filtered = myProductIds;
-    if (productIds.length && !productIds.includes(0)) {
-      filtered = productIds.filter((id) => can.has(id));
-      if (!filtered.length) {
-        return j({
-          ok: true,
-          products,
-          totals: { clicks: 0, sales: 0, confirmedSales: 0, earnings: 0, revenue: 0, cr: 0 },
-          daily: [],
-          perProduct: [],
-          confirmedSales: [],
-        });
-      }
-    }
-
-    // CLICKS
-    const clicksRaw = await prisma.click.findMany({
-      where: {
-        affiliateLink: { userId: user.id, productId: { in: filtered } },
-        ...(useDate ? { clickedAt: range } : {}),
-      },
-      select: { clickedAt: true, affiliateLink: { select: { productId: true } } },
-      orderBy: { clickedAt: "asc" },
-    });
-
-    // SALES
-    const salesRaw = await prisma.affiliateUserSale.findMany({
-      where: {
-        userId: user.id,
-        productId: { in: filtered },
-        ...(useDate ? { convertedAt: range } : {}),
-      },
+      where: { userId },
       select: {
-        convertedAt: true,
         productId: true,
-        quantity: true,
-        status: true,
-        amount: true,
-        commissionAffiliate: true,
+        product: { select: { productId: true, name: true, imageUrl: true } },
       },
-      orderBy: { convertedAt: "asc" },
+      orderBy: { createdAt: "desc" },
     });
 
-    // CONFIRMED list (limit 200)
-    const confirmedRaw = await prisma.affiliateUserSale.findMany({
-      where: {
-        userId: user.id,
-        productId: { in: filtered },
-        status: "confirmed",
-        ...(useDate ? { convertedAt: range } : {}),
-      },
-      orderBy: { convertedAt: "desc" },
-      take: 200,
-      select: {
-        saleId: true,
-        orderId: true,
-        productId: true,
-        amount: true,
-        commissionAffiliate: true,
-        quantity: true,
-        status: true,
-        convertedAt: true,
-        merchantProduct: { select: { name: true, imageUrl: true } },
-      },
-    });
-
-    // ---- Aggregations ----
-    const dailyMap = new Map(); // date -> {clicks,sales,confirmed,earnings}
-    const pp = new Map(); // productId -> {clicks,sales,confirmed,earnings}
-
-    const incPP = (pid, key, v = 1) => {
-      const base = pp.get(pid) || { clicks: 0, sales: 0, confirmed: 0, earnings: 0 };
-      base[key] += v;
-      pp.set(pid, base);
-    };
-    const incDay = (d, key, v = 1) => {
-      const base = dailyMap.get(d) || { clicks: 0, sales: 0, confirmed: 0, earnings: 0 };
-      base[key] += v;
-      dailyMap.set(d, base);
-    };
-
-    for (const r of clicksRaw) {
-      const d = r.clickedAt.toISOString().slice(0, 10);
-      const pid = r.affiliateLink.productId;
-      incPP(pid, "clicks", 1);
-      incDay(d, "clicks", 1);
+    const products = [];
+    const seen = new Set();
+    for (const l of links) {
+      const p = l.product;
+      const pid = p?.productId ?? l.productId;
+      if (!pid || seen.has(pid)) continue;
+      seen.add(pid);
+      products.push({ productId: pid, name: p?.name || `#${pid}`, imageUrl: p?.imageUrl ?? null });
     }
 
-    for (const r of salesRaw) {
-      const d = r.convertedAt.toISOString().slice(0, 10);
-      const pid = r.productId;
-      const qty = Number.isFinite(r.quantity) && r.quantity > 0 ? r.quantity : 1;
-      incPP(pid, "sales", qty);
-      incDay(d, "sales", qty);
-      if (r.status === "confirmed") {
-        const comm = Number(r.commissionAffiliate || 0);
-        incPP(pid, "confirmed", qty);
-        incPP(pid, "earnings", comm);
-        incDay(d, "confirmed", qty);
-        incDay(d, "earnings", comm);
-      }
-    }
+    /* ---------- PARALLEL QUERIES ---------- */
+    const [
+      clicksCount,
+      salesCountAll,
+      salesCountConfirmed,
 
-    const daily = Array.from(dailyMap.entries())
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([date, v]) => ({ date, ...v }));
+      sumSalesAll, // _sum.commissionAffiliate (tüm statüler)
+      sumConfirmedParts, // _sum.commissionAffiliate + _sum.commissionPlatform (net için)
 
-    const perProduct = Array.from(pp.entries())
-      .map(([productId, v]) => {
-        const meta = products.find((p) => p.productId === productId);
-        const cr = v.clicks > 0 ? +(v.confirmed / v.clicks).toFixed(4) : 0;
-        return {
-          productId,
-          name: meta?.name || "",
-          imageUrl: meta?.imageUrl || null,
-          isActive: !!meta?.isActive,
-          clicks: v.clicks,
-          sales: v.sales,
-          confirmed: v.confirmed,
-          earnings: +Number(v.earnings || 0).toFixed(2),
-          cr,
-        };
-      })
-      .sort((a, b) => b.earnings - a.earnings);
+      clicksPageRows,
+      salesPageRows,
 
-    const totals = {
-      clicks: clicksRaw.length,
-      sales: salesRaw.reduce((a, r) => a + (Number(r.quantity) || 1), 0),
-      confirmedSales: salesRaw.reduce(
-        (a, r) => a + (r.status === "confirmed" ? (Number(r.quantity) || 1) : 0),
-        0
-      ),
-      earnings: +salesRaw
-        .filter((r) => r.status === "confirmed")
-        .reduce((a, r) => a + Number(r.commissionAffiliate || 0), 0)
-        .toFixed(2),
-      revenue: +salesRaw
-        .filter((r) => r.status === "confirmed")
-        .reduce((a, r) => a + Number(r.amount || 0), 0)
-        .toFixed(2),
-      cr:
-        clicksRaw.length > 0
-          ? +(
-              salesRaw
-                .filter((r) => r.status === "confirmed")
-                .reduce((a, r) => a + (Number(r.quantity) || 1), 0) / clicksRaw.length
-            ).toFixed(4)
-          : 0,
-    };
+      clicksForDaily,
+      salesConfirmedForDaily,
+    ] = await prisma.$transaction([
+      prisma.click.count({ where: whereClick }),
+      prisma.affiliateUserSale.count({ where: whereSalesAll }),
+      prisma.affiliateUserSale.count({ where: whereSalesConfirmed }),
 
-    const confirmedSales = confirmedRaw.map((s) => ({
-      saleId: s.saleId,
-      orderId: s.orderId,
-      date: s.convertedAt.toISOString().slice(0, 10),
-      productId: s.productId,
-      productName: s.merchantProduct?.name || "",
-      productImage: s.merchantProduct?.imageUrl || null,
-      amount: Number(s.amount || 0),
-      commission: Number(s.commissionAffiliate || 0),
-      quantity: Number.isFinite(s.quantity) && s.quantity > 0 ? s.quantity : 1,
-      status: s.status,
+      prisma.affiliateUserSale.aggregate({
+        _sum: { commissionAffiliate: true },
+        where: whereSalesAll,
+      }),
+      prisma.affiliateUserSale.aggregate({
+        _sum: { commissionAffiliate: true, commissionPlatform: true },
+        where: whereSalesConfirmed,
+      }),
+
+      prisma.click.findMany({
+        where: whereClick,
+        select: {
+          clickId: true,
+          clickedAt: true,
+          userAgent: true,
+          referrer: true,
+          affiliateLink: { select: { productId: true } },
+        },
+        orderBy: { clickedAt: "desc" },
+        skip: (clickPage - 1) * clickPageSize,
+        take: clickPageSize,
+      }),
+
+      prisma.affiliateUserSale.findMany({
+        where: whereSalesConfirmed,
+        select: {
+          saleId: true,
+          orderId: true,
+          convertedAt: true,
+          productId: true,
+          amount: true,
+          quantity: true,
+          status: true,
+          commissionAffiliate: true,
+          commissionPlatform: true,
+          merchantProduct: { select: { productId: true, name: true, imageUrl: true } },
+        },
+        orderBy: { convertedAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+
+      prisma.click.findMany({
+        where: whereClick,
+        select: { clickedAt: true },
+      }),
+      prisma.affiliateUserSale.findMany({
+        where: whereSalesConfirmed,
+        select: { convertedAt: true, commissionAffiliate: true, commissionPlatform: true },
+      }),
+    ]);
+
+    /* ---------- MAP: clicks ---------- */
+    const clickRows = clicksPageRows.map((c) => ({
+      clickId: c.clickId,
+      time: fmtLocalDateTime(new Date(c.clickedAt)),
+      productId: c.affiliateLink?.productId ?? null,
+      referrer: c.referrer ?? null,
+      userAgent: c.userAgent ?? null,
     }));
 
-    return j({
-      ok: true,
-      products,
-      totals,
-      daily,
-      perProduct,
-      confirmedSales,
-      filters: {
-        startDate: startDate || null,
-        endDate: endDate || null,
-        productIds: filtered,
-      },
+    /* ---------- MAP: sales (net = aff - platform) ---------- */
+    const salesRows = salesPageRows.map((s) => {
+      const p = s.merchantProduct || {};
+      const pid = p.productId ?? s.productId ?? null;
+      const commission = toNumber(s.commissionAffiliate, 0);
+      const platformFee = toNumber(s.commissionPlatform, 0);
+      const net = commission - platformFee;
+      return {
+        saleId: s.saleId,
+        orderId: s.orderId ?? null,
+        date: fmtLocalDate(new Date(s.convertedAt)),
+        productId: pid,
+        productName: p?.name || `#${pid}`,
+        productImage: p?.imageUrl ?? null,
+        amount: toNumber(s.amount, 0),
+        commission,
+        platformFee,
+        net,
+        quantity: toNumber(s.quantity, 1),
+        status: s.status || "confirmed",
+      };
     });
-  } catch (e) {
-    console.error("Performance API error:", e);
-    return j({ error: "api.performance.serverError" }, { status: 500 });
+
+    /* ---------- TOPLAMLAR ---------- */
+    const earningsAll = toNumber(sumSalesAll?._sum?.commissionAffiliate, 0);
+    const confAff = toNumber(sumConfirmedParts?._sum?.commissionAffiliate, 0);
+    const confPlat = toNumber(sumConfirmedParts?._sum?.commissionPlatform, 0);
+    const netConfirmed = confAff - confPlat;
+
+    const totals = {
+      clicks: clicksCount,
+      sales: salesCountAll,
+      confirmedSales: salesCountConfirmed,
+      earnings: earningsAll,
+      netEarnings: netConfirmed,
+      cr: clicksCount > 0 ? Number(((salesCountConfirmed / clicksCount) * 100).toFixed(2)) : 0,
+    };
+
+    /* ---------- DAILY (grafik) ---------- */
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startUTC = Date.UTC(
+      startDate.getUTCFullYear(),
+      startDate.getUTCMonth(),
+      startDate.getUTCDate()
+    );
+    const endUTC = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate());
+    const dayIndex = new Map();
+    for (let t = startUTC; t <= endUTC; t += dayMs) {
+      const key = fmtYYYYMMDD_UTC(new Date(t));
+      dayIndex.set(key, { date: key, clicks: 0, confirmed: 0, net: 0 });
+    }
+    for (const c of clicksForDaily) {
+      const key = fmtYYYYMMDD_UTC(new Date(c.clickedAt));
+      const row = dayIndex.get(key);
+      if (row) row.clicks += 1;
+    }
+    for (const s of salesConfirmedForDaily) {
+      const key = fmtYYYYMMDD_UTC(new Date(s.convertedAt));
+      const row = dayIndex.get(key);
+      if (row) {
+        row.confirmed += 1;
+        row.net += toNumber(s.commissionAffiliate, 0) - toNumber(s.commissionPlatform, 0);
+      }
+    }
+    const daily = Array.from(dayIndex.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+
+    /* ---------- RESPONSE ---------- */
+    return jsonOk(
+      {
+        products,
+        totals,
+        daily,
+        confirmedSales: { total: salesCountConfirmed, rows: salesRows },
+        clicks: { total: clicksCount, rows: clickRows },
+        cache: "no-store",
+        range: { startDate: fmtYYYYMMDD_UTC(startDate), endDate: fmtYYYYMMDD_UTC(endDate) },
+      },
+      requestId
+    );
+  } catch (err) {
+    return jsonError(500, "server_error", requestId);
   }
 }

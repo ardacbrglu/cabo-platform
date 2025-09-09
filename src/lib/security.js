@@ -5,7 +5,7 @@
  * - Mutasyonlarda (POST/PATCH/PUT/DELETE) Origin/Referer host eşleşmesi zorunlu.
  * - X-Requested-With: XMLHttpRequest zorunlu.
  * - X-Request-Id zorunlu.
- * - Prod’da Host spoofing riskine karşı env zorunlu; dev’de toleranslı.
+ * - Prod’da env ile sınırlandır; Dev’de LAN IP/localhost toleransı + opsiyonel whitelist.
  */
 
 function parseHostsFromEnv() {
@@ -14,19 +14,28 @@ function parseHostsFromEnv() {
     if (!u) return;
     try { list.add(new URL(u).host); } catch {}
   };
-  // Birden çok domain için destek
-  const multi = process.env.ALLOWED_HOSTS; // "https://a.com,https://b.com,http://localhost:3000"
+
+  // Birden çok domain desteği (virgül ayraç)
+  // Ör: ALLOWED_HOSTS="http://localhost:3000,http://192.168.1.105:3000"
+  const multi = process.env.ALLOWED_HOSTS;
   if (multi) {
     multi.split(",").map((s) => s.trim()).forEach(add);
   } else {
+    // Tekil fallback
     add(process.env.NEXTAUTH_URL);
     add(process.env.BASE_URL);
   }
+
+  // Dev'e özel ekstra whitelist
+  if (process.env.NODE_ENV !== "production") {
+    const devMulti = process.env.DEV_ALLOWED_HOSTS; // "http://10.0.0.5:3000, http://192.168.1.77:3000"
+    if (devMulti) devMulti.split(",").map((s) => s.trim()).forEach(add);
+  }
+
   return Array.from(list);
 }
 
 function getForwardedOrHost(req) {
-  // Proxy arkasında doğru host
   return req.headers.get("x-forwarded-host") || req.headers.get("host") || null;
 }
 
@@ -34,16 +43,31 @@ function hostOf(urlStr) {
   try { return new URL(urlStr).host; } catch { return null; }
 }
 
-export function isMutation(method) {
+function isMutation(method) {
   return ["POST", "PATCH", "PUT", "DELETE"].includes(method?.toUpperCase?.());
+}
+
+function hostnamePart(h) {
+  return String(h || "").split(":")[0];
+}
+
+function isPrivateLanHost(h) {
+  const hn = hostnamePart(h);
+  return (
+    /^localhost$/i.test(hn) ||
+    /^127\.0\.0\.1$/i.test(hn) ||
+    /^10\./.test(hn) ||
+    /^192\.168\./.test(hn) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hn)
+  );
 }
 
 export function requireOrigin(req) {
   const method = req?.method;
-  if (!isMutation(method)) return; // GET için Origin şart değil (öneri: API'lerinde yine de çağırabilirsin)
+  if (!isMutation(method)) return; // GET için zorunlu değil
 
   const allowedHosts = parseHostsFromEnv();
-  const reqHost = getForwardedOrHost(req);
+  const reqHost = getForwardedOrHost(req); // "192.168.1.105:3000" gibi
 
   // PROD: env ile belirlenmiş host(lar) zorunlu
   if (process.env.NODE_ENV === "production") {
@@ -54,13 +78,19 @@ export function requireOrigin(req) {
       throw err;
     }
   } else {
-    // DEV: env boşsa request host’u allow list’e ekle (tolerans)
+    // DEV: env boşsa isteğin geldiği host’u otomatik kabul et (kolaylık)
     if (!allowedHosts.length && reqHost) allowedHosts.push(reqHost);
   }
 
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
-  const candidate = hostOf(origin) || hostOf(referer);
+  const candidate = hostOf(origin) || hostOf(referer); // "host:port"
+
+  // DEV: LAN/localhost otomatik serbest (DEV_ALLOW_LAN=0 ile kapatılabilir)
+  if (process.env.NODE_ENV !== "production") {
+    const allowLan = (process.env.DEV_ALLOW_LAN ?? "1") !== "0";
+    if (allowLan && candidate && isPrivateLanHost(candidate)) return;
+  }
 
   const ok = candidate && allowedHosts.includes(candidate);
   if (!ok) {

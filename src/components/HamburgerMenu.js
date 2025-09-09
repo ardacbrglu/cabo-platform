@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Home, ShoppingCart, Link2, BarChart2, Wallet2, Menu, X, Bell, Settings, Headset, LogOut, User2 } from "lucide-react";
+import {
+  Home, ShoppingCart, Link2, BarChart2, Wallet2,
+  Menu, X, Bell, Settings, Headset, LogOut, User2
+} from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
 import { usePathname } from "next/navigation";
@@ -17,30 +20,31 @@ export default function HamburgerMenu() {
   const { t } = useTranslation();
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
+  const hasUnread = (unreadCount || 0) > 0;
 
   useEffect(() => {
-    function handleClick(e) {
+    function onDoc(e) {
       if (open && !e.target.closest("#cabo-hamburger-panel")) setOpen(false);
       if (profileOpen && !e.target.closest("#cabo-profile-section")) setProfileOpen(false);
     }
-    function handleEsc(e) {
+    function onEsc(e) {
       if ((open || profileOpen) && e.key === "Escape") {
         setOpen(false);
         setProfileOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleEsc);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("touchstart", onDoc, { passive: true });
+    document.addEventListener("keydown", onEsc);
     return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleEsc);
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+      document.removeEventListener("keydown", onEsc);
     };
   }, [open, profileOpen]);
 
   function handleLogout() {
-    // En güvenli yol: tam sayfa yönlendirme → server cookie silsin → 302 /login
     if (typeof window !== "undefined") {
-      // (İsteğe bağlı) Eski custom cookie varsa temizlemeyi dene — güvenlik için şart değil
       document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
       document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
       setUser && setUser(null);
@@ -58,6 +62,7 @@ export default function HamburgerMenu() {
 
   return (
     <>
+      {/* FAB hamburger */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
@@ -65,35 +70,27 @@ export default function HamburgerMenu() {
           style={{ width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" }}
           aria-label="Open Menu"
         >
-          <span className="relative">
+          <span className="relative inline-flex">
             <Menu size={27} color="#81d742" />
-            <NotificationBadge show={unreadCount > 0} />
+            {/* Rozet SAĞ ÜST */}
+            <NotificationBadge show={hasUnread} size={11} offsetX={-4} offsetY={-4} />
           </span>
         </button>
       )}
 
       <Portal>
         <div
-          className={`fixed inset-0 z-[40000] transition-all duration-300 ${
-            open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-          }`}
+          className={`fixed inset-0 z-[40000] transition-all duration-300 ${open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
           aria-hidden={!open}
         >
           <div
-            className={`absolute inset-0 bg-black/60 transition-all duration-300 ${
-              open ? "backdrop-blur-[4px] opacity-100" : "opacity-0"
-            }`}
+            className={`absolute inset-0 bg-black/60 transition-all duration-300 ${open ? "backdrop-blur-[4px] opacity-100" : "opacity-0"}`}
             onClick={() => setOpen(false)}
           />
           <div
             id="cabo-hamburger-panel"
-            className={`
-              fixed top-0 left-0 w-full max-w-full min-h-[72px]
-              rounded-b-2xl bg-[#191919] border-b border-[#232323] shadow-2xl flex flex-col
-              transition-transform duration-400 ease-in-out
-              ${open ? "translate-y-0" : "-translate-y-full"}
-            `}
-            style={{ boxShadow: "0 2px 42px 10px rgba(0,0,0,0.65)", minHeight: "0", maxHeight: "96vh", zIndex: 41000 }}
+            className={`fixed top-0 left-0 w-full max-w-full rounded-b-2xl bg-[#191919] border-b border-[#232323] shadow-2xl flex flex-col transition-transform duration-400 ease-in-out ${open ? "translate-y-0" : "-translate-y-full"}`}
+            style={{ boxShadow: "0 2px 42px 10px rgba(0,0,0,0.65)", maxHeight: "96vh", zIndex: 41000 }}
             role="dialog"
             aria-modal="true"
             aria-label="Main menu"
@@ -116,9 +113,9 @@ export default function HamburgerMenu() {
                   onClick={() => setOpen(false)}
                   className={`
                     flex items-center gap-2 py-2 px-3 rounded-lg font-mono font-semibold text-[1.08rem]
-                    transition-all
-                    ${pathname === href ? "bg-[#212921] text-[#81d742] scale-[1.045] shadow font-extrabold" : "text-white hover:text-[#81d742] hover:bg-[#212921] active:scale-95"}
-                  `}
+                    transition-all ${pathname === href
+                      ? "bg-[#212921] text-[#81d742] scale-[1.045] shadow font-extrabold"
+                      : "text-white hover:text-[#81d742] hover:bg-[#212921] active:scale-95"}`}
                   style={{ fontWeight: pathname === href ? 800 : 600 }}
                 >
                   {icon} <span>{label}</span>
@@ -126,73 +123,61 @@ export default function HamburgerMenu() {
               ))}
             </nav>
 
+            {/* Profil alanı + rozet */}
             <div className="mt-2 px-5 pb-4" id="cabo-profile-section">
               <button
                 className="w-full flex items-center gap-2 py-2 px-3 rounded-lg font-mono font-bold text-[1.09rem] text-[#81d742] bg-[#181818] transition hover:bg-[#232323] focus:outline-none"
                 style={{ minHeight: 44 }}
-                onClick={() => setProfileOpen((v) => !v)}
+                onClick={() => setProfileOpen(v => !v)}
                 aria-haspopup="true"
                 aria-expanded={profileOpen}
                 aria-label={t("profile")}
                 type="button"
               >
-                <User2 size={20} />
+                <span className="relative inline-flex">
+                  <User2 size={20} />
+                  <NotificationBadge show={hasUnread} size={10} offsetX={-4} offsetY={-4} />
+                </span>
                 <span className="truncate w-full">{user?.name || t("profile")}</span>
                 <svg width="16" height="16" className="ml-1 align-middle relative top-[1px]">
                   <path d="M3 6.5L8 11l5-4.5" stroke="#81d742" strokeWidth="2" fill="none" />
                 </svg>
-                <span className="relative">
-                  <NotificationBadge show={unreadCount > 0} size={12} />
-                </span>
               </button>
 
               {profileOpen && (
                 <div
-                  className="w-full mt-2 rounded-xl bg-[#212921] border border-[#232323] shadow-2xl animate-fadeIn"
-                  style={{ background: "#191919", zIndex: 9999, padding: "6px 0 3px 0" }}
+                  className="w-full mt-2 rounded-xl bg-[#191919] border border-[#232323] shadow-2xl animate-fadeIn"
+                  style={{ zIndex: 9999, padding: "6px 0 3px 0" }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   <Link
                     href="/notifications"
                     className="flex items-center gap-3 px-5 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition relative"
-                    onClick={() => {
-                      setProfileOpen(false);
-                      setOpen(false);
-                    }}
+                    onClick={() => { setProfileOpen(false); setOpen(false); }}
                   >
-                    <span className="relative flex items-center">
+                    <span className="relative inline-flex items-center">
                       <Bell size={16} />
-                      <NotificationBadge show={unreadCount > 0} size={9} />
+                      <NotificationBadge show={hasUnread} size={9} offsetX={-4} offsetY={-4} />
                     </span>
                     {t("notifications")}
                   </Link>
                   <Link
                     href="/settings"
                     className="flex items-center gap-3 px-5 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                    onClick={() => {
-                      setProfileOpen(false);
-                      setOpen(false);
-                    }}
+                    onClick={() => { setProfileOpen(false); setOpen(false); }}
                   >
                     <Settings size={16} /> {t("settings")}
                   </Link>
                   <Link
                     href="/support"
                     className="flex items-center gap-3 px-5 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                    onClick={() => {
-                      setProfileOpen(false);
-                      setOpen(false);
-                    }}
+                    onClick={() => { setProfileOpen(false); setOpen(false); }}
                   >
                     <Headset size={16} /> {t("support")}
                   </Link>
                   <div className="border-t border-[#232323] my-1" />
                   <button
-                    onClick={() => {
-                      setProfileOpen(false);
-                      setOpen(false);
-                      handleLogout();
-                    }}
+                    onClick={() => { setProfileOpen(false); setOpen(false); handleLogout(); }}
                     className="flex items-center gap-3 px-5 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff5555] transition w-full"
                     style={{ background: "transparent", outline: "none" }}
                     type="button"
@@ -208,13 +193,8 @@ export default function HamburgerMenu() {
       </Portal>
 
       <style jsx>{`
-        .animate-fadeIn {
-          animation: fadeIn .15s ease;
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-8px); }
-          to   { opacity: 1; transform: none; }
-        }
+        .animate-fadeIn { animation: fadeIn .15s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
       `}</style>
     </>
   );

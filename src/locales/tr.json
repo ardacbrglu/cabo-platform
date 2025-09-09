@@ -435,9 +435,21 @@
   
   "netPaidTotal": "Net ödenmiş tutar",
 
-  "lockedUpdateWindowPassed": "Güncelleme süresi doldu. Bu talep için banka bilgilerini artık güncelleyemezsiniz."
+  "lockedUpdateWindowPassed": "Güncelleme süresi doldu. Bu talep için banka bilgilerini artık güncelleyemezsiniz.",
 
+
+
+  "crHelp": "CR = (onaylı satış / tıklama).",
+  "openChart": "Grafiği aç",
+  "closeChart": "Grafiği kapat",
+  "netEarnings": "Net Kazanç",
+  "performance.chart_net": "Net Kazanç",
+  "time": "Zaman",
+  "referrer": "referrer",
+  "userAgent": "userAgent"
 }
+
+
 
 
 

@@ -10,7 +10,6 @@ import { createPortal } from "react-dom";
 export default function Portal({ children }) {
   const elRef = useRef(null);
 
-  // SSR sırasında document yok; client'ta bir kere oluştur
   if (typeof window !== "undefined" && elRef.current === null) {
     elRef.current = document.createElement("div");
   }

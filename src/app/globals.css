@@ -2,38 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── App baseline (clean + simple)
-   - Single real scroller = <html>
-   - Body is not a scroller
-   - First-scroll fixes (disable scroll anchoring)
-   - Desktop/mobile scrollbars hidden
-   - Footer kept at a constant distance (sticky if content short)
-   - Mobile: kill hover transforms; allow pan-y everywhere
-   - Overlay/dropdown safe stacking
-────────────────────────────── */
-
+/* ── App baseline (clean + simple) */
 :root{
   color-scheme: dark;
-  --public-header-h: 72px;  /* header (public) */
-  --public-footer-h: 84px;  /* footer (public) – comfy spacing */
-  --header-h: 72px;         /* private/app header */
-  --footer-h: 68px;         /* private/app footer */
-  /* edge band safe padding */
+  --public-header-h: 72px;
+  --public-footer-h: 84px;
+  --header-h: 72px;
+  --footer-h: 68px;
   --edge-pad: clamp(14px, 3.6vw, 34px);
+  /* Tailwind ring default override */
+  --tw-ring-color: #81d742 !important;
 }
 
 /* Base box model */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ===== Root scroller (only one) ===== */
+/* Root scroller */
 html{
   min-height:100%;
   background:#0B0B0B;
   color:#f6f6f6;
-  overflow-x:hidden;  /* the ONLY real scrollbar lives on html */
+  overflow-x:hidden;
   overflow-y:auto;
-  -webkit-overflow-scrolling:touch;  /* momentum on iOS */
-  overflow-anchor:none;              /* disable scroll anchoring */
+  -webkit-overflow-scrolling:touch;
+  overflow-anchor:none;
   overscroll-behavior-x:contain;
   overscroll-behavior-y:auto;
   -webkit-text-size-adjust:100%;
@@ -51,14 +43,14 @@ body{
   overflow-anchor:none;
 }
 
-/* Also neutralize scroll anchoring on the main wrappers */
+/* Also neutralize scroll anchoring on main wrappers */
 #__next, #cabo-main, main { overflow-anchor:none; }
 
-/* ===== Hide scrollbars (desktop + mobile) ===== */
+/* Hide scrollbars */
 *::-webkit-scrollbar{ width:0!important; height:0!important; display:none!important; }
 html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
 
-/* ===== Containers ===== */
+/* Containers */
 .container{
   width:100%;
   max-width:1100px;
@@ -69,7 +61,7 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   .container{ padding-left:1.25rem; padding-right:1.25rem; }
 }
 
-/* Full-width “edge band” with safe side padding (for headers & footers) */
+/* Edge band (safe side padding) */
 .edge-band{
   width:100%;
   padding-left:var(--edge-pad);
@@ -77,7 +69,7 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   margin-left:0; margin-right:0;
 }
 
-/* ===== Shells (public & private) ===== */
+/* Public shell */
 .public-shell{
   min-height:100dvh;
   display:grid;
@@ -101,7 +93,7 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   border-bottom:1px solid #1b1b1b;
 }
 
-/* === PRIVATE HEADER — public ile aynı ton ve yüksekliğe sabit === */
+/* Private header */
 .app-header{
   height: var(--header-h);
   background:#111;
@@ -127,10 +119,10 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   }
 }
 
-/* Main content: let grid size it, never create inner scrollers here */
+/* Main content: let grid size it, never inner scrollers */
 #cabo-main{ min-height:0; overflow:visible; }
 
-/* Footer (public) – sticky comfort spacing + safe area, edge band children */
+/* Footer (public) */
 .cabo-public-footer{
   background:#111;
   border-top:1px solid #232323;
@@ -154,11 +146,8 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   text-align:center;
 }
 
-/* App footer (private) matches public tone */
-.app-footer{
-  background:#111;
-  position:relative;
-}
+/* App footer (private) */
+.app-footer{ background:#111; position:relative; }
 
 /* Brand */
 .brand-cabo{
@@ -168,12 +157,12 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
 }
 @media (min-width:1024px){ .brand-cabo{ font-size:32px; } }
 
-/* Dropdown/overlay stacking (react-select, portals, etc.) */
+/* Overlay menus (react-select, portals, etc.) */
 [class*="select-menu"], [class*="Select__menu"], .custom-select-menu, .select-dropdown, [data-select-menu]{
   position:absolute; z-index:9999 !important; overflow:visible;
 }
 
-/* If a component truly needs its own scroll (long list, menu, etc.) */
+/* Inner scroll opt-in */
 .allow-inner-scroll{ overflow:auto !important; -webkit-overflow-scrolling:touch; }
 
 /* ===== Mobile-only hardening ===== */
@@ -194,38 +183,30 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
   [class*="snap-"]{ scroll-snap-type:none !important; }
 }
 
-/* ===== reCAPTCHA v2 (dark) — NATURAL (kırpmasız) =====
-   Yapı:
-   <div class="cabo-recaptcha-clip">
-     <div class="cabo-recaptcha-box">
-       <div class="g-recaptcha"></div>
-     </div>
-   </div>
-*/
-.cabo-recaptcha-clip{
-  width:auto;
-  height:auto;
-  overflow:visible;
-  background:transparent;
-  box-shadow:none;
-  border-radius:0;
+/* ===== reCAPTCHA v2 (NATURAL, kırpmasız, ortalı + yumuşak) ===== */
+/* reCAPTCHA — ortalı, doğal boyut, kart kabuk */
+.cabo-recaptcha-wrap{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  width:100%;
   line-height:0;
 }
-.cabo-recaptcha-box{
-  position:static;
-  inset:auto;
-  width:auto;
-  height:auto;
-  background:transparent !important;
+.cabo-recaptcha-plate{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:10px 12px;
+  background:#161616;
+  border:1px solid #262626;
+  border-radius:12px;
+  box-shadow:0 10px 24px rgba(0,0,0,.25);
+  line-height:0;
 }
-/* Google container margin’lerini sıfırla (doğal blok hizası) */
+.cabo-recaptcha-clip{ width:auto; height:auto; overflow:visible; background:transparent; }
+.cabo-recaptcha-box{ position:static; inset:auto; width:auto; height:auto; background:transparent !important; }
+.g-recaptcha{ display:inline-block; vertical-align:top; }
 .g-recaptcha > div{ margin:0 !important; }
-/* iFrame hizalaması */
-.cabo-recaptcha-clip iframe{ display:block; }
+.cabo-recaptcha-clip iframe{ display:block; max-width:none !important; }
+@media (max-width:420px){ .cabo-recaptcha-plate{ padding:6px; border-radius:10px; } }
 
-/* Fallback */
-.cabo-recaptcha-fallback{
-  width:100%; height:100%;
-  display:flex; align-items:center; justify-content:center;
-  background:transparent; border-radius:0;
-}

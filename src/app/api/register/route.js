@@ -1,17 +1,4 @@
-/**
- * Affiliate register API (manual only)
- *
- * Security Docblock (Cabo PROD):
- * - requireOrigin + requireAjax + requireRequestId
- * - Ratelimit: 8/min (IP+UA)
- * - Validation: Zod + sanitize
- * - CAPTCHA: verify on all flows (with remote IP)
- * - Email activation: single-use token (1 day)
- * - JSON error contract: { success:false, error, message, request_id, [error_code] }
- * - Audit: success/error events with requestId
- * - DB: Prisma only (no raw SQL)
- * - NOTE: Google registration is DISABLED (returns 403)
- */
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -22,10 +9,8 @@ import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
-import { sendActivationEmail } from "@/lib/mailer";
 import { verifyRecaptchaFromRequest, verifyRecaptcha } from "@/lib/captcha";
-
-export const runtime = "nodejs";
+import { sendActivationEmail } from "@/lib/mailer.js";
 
 const ACTIVATION_JWT_SECRET = process.env.NEXTAUTH_SECRET;
 
@@ -43,7 +28,6 @@ const ManualSchema = z.object({
   password: z.string().min(8).regex(/[A-Za-z]/).regex(/\d/),
 });
 
-// 🚫 Google kaydı devre dışı. Payload gelse bile 403 vereceğiz.
 const GoogleDisabledSchema = z.object({
   flow: z.literal("google"),
   termsAccepted: z.literal(true),
@@ -88,7 +72,7 @@ const messages = {
 };
 
 export async function POST(req) {
-  // --- Preflight
+  // Preflight
   let requestId = "unknown";
   try {
     requestId = requireRequestId(req);
@@ -107,7 +91,7 @@ export async function POST(req) {
   const locale = (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en";
   const t = (k) => messages[locale][k] ?? k;
 
-  // RL 8/dk (IP+UA)
+  // Ratelimit 8/min (IP+UA)
   const rlKey = makeRateLimitKey(req, { scope: "register" });
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 8, windowMs: 60_000 });
   if (!ok) {
@@ -125,7 +109,7 @@ export async function POST(req) {
     );
   }
 
-  // Body parse
+  // Body
   let bodyRaw;
   try {
     bodyRaw = await req.json();
@@ -139,17 +123,10 @@ export async function POST(req) {
     );
   }
 
-  // ---- Google (DEVRE DIŞI)
+  // Google (disabled)
   if (bodyRaw?.flow === "google") {
-    try {
-      GoogleDisabledSchema.parse(bodyRaw);
-    } catch {}
-    try {
-      if (bodyRaw?.captcha) {
-        // doğrula ama kayıt açma
-        await verifyRecaptcha(bodyRaw.captcha).catch(() => ({}));
-      }
-    } catch {}
+    try { GoogleDisabledSchema.parse(bodyRaw); } catch {}
+    try { if (bodyRaw?.captcha) await verifyRecaptcha(bodyRaw.captcha).catch(() => ({})); } catch {}
     audit({ evt: "register.google.disabled", requestId });
     return withHeaders(
       NextResponse.json(
@@ -160,20 +137,17 @@ export async function POST(req) {
     );
   }
 
-  // ---- Manual
+  // Manual
   let data;
   try {
     data = ManualSchema.parse(bodyRaw);
   } catch (e) {
     const field = e?.errors?.[0]?.path?.[0];
     const msg =
-      field === "email"
-        ? t("email")
-        : field === "name"
-        ? t("username")
-        : field === "password"
-        ? t("password")
-        : t("required");
+      field === "email" ? t("email")
+      : field === "name" ? t("username")
+      : field === "password" ? t("password")
+      : t("required");
     return withHeaders(
       NextResponse.json(
         { success: false, error: "invalid_payload", message: msg, request_id: requestId },
@@ -183,7 +157,7 @@ export async function POST(req) {
     );
   }
 
-  // ✅ CAPTCHA (IP ile)
+  // CAPTCHA verify
   const capOk = await verifyRecaptchaFromRequest(req, data.captcha);
   if (!capOk) {
     return withHeaders(
@@ -212,6 +186,7 @@ export async function POST(req) {
     );
   }
 
+  // Zaten kayıtlı?
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     if (existing.status === "active") {
@@ -250,7 +225,6 @@ export async function POST(req) {
       },
     });
 
-    // Mail gönder (debug-friendly)
     try {
       await sendActivationEmail(email, token, locale);
     } catch (err) {
@@ -259,14 +233,7 @@ export async function POST(req) {
       audit({ evt: "register.manual.resend.mail_fail", email, requestId, code, detail });
       return withHeaders(
         NextResponse.json(
-          {
-            success: false,
-            error: "mail_fail",
-            error_code: code,
-            detail,
-            message: t("mailfail"),
-            request_id: requestId,
-          },
+          { success: false, error: "mail_fail", error_code: code, detail, message: t("mailfail"), request_id: requestId },
           { status: 500 }
         ),
         req
@@ -274,10 +241,7 @@ export async function POST(req) {
     }
 
     audit({ evt: "register.manual.resend", email, requestId });
-    return withHeaders(
-      NextResponse.json({ success: true, message: t("success"), request_id: requestId }),
-      req
-    );
+    return withHeaders(NextResponse.json({ success: true, message: t("success"), request_id: requestId }), req);
   }
 
   // Yeni kullanıcı
@@ -300,7 +264,6 @@ export async function POST(req) {
     },
   });
 
-  // Mail gönder (debug-friendly)
   try {
     await sendActivationEmail(email, activationToken, locale);
   } catch (err) {
@@ -309,14 +272,7 @@ export async function POST(req) {
     audit({ evt: "register.manual.create.mail_fail", email, requestId, code, detail });
     return withHeaders(
       NextResponse.json(
-        {
-          success: false,
-          error: "mail_fail",
-          error_code: code,
-          detail,
-          message: t("mailfail"),
-          request_id: requestId,
-        },
+        { success: false, error: "mail_fail", error_code: code, detail, message: t("mailfail"), request_id: requestId },
         { status: 500 }
       ),
       req
@@ -324,8 +280,5 @@ export async function POST(req) {
   }
 
   audit({ evt: "register.manual.created", email, requestId });
-  return withHeaders(
-    NextResponse.json({ success: true, message: t("success"), request_id: requestId }),
-    req
-  );
+  return withHeaders(NextResponse.json({ success: true, message: t("success"), request_id: requestId }), req);
 }

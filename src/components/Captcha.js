@@ -1,146 +1,166 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-
 /**
- * reCAPTCHA v2 Checkbox (native)
- * - Doğal widget (Google CSS'i), tema: light/dark
- * - Otomatik script fallback: google.com → recaptcha.net
- * - Enterprise fallback: normal render başarısızsa enterprise.js dener
- * - onChange(token) + dış reset (resetKey)
+ * reCAPTCHA v2 Checkbox (explicit, sağlam)
+ * - Token: onChange + window.__caboCaptchaToken + data-token (fallback için)
+ * - Dil/tema değişince yeniden render
+ * - resetKey gelince reset
  */
 
-const SITE_KEY = (process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
-const TOKEN_TTL_MS = 110 * 1000;
+import { useEffect, useRef } from "react";
 
-const STD = [
-  "https://www.google.com/recaptcha/api.js",
-  "https://www.recaptcha.net/recaptcha/api.js",
-];
-const ENT = [
-  "https://www.google.com/recaptcha/enterprise.js",
-  "https://www.recaptcha.net/recaptcha/enterprise.js",
-];
+const SITE_KEY = (process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "").trim();
+const SRC_PRIMARY = "https://www.google.com/recaptcha/api.js";
+const SRC_FALLBACK = "https://www.recaptcha.net/recaptcha/api.js";
+const ONLOAD_FN = "__caboRecaptchaOnload";
+const SCRIPT_ID = "cabo-recaptcha-v2";
+const TOKEN_TTL_MS = 110 * 1000;
 
 export default function Captcha({
   onChange,
   lang = "tr",
   resetKey = 0,
-  theme = "light",      // modern sitelerde beyaz kutu daha problemsiz
+  theme = "light",
+  skin = "card",
   className = "",
   style,
 }) {
-  const [err, setErr] = useState("");
+  const wrapRef = useRef(null);
   const boxRef = useRef(null);
   const widgetIdRef = useRef(null);
   const expireTimerRef = useRef(null);
-  const epochRef = useRef(0);
+  const currentLangRef = useRef(null);
 
-  // dış reset
-  useEffect(() => {
+  const setToken = (tok) => {
     try {
-      if (widgetIdRef.current != null && window.grecaptcha?.reset) {
-        window.grecaptcha.reset(widgetIdRef.current);
-        onChange?.("");
+      if (wrapRef.current) {
+        if (tok) wrapRef.current.setAttribute("data-token", tok);
+        else wrapRef.current.removeAttribute("data-token");
       }
+      if (tok) window.__caboCaptchaToken = tok;
+      else delete window.__caboCaptchaToken;
     } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resetKey]);
+    onChange?.(tok || "");
+  };
+
+  const cleanupWidget = () => {
+    try {
+      if (expireTimerRef.current) {
+        clearTimeout(expireTimerRef.current);
+        expireTimerRef.current = null;
+      }
+      const gre = window.grecaptcha;
+      if (widgetIdRef.current != null && gre?.reset) {
+        gre.reset(widgetIdRef.current);
+      }
+      widgetIdRef.current = null;
+      if (boxRef.current) boxRef.current.innerHTML = "";
+      setToken("");
+    } catch {}
+  };
+
+  const loadScript = (hl) =>
+    new Promise((resolve) => {
+      const existed = document.getElementById(SCRIPT_ID);
+      if (existed) existed.remove();
+
+      if (!window[ONLOAD_FN]) {
+        window[ONLOAD_FN] = () => resolve();
+      }
+
+      const mount = (src) => {
+        const s = document.createElement("script");
+        s.id = SCRIPT_ID;
+        s.async = true;
+        s.defer = true;
+        s.src = `${src}?render=explicit&onload=${ONLOAD_FN}&hl=${encodeURIComponent(hl)}`;
+        s.onerror = () => {
+          if (src === SRC_PRIMARY) mount(SRC_FALLBACK);
+          else resolve();
+        };
+        document.head.appendChild(s);
+      };
+
+      mount(SRC_PRIMARY);
+    });
 
   useEffect(() => {
-    if (!SITE_KEY) { setErr("missing-sitekey"); return; }
-    setErr("");
+    if (!SITE_KEY) {
+      setToken("");
+      return;
+    }
 
-    const epoch = ++epochRef.current;
-    cleanup();
-
-    const onloadName = "__caboRecaptchaOnload";
-
-    const tryRender = (useEnterprise = false) => {
-      const gre = useEnterprise
-        ? window.grecaptcha?.enterprise
-        : window.grecaptcha;
-
-      if (!gre?.render) throw new Error("no-render");
-
-      widgetIdRef.current = gre.render(boxRef.current, {
-        sitekey: SITE_KEY,
-        theme: theme === "dark" ? "dark" : "light",
-        callback: (t) => {
-          onChange?.(t || "");
-          if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
-          expireTimerRef.current = setTimeout(() => onChange?.(""), TOKEN_TTL_MS);
-        },
-        "expired-callback": () => { onChange?.(""); },
-        "error-callback": () => { onChange?.(""); },
-      });
-      setErr("");
-    };
-
-    const loadScript = (src, id) =>
-      new Promise((resolve, reject) => {
-        const el = document.createElement("script");
-        el.id = id;
-        el.src = `${src}?render=explicit&hl=${encodeURIComponent(lang)}&onload=${onloadName}`;
-        el.async = true; el.defer = true;
-        el.onerror = () => reject(new Error("script-error"));
-        document.head.appendChild(el);
-        // 8sn korumalı timeout
-        const to = setTimeout(() => reject(new Error("script-timeout")), 8000);
-        window[onloadName] = () => { clearTimeout(to); resolve(); };
-      });
+    let cancelled = false;
+    const wantedLang = String(lang || "tr").slice(0, 2);
 
     const boot = async () => {
+      if (currentLangRef.current !== wantedLang || !window.grecaptcha) {
+        currentLangRef.current = wantedLang;
+        cleanupWidget();
+        await loadScript(wantedLang);
+      }
+
       try {
-        // 1) normal script (google → recaptcha.net fallback)
-        try { await loadScript(STD[0], "recaptcha-v2-script"); }
-        catch  { await loadScript(STD[1], "recaptcha-v2-script"); }
-
-        // 2) normal render dene
-        try { tryRender(false); return; }
-        catch { /* enterprise deneyelim */ }
-
-        // 3) enterprise script (google → recaptcha.net)
-        removeScript("recaptcha-v2-script");
-        try { await loadScript(ENT[0], "recaptcha-enterprise-script"); }
-        catch  { await loadScript(ENT[1], "recaptcha-enterprise-script"); }
-
-        // 4) enterprise render
-        tryRender(true);
+        const gre = window.grecaptcha;
+        if (!gre?.render || !boxRef.current) return;
+        widgetIdRef.current = gre.render(boxRef.current, {
+          sitekey: SITE_KEY,
+          theme: theme === "dark" ? "dark" : "light",
+          callback: (t) => {
+            if (cancelled) return;
+            setToken(t || "");
+            if (t) {
+              if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
+              expireTimerRef.current = setTimeout(() => setToken(""), TOKEN_TTL_MS);
+            }
+          },
+          "expired-callback": () => { if (!cancelled) setToken(""); },
+          "error-callback":   () => { if (!cancelled) setToken(""); },
+        });
       } catch {
-        setErr("render-failed");
+        /* no-op */
       }
     };
 
     boot();
-
-    return cleanup;
-
-    function removeScript(id) {
-      const ex = document.getElementById(id);
-      if (ex) ex.remove();
-    }
-    function cleanup() {
-      if (expireTimerRef.current) { clearTimeout(expireTimerRef.current); expireTimerRef.current = null; }
-      try {
-        widgetIdRef.current = null;
-        if (boxRef.current) boxRef.current.innerHTML = "";
-      } catch {}
-    }
+    return () => { cancelled = true; cleanupWidget(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang, theme, onChange]);
+  }, [lang, theme]);
 
-  const errorMsg =
-    err === "missing-sitekey"
-      ? "reCAPTCHA misconfigured: missing NEXT_PUBLIC_RECAPTCHA_SITE_KEY."
-      : err === "render-failed"
-      ? "reCAPTCHA failed to render. Check site key type & allowed domains."
-      : "";
+  useEffect(() => {
+    try {
+      const gre = window.grecaptcha;
+      if (widgetIdRef.current != null && gre?.reset) gre.reset(widgetIdRef.current);
+    } catch {}
+    setToken("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  if (!SITE_KEY) {
+    return (
+      <div ref={wrapRef} className="cabo-recaptcha-wrap">
+        <div className={`cabo-recaptcha-plate ${className}`} style={style}>
+          <span className="text-red-400 text-sm">Missing NEXT_PUBLIC_RECAPTCHA_SITE_KEY</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={className} style={style} aria-label="reCAPTCHA" role="group">
-      {errorMsg ? <div className="text-[12px] text-gray-400">reCAPTCHA</div> : <div ref={boxRef} className="g-recaptcha" />}
-      {errorMsg && <div className="mt-2 text-red-400 text-sm">{errorMsg}</div>}
+    <div
+      ref={wrapRef}
+      className={`cabo-recaptcha-wrap ${className}`}
+      style={style}
+      aria-label="reCAPTCHA"
+      role="group"
+    >
+      <div className={skin === "card" ? "cabo-recaptcha-plate" : ""}>
+        <div className="cabo-recaptcha-clip">
+          <div className="cabo-recaptcha-box">
+            <div ref={boxRef} className="g-recaptcha" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -71,21 +71,21 @@ async function getMinPayout() {
 /** ✅ DB'deki hem yüzde (12) hem oran (0.12) anahtarlarını destekler. */
 async function getPlatformCommissionPercent() {
   const keys = [
-    "platform_commission_percent", // 12 => yüzde
-    "platform_commission_rate",    // 0.12 => oran
-    "platform_commission",         // olası legacy
-    "platformFeePercent",          // olası legacy
+    "platform_commission_percent",
+    "platform_commission_rate",
+    "platform_commission",
+    "platformFeePercent",
   ];
   for (const keyName of keys) {
     const row = await prisma.platformConfig.findUnique({ where: { keyName } });
     if (!row?.value) continue;
     const num = Number(row.value);
     if (!Number.isFinite(num) || num < 0) continue;
-    const pct = num <= 1 ? num * 100 : num;          // 0.12 → 12
-    const fixed = Math.round(pct * 100) / 100;       // 2 ondalık
-    if (fixed >= 0 && fixed <= 1000) return fixed;   // makul aralık
+    const pct = num <= 1 ? num * 100 : num;
+    const fixed = Math.round(pct * 100) / 100;
+    if (fixed >= 0 && fixed <= 1000) return fixed;
   }
-  return 10; // fallback
+  return 10;
 }
 
 async function getAuthedUser(req) {
@@ -194,7 +194,6 @@ export async function GET(req) {
         platformPaid: true,
         platformPaidAt: true,
         paidAt: true,
-        // yeni roll-up zaman damgaları:
         merchantPaidAt: true,
         platformConfirmedAt: true,
         rejectedReason: true,
@@ -216,7 +215,7 @@ export async function GET(req) {
       return {
         requestId: item.requestId,
         date: item.requestedAt?.toISOString().slice(0, 10) || "",
-        amount: Number(item.amountTotal),
+        amount: Number(item.amountTotal || 0),
         status: item.status,
         method: "IBAN",
         bankName: item.bankName || "",
@@ -303,7 +302,7 @@ export async function POST(req) {
 
     const minPayout = await getMinPayout();
 
-    // (A) Profil banka bilgisini kaydet (users) — payout snapshot DEĞİL
+    // (A) Profil banka bilgisi kaydet
     if (
       "iban" in raw &&
       "bankName" in raw &&
@@ -314,11 +313,9 @@ export async function POST(req) {
       !("deleteRequest" in raw)
     ) {
       if (typeof raw.iban === "string") raw.iban = normalizeIban(raw.iban);
-
       const parsed = bankInfoSchema.safeParse(raw);
       if (!parsed.success) {
-        const issues =
-          parsed.error.issues?.map((i) => i.path.join(".") + ": " + i.message).join("; ");
+        const issues = parsed.error.issues?.map((i) => i.path.join(".") + ": " + i.message).join("; ");
         return secureJson({ error: issues || "Invalid bank info" }, { status: 400 }, req);
       }
       const { iban, bankName, realName } = parsed.data;
@@ -329,7 +326,7 @@ export async function POST(req) {
       return secureJson({ ok: true }, {}, req);
     }
 
-    // (B) Payout request oluştur (users’daki son bankayı snapshotla)
+    // (B) Payout request oluştur
     if (raw.requestPayout === true) {
       const idemKey =
         req.headers.get("X-Idempotency-Key") ||
