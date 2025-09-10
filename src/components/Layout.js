@@ -1,8 +1,9 @@
+// components/Layout.jsx
 "use client";
 
 /**
- * Private Layout (Affiliate) — Mobile panel = PublicLayout style (pure JS)
- * NANO desktop görünüm: ikon/metin/padding/gap küçültüldü.
+ * Private Layout (Affiliate)
+ * - Mobil panel genişliği: 100% + box-border (100vw değil) -> iOS yatay kayma fix
  */
 
 import Link from "next/link";
@@ -117,14 +118,6 @@ export default function Layout({ children }) {
     []
   );
 
-  const mobileLinks = [
-    { href: "/dashboard", icon: <HomeIcon size={22} />, label: t("home") },
-    { href: "/products", icon: <ShoppingCart size={22} />, label: t("productMarket") },
-    { href: "/mylinks", icon: <LinkIcon size={22} />, label: t("myLinks") },
-    { href: "/performance", icon: <BarChart2 size={22} />, label: t("performance") },
-    { href: "/wallet", icon: <Wallet2 size={22} />, label: t("wallet") },
-  ];
-
   function handleLogout() {
     try {
       if (typeof window !== "undefined") {
@@ -190,7 +183,7 @@ export default function Layout({ children }) {
                   </Link>
                 </li>
 
-                {/* Desktop profil — tek rozet ProfileDropdown içinde */}
+                {/* Desktop profil */}
                 <li className="relative" suppressHydrationWarning>
                   {showProfileDropdown ? (
                     <ProfileDropdown />
@@ -246,7 +239,8 @@ export default function Layout({ children }) {
             style={{
               position: "fixed",
               left: 0, right: 0, top: "calc(var(--header-h))",
-              width: "100vw",
+              width: "100%",            // <-- FIX: 100vw değildi
+              boxSizing: "border-box",  // <-- taşma güvenliği
               zIndex: 2147483647,
               transform: mobileOpen ? "translate3d(0,0,0)" : "translate3d(0,-8px,0)",
               opacity: mobileOpen ? 1 : 0,
@@ -287,7 +281,7 @@ export default function Layout({ children }) {
                 </Link>
               ))}
 
-              {/* Profile block (mobile) — rozet var */}
+              {/* Profile block (mobile) */}
               <div className="mt-2 pt-2 border-t border-[#232323]" id="cabo-profile-section">
                 <button
                   className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"

@@ -1,15 +1,14 @@
+// src/app/settings/page.jsx
 "use client";
 
 /**
- * File: src/app/settings/page.jsx
- * Purpose: Settings — PROD
- * Security Docblock (Frontend):
- * - Tek apiFetch wrapper (credentials:include, X-Requested-With, X-Request-Id).
- * - Form verisi client-side doğrulama + backend validation.
- * - UI: Koyu tema; dropdown/overlay z-index izolasyonu; mobilde tek kolon.
+ * Settings — PROD (autosave + robust messaging)
+ * - Dil & Para birimi: debounce autosave
+ * - Same-site CSRF fallback'e uygun akış
+ * - Autofill mavi arka plan fix
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Layout from "@/components/Layout";
 import CustomSelect from "@/components/CustomSelect";
 import { useLocale } from "@/context/LocaleContext";
@@ -23,8 +22,10 @@ const INPUT_CLASS =
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
   const [currencies, setCurrencies] = useState([]);
   const [languages, setLanguages] = useState([]);
+
   const [profile, setProfile] = useState({
     name: "",
     email: "",
@@ -34,9 +35,23 @@ export default function SettingsPage() {
     new_password: "",
     new_password_repeat: "",
   });
+
+  // Sunucudan gelen son değerler (diff/dirty kontrolü)
+  const baselineRef = useRef({
+    name: "",
+    languagePreference: "tr",
+    currencyCode: "TRY",
+  });
+
+  // mesaj + tipi
   const [message, setMessage] = useState("");
+  const [msgType, setMsgType] = useState("success"); // "success" | "error" | "warn"
   const [pwHint, setPwHint] = useState("");
   const msgRef = useRef(null);
+
+  // autosave zamanlayıcıları
+  const saveTimers = useRef({ lang: null, curr: null, name: null });
+  const inflightRef = useRef(false);
 
   const { setLocale } = useLocale();
   const { t } = useTranslation();
@@ -60,6 +75,9 @@ export default function SettingsPage() {
     }
   };
 
+  async function parseJsonSafe(res) { try { return await res.json(); } catch { return null; } }
+
+  // İlk veri yükü
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -94,6 +112,7 @@ export default function SettingsPage() {
         // me
         const resp = await apiFetch("/api/me", { method: "GET" });
         if (!resp.ok) {
+          setMsgType("error");
           setMessage(t("unauthorized") || "Unauthorized");
           setLoading(false);
           return;
@@ -101,17 +120,31 @@ export default function SettingsPage() {
         const data = await resp.json();
         if (!mounted) return;
 
+        const lang = (data.languagePreference || (langs[0] && langs[0].value) || "tr").toLowerCase();
+        const curCode = (data.currencyCode || (cur[0] && cur[0].value) || "TRY").toUpperCase();
+
         setProfile(prev => ({
           ...prev,
           name: data.name || "",
           email: data.email || "",
-          languagePreference: data.languagePreference || (langs[0] && langs[0].value) || "tr",
-          currencyCode: data.currencyCode || (cur[0] && cur[0].value) || "TRY",
+          languagePreference: lang,
+          currencyCode: curCode,
+          current_password: "",
+          new_password: "",
+          new_password_repeat: "",
         }));
-        setLocale(data.languagePreference || (langs[0] && langs[0].value) || "tr");
+
+        baselineRef.current = {
+          name: data.name || "",
+          languagePreference: lang,
+          currencyCode: curCode,
+        };
+
+        setLocale(lang);
         setLoading(false);
       } catch {
         if (!mounted) return;
+        setMsgType("error");
         setMessage(t("errorGeneric") || "An error occurred");
         setLoading(false);
       }
@@ -120,21 +153,86 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Mesaj scroll & auto-hide
   useEffect(() => {
     if (message && msgRef.current) {
       msgRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-      const timer = setTimeout(() => setMessage(""), 3500);
+      const timer = setTimeout(() => { setMessage(""); setMsgType("success"); }, 2200);
       return () => clearTimeout(timer);
     }
   }, [message]);
 
+  // Debounced autosave helper
+  const debouncedAutoSave = (key, delay = 250) => {
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(async () => {
+      saveTimers.current[key] = null;
+      await autoSave();
+    }, delay);
+  };
+
+  // Profil autosave (name/lang/currency tamamını gönderir)
+  async function autoSave() {
+    const b = baselineRef.current;
+    const changed =
+      profile.name.trim() !== b.name.trim() ||
+      profile.languagePreference !== b.languagePreference ||
+      profile.currencyCode !== b.currencyCode;
+
+    if (!changed) return;
+    if (inflightRef.current) return;
+    inflightRef.current = true;
+    try {
+      const res = await apiFetch("/api/settings/update", {
+        method: "POST",
+        body: {
+          name: profile.name,
+          languagePreference: profile.languagePreference, // lower
+          currencyCode: profile.currencyCode,             // upper
+        },
+      });
+      const data = await parseJsonSafe(res);
+
+      if (res.ok && !data?.errorKey) {
+        baselineRef.current = {
+          name: profile.name,
+          languagePreference: profile.languagePreference,
+          currencyCode: profile.currencyCode,
+        };
+        setMsgType("success");
+        setMessage(data?.noChange ? (t("noChanges") || "No changes to save.") : (t("profileUpdated") || "Profile updated"));
+      } else {
+        const key = data?.errorKey;
+        setMsgType("warn");
+        setMessage(key ? mapErrorKey(key) : (t("errorGeneric") || "Error"));
+      }
+    } catch {
+      setMsgType("warn");
+      setMessage(t("errorGeneric") || "An error occurred");
+    } finally {
+      inflightRef.current = false;
+    }
+  }
+
   function handleChange(field, value) {
-    setProfile(prev => ({ ...prev, [field]: value }));
-    if (field === "languagePreference") setLocale(value);
+    const v = field === "languagePreference" ? String(value || "").toLowerCase()
+            : field === "currencyCode"       ? String(value || "").toUpperCase()
+            : value;
+
+    setProfile(prev => ({ ...prev, [field]: v }));
+
+    if (field === "languagePreference") {
+      setLocale(v);
+      debouncedAutoSave("lang");
+    } else if (field === "currencyCode") {
+      debouncedAutoSave("curr");
+    } else if (field === "name") {
+      debouncedAutoSave("name", 500);
+    }
 
     if (field === "new_password" || field === "new_password_repeat") {
-      const np = field === "new_password" ? value : profile.new_password;
-      const nr = field === "new_password_repeat" ? value : profile.new_password_repeat;
+      const np = field === "new_password" ? v : profile.new_password;
+      const nr = field === "new_password_repeat" ? v : profile.new_password_repeat;
       if (profile.current_password === "" && (np?.length || nr?.length)) {
         setPwHint(t("hybridPasswordHint") || "If you registered with Google, you can set a password without current one.");
       } else if (np !== nr) {
@@ -147,80 +245,76 @@ export default function SettingsPage() {
     }
   }
 
+  const hasProfileChanges = useMemo(() => {
+    const b = baselineRef.current;
+    return (
+      profile.name.trim() !== b.name.trim() ||
+      profile.languagePreference !== b.languagePreference ||
+      profile.currencyCode !== b.currencyCode
+    );
+  }, [profile.name, profile.languagePreference, profile.currencyCode]);
+
   async function handleSave(e) {
     if (e) e.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     setMessage("");
+    setMsgType("success");
 
     try {
-      const profileRes = await apiFetch("/api/settings/update", {
-        method: "POST",
-        body: {
-          name: profile.name,
-          languagePreference: profile.languagePreference,
-          currencyCode: profile.currencyCode,
-        },
-      });
-      const profileData = await profileRes.json().catch(() => ({}));
-
-      let passwordMsg = "";
+      // Şifre değişikliği?
       const wantsPasswordChange =
-        profile.new_password || profile.new_password_repeat || profile.current_password;
+        !!profile.new_password || !!profile.new_password_repeat || !!profile.current_password;
 
+      // Profilde değişiklik varsa önce onu kaydet
+      if (hasProfileChanges) {
+        await autoSave();
+      }
+
+      // Şifre
+      let pwdMsg = "";
+      let pwdSucceeded = false;
       if (wantsPasswordChange) {
         if (!profile.new_password || !profile.new_password_repeat) {
-          setMessage(t("allFieldsRequired") || "All fields are required.");
-          setSubmitting(false);
-          return;
-        }
-        if (profile.new_password !== profile.new_password_repeat) {
-          setMessage(t("passwordNoMatch") || "Passwords do not match");
-          setSubmitting(false);
-          return;
-        }
-        if ((profile.new_password || "").length < 8) {
-          setMessage(t("passwordTooShort") || "Password must be at least 8 characters.");
-          setSubmitting(false);
-          return;
-        }
-
-        const passwordRes = await apiFetch("/api/settings/change_password", {
-          method: "POST",
-          body: {
-            current_password: profile.current_password,
-            new_password: profile.new_password,
-          },
-        });
-        const passwordData = await passwordRes.json().catch(() => ({}));
-
-        if (passwordRes.status === 429) {
-          passwordMsg = t("tooManyRequests") || "Too many attempts";
-        } else if (passwordData.firstTimeSet) {
-          passwordMsg = t("passwordSetSuccess") || "Password set!";
-        } else if (passwordData.success) {
-          passwordMsg = t("passwordChanged") || "Password changed";
+          pwdMsg = t("allFieldsRequired") || "All fields are required.";
+        } else if (profile.new_password !== profile.new_password_repeat) {
+          pwdMsg = t("passwordNoMatch") || "Passwords do not match";
+        } else if ((profile.new_password || "").length < 8) {
+          pwdMsg = t("passwordTooShort") || "Password must be at least 8 characters.";
         } else {
-          passwordMsg = passwordData.errorKey
-            ? mapErrorKey(passwordData.errorKey)
-            : (t("errorGeneric") || "Error");
+          const passwordRes = await apiFetch("/api/settings/change_password", {
+            method: "POST",
+            body: {
+              current_password: profile.current_password,
+              new_password: profile.new_password,
+            },
+          });
+          const passwordData = await parseJsonSafe(passwordRes);
+
+          if (passwordRes.status === 429) {
+            pwdMsg = t("tooManyRequests") || "Too many attempts";
+          } else if (passwordRes.ok && (passwordData?.success || passwordData?.firstTimeSet)) {
+            pwdMsg = passwordData?.firstTimeSet
+              ? (t("passwordSetSuccess") || "Password set!")
+              : (t("passwordChanged") || "Password changed");
+            pwdSucceeded = true;
+          } else {
+            const key = passwordData?.errorKey;
+            pwdMsg = key ? mapErrorKey(key) : (t("errorGeneric") || "Error");
+          }
         }
       }
 
-      if (profileRes.status === 429) {
-        setMessage(t("tooManyRequests") || "Too many requests");
-      } else if (!profileRes.ok) {
-        const errMsg = profileData.errorKey
-          ? mapErrorKey(profileData.errorKey)
-          : (t("errorGeneric") || "Error");
-        setMessage(errMsg + (passwordMsg ? " • " + passwordMsg : ""));
-      } else {
-        setMessage(
-          (profileData.success ? (t("profileUpdated") || "Profile updated") : (t("errorGeneric") || "Error")) +
-          (passwordMsg ? " • " + passwordMsg : "")
-        );
+      // Mesaj tonları
+      if (wantsPasswordChange) {
+        setMsgType(pwdSucceeded ? "success" : "warn");
+        setMessage(pwdMsg);
+      } else if (!hasProfileChanges) {
+        setMsgType("warn");
+        setMessage(t("noChanges") || "No changes to save.");
       }
     } catch {
+      setMsgType("error");
       setMessage(t("errorGeneric") || "An error occurred");
     } finally {
       setSubmitting(false);
@@ -228,7 +322,7 @@ export default function SettingsPage() {
         ...prev,
         current_password: "",
         new_password: "",
-        new_password_repeat: ""
+        new_password_repeat: "",
       }));
       setPwHint("");
     }
@@ -250,12 +344,14 @@ export default function SettingsPage() {
   const cardBase =
     "relative bg-[#191919] rounded-2xl shadow-md border border-[#232323] flex flex-col gap-3 px-6 py-6 w-full overflow-visible";
 
+  const msgColor =
+    msgType === "error" ? "text-red-400" : msgType === "warn" ? "text-yellow-300" : "text-[#81d742]";
+
   return (
     <Layout>
-      {/* isolate: overlay güvenli; min-height -> footer dipte */}
       <main id="cabo-main" className="isolate w-full max-w-4xl mx-auto px-3 py-8">
-        <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7">
-          {/* Profil Kartı — daha yüksek katman */}
+        <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-7" autoComplete="off">
+          {/* Profil Kartı */}
           <div className={`${cardBase} z-40`}>
             <h3 className="font-extrabold text-lg mb-2 text-[#81d742] font-mono text-center">
               {t("profileInfo")}
@@ -264,16 +360,16 @@ export default function SettingsPage() {
             <label className="text-xs font-mono font-semibold text-gray-300">{t("name")}</label>
             <input
               type="text"
-              name="name"
+              name="display_name"
               value={profile.name}
               onChange={(e) => handleChange("name", e.target.value)}
+              onBlur={() => debouncedAutoSave("name", 0)}
               className={INPUT_CLASS}
               required
-              autoComplete="name"
+              autoComplete="off"
             />
 
             <label className="text-xs font-mono font-semibold text-gray-300">{t("language")}</label>
-            {/* focus-within → z-boost, dropdown her şeyin üstünde */}
             <div className="relative z-40 focus-within:z-[9999]">
               <CustomSelect
                 options={languages}
@@ -283,7 +379,6 @@ export default function SettingsPage() {
             </div>
 
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currency")}</label>
-            {/* Bir altta kalsın ki üstteki menüyü asla örtmesin */}
             <div className="relative z-20 focus-within:z-[9999]">
               <CustomSelect
                 options={currencies}
@@ -293,7 +388,12 @@ export default function SettingsPage() {
             </div>
 
             {message ? (
-              <div ref={msgRef} className="text-[#81d742] font-semibold mt-3 text-center transition-opacity duration-500">
+              <div
+                ref={msgRef}
+                className={`${msgColor} font-semibold mt-3 text-center transition-opacity duration-500`}
+                role={msgType === "error" ? "alert" : "status"}
+                aria-live={msgType === "error" ? "assertive" : "polite"}
+              >
                 {message}
               </div>
             ) : null}
@@ -305,15 +405,22 @@ export default function SettingsPage() {
               {t("changePassword")}
             </h3>
 
+            {/* Autofill kırıcı dummy alanlar */}
+            <input type="text" className="hidden" name="username" autoComplete="username" />
+            <input type="password" className="hidden" name="new-password-dummy" autoComplete="new-password" />
+
             <label className="text-xs font-mono font-semibold text-gray-300">{t("currentPassword")}</label>
             <input
               type="password"
-              name="current_password"
+              name="current_password_ignored"
               value={profile.current_password}
               onChange={(e) => handleChange("current_password", e.target.value)}
               className={INPUT_CLASS}
-              autoComplete="current-password"
+              autoComplete="off"
               placeholder={t("currentPasswordPlaceholder") || ""}
+              inputMode="text"
+              data-lpignore="true"
+              data-1p-ignore="true"
             />
 
             <label className="text-xs font-mono font-semibold text-gray-300">{t("newPassword")}</label>
@@ -362,6 +469,18 @@ export default function SettingsPage() {
           </div>
         </form>
       </main>
+
+      {/* Autofill mavi arka plan fix */}
+      <style jsx global>{`
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        input:-webkit-autofill:active {
+          -webkit-box-shadow: 0 0 0px 1000px #1f1f1f inset !important;
+          -webkit-text-fill-color: #ffffff !important;
+          caret-color: #ffffff;
+        }
+      `}</style>
     </Layout>
   );
 }

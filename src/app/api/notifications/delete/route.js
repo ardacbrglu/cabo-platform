@@ -43,12 +43,11 @@ export async function POST(req) {
     if (!ok) {
       return NextResponse.json(
         { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
       );
     }
 
     const body = await req.json().catch(() => ({}));
-    // IMPORTANT: ids → INT[]
     const ids = (Array.isArray(body?.ids) ? body.ids : [])
       .map((v) => Number(v))
       .filter((n) => Number.isInteger(n) && n > 0);
@@ -62,7 +61,9 @@ export async function POST(req) {
       data: { isDeleted: true },
     });
 
-    return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+    const res = NextResponse.json({ success: true });
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   } catch (err) {
     console.error("POST /api/notifications/delete error:", err);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

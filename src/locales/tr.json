@@ -446,7 +446,8 @@
   "performance.chart_net": "Net Kazanç",
   "time": "Zaman",
   "referrer": "referrer",
-  "userAgent": "userAgent"
+  "userAgent": "userAgent",
+  "noChanges":  "Değişiklik yapılmadı."
 }
 
 

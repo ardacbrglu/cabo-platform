@@ -430,7 +430,9 @@
   "performance.chart_net": "Net Earnings",
   "time": "Time",
   "referrer": "referrer",
-  "userAgent": "userAgent"
+  "userAgent": "userAgent",
+  "noChanges": "No changes made."
+
 }
 
 

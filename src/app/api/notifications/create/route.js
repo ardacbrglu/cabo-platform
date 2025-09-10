@@ -6,10 +6,6 @@ export const runtime = "nodejs";
  * Body:
  *  - { message: string, type?: "info"|"support_reply"|"important", link?: string|null,
  *      all?: boolean, userId?: number|string }
- *  - all=true ise tüm aktif kullanıcılara; değilse userId zorunlu
- * Güvenlik:
- *  - NextAuth session (admin) + CSRF (header cookie eşleşmesi) + rate limit
- * Çıktı: { ok: true, count: number }
  */
 
 import { NextResponse } from "next/server";
@@ -21,7 +17,6 @@ import { cookies } from "next/headers";
 
 const VALID_TYPES = ["info", "support_reply", "important"];
 
-/* ---------- CSRF (NextAuth) ---------- */
 function readCsrfCookieValue() {
   const store = cookies();
   const raw =
@@ -33,10 +28,7 @@ function readCsrfCookieValue() {
 function validateCsrfOrDeny(req) {
   const method = req?.method?.toUpperCase?.() || "GET";
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
-  const headerToken =
-    req.headers.get("X-CSRF-Token") ||
-    req.headers.get("x-csrf-token") ||
-    "";
+  const headerToken = req.headers.get("X-CSRF-Token") || req.headers.get("x-csrf-token") || "";
   const cookieToken = readCsrfCookieValue();
   if (!headerToken || !cookieToken || headerToken !== cookieToken) {
     return NextResponse.json({ error: "Invalid CSRF token" }, { status: 403 });
@@ -54,13 +46,12 @@ export async function POST(req) {
     if (!user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // rate limit (admin bazlı)
     const rlKey = makeRateLimitKey(req, { scope: "notif:create", userId: user.id });
     const rl = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
     if (!rl.ok) {
       return NextResponse.json(
         { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+        { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetMs || 0) / 1000)) } }
       );
     }
 
@@ -73,7 +64,7 @@ export async function POST(req) {
     const targetUserIdRaw = body?.userId ?? null;
     const targetUserId = Number.isFinite(Number(targetUserIdRaw))
       ? Number(targetUserIdRaw)
-      : (targetUserIdRaw || null);
+      : null;
 
     if (message.length < 2) {
       return NextResponse.json({ error: "Message required" }, { status: 400 });
@@ -100,10 +91,9 @@ export async function POST(req) {
         skipDuplicates: true,
       });
 
-      return NextResponse.json(
-        { ok: true, count: users.length },
-        { headers: { "Cache-Control": "no-store" } }
-      );
+      const res = NextResponse.json({ ok: true, count: users.length });
+      res.headers.set("Cache-Control", "no-store");
+      return res;
     }
 
     if (!targetUserId) {
@@ -114,10 +104,9 @@ export async function POST(req) {
       data: { userId: targetUserId, message, type, link, read: false, isDeleted: false },
     });
 
-    return NextResponse.json(
-      { ok: true, count: 1 },
-      { headers: { "Cache-Control": "no-store" } }
-    );
+    const res = NextResponse.json({ ok: true, count: 1 });
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   } catch (err) {
     console.error("POST /api/notifications/create error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

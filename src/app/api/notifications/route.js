@@ -3,7 +3,11 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/notifications
- * JSON: { notifications: Array<{id, message, type, link, createdAt, read}> }
+ * Security Docblock (Cabo PROD)
+ * - Auth: NextAuth session zorunlu; user.status === "active"
+ * - RBAC: affiliate/merchant/admin erişimi var (istenirse UI tarafında kısıtlanır)
+ * - Rate limit: GET 60/dk (IP tabanlı; sunucuda ioredis), Vary: Cookie
+ * - No-store cache header; JSON sabit sözleşme
  */
 
 import { NextResponse } from "next/server";
@@ -29,7 +33,7 @@ export async function GET(req) {
     if (!ok) {
       return json(
         { notifications: [] },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } }
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
       );
     }
 
@@ -43,7 +47,7 @@ export async function GET(req) {
       rows = await prisma.notification.findMany({
         where: { userId, isDeleted: false },
         orderBy: { createdAt: "desc" },
-        take: 10,
+        take: 50, // mobil akışı pürüzsüz tut
         select: {
           id: true,
           message: true,

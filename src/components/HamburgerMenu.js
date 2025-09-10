@@ -1,3 +1,4 @@
+// components/HamburgerMenu.jsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -72,7 +73,6 @@ export default function HamburgerMenu() {
         >
           <span className="relative inline-flex">
             <Menu size={27} color="#81d742" />
-            {/* Rozet SAĞ ÜST */}
             <NotificationBadge show={hasUnread} size={11} offsetX={-4} offsetY={-4} />
           </span>
         </button>
@@ -89,7 +89,7 @@ export default function HamburgerMenu() {
           />
           <div
             id="cabo-hamburger-panel"
-            className={`fixed top-0 left-0 w-full max-w-full rounded-b-2xl bg-[#191919] border-b border-[#232323] shadow-2xl flex flex-col transition-transform duration-400 ease-in-out ${open ? "translate-y-0" : "-translate-y-full"}`}
+            className={`fixed top-0 left-0 w-full max-w-full box-border rounded-b-2xl bg-[#191919] border-b border-[#232323] shadow-2xl flex flex-col transition-transform duration-400 ease-in-out ${open ? "translate-y-0" : "-translate-y-full"}`}
             style={{ boxShadow: "0 2px 42px 10px rgba(0,0,0,0.65)", maxHeight: "96vh", zIndex: 41000 }}
             role="dialog"
             aria-modal="true"

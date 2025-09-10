@@ -2,6 +2,12 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/**
+ * POST /api/settings/change_password
+ * - Auth, CSRF (+ same-site fallback), RL
+ * - Google-only (passwordHash yok) → current gereksiz; firstTimeSet
+ */
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
@@ -11,36 +17,7 @@ import prisma from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/ratelimit";
 import { cookies } from "next/headers";
 
-/* ---------- CSRF helpers ---------- */
-function readCsrfCookieValue() {
-  const store = cookies();
-  const raw =
-    store.get("__Host-next-auth.csrf-token")?.value ||
-    store.get("next-auth.csrf-token")?.value ||
-    "";
-  return String(raw).split("|")[0] || "";
-}
-function validateCsrfOrDeny(req, secureJson) {
-  const method = req?.method?.toUpperCase?.() || "GET";
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
-  const headerToken =
-    req.headers.get("X-CSRF-Token") ||
-    req.headers.get("x-csrf-token") ||
-    "";
-  const cookieToken = readCsrfCookieValue();
-  if (!headerToken || !cookieToken || headerToken !== cookieToken) {
-    return secureJson({ success: false, errorKey: "csrf" }, { status: 403 });
-  }
-  return null;
-}
-
-/* ---------- schema ---------- */
-const PasswordSchema = z.object({
-  current_password: z.string().optional(),
-  new_password: z.string().min(8).regex(/[A-Za-z]/).regex(/\d/), // 8+, harf + rakam
-});
-
-/* ---------- response helper ---------- */
+/* ---------- helpers ---------- */
 function secureJson(data, init = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
@@ -49,6 +26,41 @@ function secureJson(data, init = {}) {
   res.headers.set("Cross-Origin-Resource-Policy", "same-site");
   return res;
 }
+function readCsrfCookieValue() {
+  const store = cookies();
+  const raw =
+    store.get("__Host-next-auth.csrf-token")?.value ||
+    store.get("next-auth.csrf-token")?.value ||
+    "";
+  return String(raw).split("|")[0] || "";
+}
+function validateCsrfOrTrustSameSite(req) {
+  const method = req?.method?.toUpperCase?.() || "GET";
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+
+  const headerToken =
+    req.headers.get("X-CSRF-Token") ||
+    req.headers.get("x-csrf-token") ||
+    "";
+  const cookieToken = readCsrfCookieValue();
+  if (headerToken && cookieToken && headerToken === cookieToken) return null;
+
+  const selfOrigin = new URL(req.url).origin;
+  const envOrigin = process.env.NEXTAUTH_URL ? new URL(process.env.NEXTAUTH_URL).origin : selfOrigin;
+  const origin = req.headers.get("origin") || "";
+  const referer = req.headers.get("referer") || "";
+  const refererOrigin = referer ? (() => { try { return new URL(referer).origin; } catch { return ""; } })() : "";
+  const sameSite = (origin && origin === envOrigin) || (refererOrigin && refererOrigin === envOrigin);
+  if (sameSite && cookieToken) return null;
+
+  return secureJson({ success: false, errorKey: "csrf" }, { status: 403 });
+}
+
+/* ---------- schema ---------- */
+const PasswordSchema = z.object({
+  current_password: z.string().optional(),
+  new_password: z.string().min(8).regex(/[A-Za-z]/).regex(/\d/),
+});
 
 export async function POST(req) {
   try {
@@ -57,14 +69,16 @@ export async function POST(req) {
       return secureJson({ success: false, errorKey: "unsupported_media" }, { status: 415 });
     }
 
-    // CSRF
-    const csrfErr = validateCsrfOrDeny(req, secureJson);
+    // CSRF (with same-site fallback)
+    const csrfErr = validateCsrfOrTrustSameSite(req);
     if (csrfErr) return csrfErr;
 
     // Auth
     const session = await getServerSession(authOptions);
-    const userId = session?.user?.id;
-    if (!userId) return secureJson({ success: false, errorKey: "unauthorized" }, { status: 401 });
+    const userId = Number(session?.user?.id ?? session?.user?.userId ?? NaN);
+    if (!Number.isFinite(userId)) {
+      return secureJson({ success: false, errorKey: "unauthorized" }, { status: 401 });
+    }
 
     // RL
     const { ok, resetMs } = await checkRateLimit({
@@ -75,7 +89,7 @@ export async function POST(req) {
     if (!ok) {
       return secureJson(
         { success: false, errorKey: "too_many" },
-        { status: 429, headers: { "Retry-After": String(Math.ceil(resetMs / 1000)) } },
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } },
       );
     }
 
@@ -93,7 +107,7 @@ export async function POST(req) {
     });
     if (!user) return secureJson({ success: false, errorKey: "unauthorized" }, { status: 401 });
 
-    // yeni şifre eskisiyle aynı mı?
+    // aynı şifre kontrolü
     if (user.passwordHash) {
       const same = await bcrypt.compare(new_password, user.passwordHash);
       if (same) {
@@ -101,7 +115,7 @@ export async function POST(req) {
       }
     }
 
-    // Google-only → current_password gereksiz
+    // Google-only → current gereksiz
     if (!user.passwordHash) {
       if (current_password && current_password.length > 0) {
         return secureJson({ success: false, errorKey: "no_password_nowarn" }, { status: 400 });
