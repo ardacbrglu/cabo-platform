@@ -1,0 +1,24 @@
+name: semgrep
+on:
+  pull_request:
+  push: { branches: [ "main" ] }
+  schedule: [ { cron: "30 3 * * 1" } ]
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Install Semgrep
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install semgrep
+      - name: Run Semgrep (CI + OWASP Top10)
+        run: |
+          semgrep --config p/ci --config p/owasp-top-ten --sarif --output semgrep.sarif .
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with: { sarif_file: semgrep.sarif }
