@@ -1,18 +1,40 @@
 name: zap-full-scan
+
 on:
   workflow_dispatch:
-  schedule: [ { cron: "0 2 * * 1" } ]  # her Pazartesi 02:00 UTC
+  schedule:
+    - cron: "0 2 * * 1"   # Pazartesi 02:00 UTC
+
 permissions:
   contents: read
+
 jobs:
   zap:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
       - name: ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.8.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: ${{ vars.ZAP_TARGET }}
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
+          allow_issue_writing: false
+          fail_action: false
+          cmd_options: >
+            -a
+            -w report_md.md
+            -r report_html.html
+            -J report_json.json
+
+      - name: Upload ZAP full-scan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-full-report
+          path: |
+            report_md.md
+            report_html.html
+            report_json.json
+          retention-days: 7

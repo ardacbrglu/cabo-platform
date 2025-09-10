@@ -1,26 +1,36 @@
 name: semgrep
+
 on:
   pull_request:
+  push:
+  schedule:
+    - cron: "30 3 * * 1"   # Pazartesi 03:30 UTC
 
 permissions:
   contents: read
-  actions: read       # run bilgilerini okuyabilsin
-  checks: write       # özet/annotation yazabilsin (opsiyonel ama faydalı)
 
 jobs:
   semgrep:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Install Semgrep
         run: |
           python3 -m pip install --upgrade pip
           pip install semgrep
 
-      - name: Run Semgrep (auto rules, fail on findings)
+      - name: Run Semgrep (managed rules, metrics off)
         env:
-          SEMGREP_SEND_METRICS: "off"     # telemetri hatasını da susturur
+          SEMGREP_SEND_METRICS: "off"
         run: |
-          semgrep --config auto --error --timeout 180
+          semgrep --config p/ci --error --timeout 180 --json -o semgrep.json
+
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep.json
+          retention-days: 7
