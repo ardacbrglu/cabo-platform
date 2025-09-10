@@ -4,15 +4,15 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: "0 1 * * *"   # her gün 01:00 UTC
+    - cron: '0 1 * * *'  # her gün 01:00 UTC
 
 permissions:
   contents: read
+  # issues: write  # Issue açtırmak istersen bunu aç, altta allow_issue_writing: true yap
 
 jobs:
   zap:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -21,21 +21,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: ${{ vars.ZAP_TARGET }}
-          rules_file_name: '.zap/rules.tsv'
-          allow_issue_writing: false   # <-- 403'u tamamen kapatır
-          fail_action: false           # PR'ı kırmasın
-          cmd_options: >-
-            -a
-            -w report_md.md
-            -r report_html.html
-            -J report_json.json
-
-      - name: Upload ZAP baseline artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-report
-          path: |
-            report_md.md
-            report_html.html
-            report_json.json
-          retention-days: 7
+          rules_file_name: '.zap/rules.tsv'   # <--- SADECE bu; -c KULLANMIYORUZ
+          allow_issue_writing: false          # issue açmasın; istersen true yap + permissions: issues: write
+          artifact_name: zap-baseline-${{ github.run_number }}
+          cmd_options: '-a'                   # alpha pasif kuralları da tarasın
