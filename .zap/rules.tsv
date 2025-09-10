@@ -1,0 +1,7 @@
+10027	WARN	Suspicious comments (reduce noise)
+10037	WARN	Keep for now: X-Powered-By header
+10049	IGNORE	Non-storable content is noisy
+10055	WARN	CSP wildcard present
+10109	WARN	Modern web app info
+90004	IGNORE	Spectre site isolation is informational
+90005	WARN	Missing Sec-Fetch-Dest header
