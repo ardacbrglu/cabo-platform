@@ -5,17 +5,21 @@ on:
     types: [ "completed" ]
 permissions:
   contents: read
-  security-events: write
 jobs:
   scan-sbom:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
+
+      # SBOM artifact'ını tetikleyen run'dan indir
       - name: Download SBOM artifact
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
+          run_id: ${{ github.event.workflow_run.id }}
           name: sbom.spdx.json
           path: .
+
       - name: Scan SBOM with Grype
         id: scan
         uses: anchore/scan-action@v5
@@ -24,7 +28,12 @@ jobs:
           output-format: sarif
           fail-build: false
           severity-cutoff: high
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+
+      - name: Save SARIF to file (private repo)
+        run: echo "${{ steps.scan.outputs.sarif }}" > grype.sarif
+
+      - name: Upload Grype report as artifact
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: ${{ steps.scan.outputs.sarif }}
+          name: grype.sarif
+          path: grype.sarif

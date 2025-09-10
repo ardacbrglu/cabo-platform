@@ -1,6 +1,8 @@
 name: sbom
 on:
-  push: { branches: [ "main" ] }
+  pull_request:
+  push:
+    branches: [ "main", "dev", "feature/**" ]
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,7 +16,7 @@ jobs:
           path: .
           format: spdx-json
           output-file: sbom.spdx.json
-      - name: Upload SBOM
+      - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom.spdx.json
