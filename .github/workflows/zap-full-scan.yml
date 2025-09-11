@@ -9,18 +9,17 @@ on:
   schedule:
     - cron: "0 2 * * 1"  # Her Pazartesi 02:00 UTC
 
-# Issue açmayacağız; artifact yüklemek için read yeterli
 permissions:
-  contents: read
+  contents: read   # Issue açmıyoruz, sadece artifact yükleyeceğiz
 
 jobs:
   zap:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # Manuel input > repo variable (ZAP_TARGET) sıralamasıyla güvenli çözüm
       - name: Resolve target URL (safe)
         id: resolve
         shell: bash
@@ -37,18 +36,27 @@ jobs:
             exit 1
           fi
 
-      - name: ZAP Full Scan (no issue writing)
-        uses: zaproxy/action-full-scan@v0.8.0
-        with:
-          # token vermiyoruz -> Issue açma denemeyecek
-          target: ${{ steps.resolve.outputs.url }}
-          rules_file_name: '.zap/rules.tsv'
-          allow_issue_writing: false
-          cmd_options: >-
-            -a
-            -J report_json.json
-            -w report_md.md
-            -r report_html.html
+      - name: Pull ZAP image
+        run: docker pull ghcr.io/zaproxy/zaproxy:stable
+
+      - name: Run ZAP Full Scan (Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch report_json.json report_md.md report_html.html
+          chmod a+w report_json.json report_md.md report_html.html
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/zap/wrk/:rw" \
+            --network=host \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+              -t "${{ steps.resolve.outputs.url }}" \
+              -a \
+              -J report_json.json \
+              -w report_md.md \
+              -r report_html.html \
+              -c .zap/rules.tsv
 
       - name: Upload ZAP full-scan artifacts
         if: always()
