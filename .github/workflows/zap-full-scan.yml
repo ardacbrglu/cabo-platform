@@ -4,11 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Optional: override target URL (leave empty to use repo var ZAP_TARGET)'
+        description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
         required: false
-        default: ''
   schedule:
-    - cron: '0 2 * * 1'   # her Pazartesi 02:00 UTC
+    - cron: "0 2 * * 1"  # Pazartesi 02:00 UTC
 
 permissions:
   contents: read
@@ -16,48 +15,45 @@ permissions:
 jobs:
   zap:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Hedef URL'yi belirle (workflow input > repo var)
-      - name: Resolve target URL
-        id: target
+      # <<< Güvenli hedef çözümleme (Semgrep friendly)
+      - name: Resolve target URL (safe)
+        id: resolve
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          VAR_TARGET: ${{ vars.ZAP_TARGET }}
         run: |
-          if [ -n "${{ github.event.inputs.target }}" ]; then
-            echo "URL=${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
-          elif [ -n "${{ vars.ZAP_TARGET }}" ]; then
-            echo "URL=${{ vars.ZAP_TARGET }}" >> $GITHUB_OUTPUT
+          if [ -n "$INPUT_TARGET" ]; then
+            echo "url=$INPUT_TARGET" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VAR_TARGET" ]; then
+            echo "url=$VAR_TARGET" >> "$GITHUB_OUTPUT"
           else
-            echo "ERROR: Set ZAP_TARGET repo variable or provide target input."
+            echo "ERROR: Set repo variable ZAP_TARGET or provide 'target' input." >&2
             exit 1
           fi
 
-      # ZAP'ı direkt Docker ile çalıştır (action içindeki artifact upload devre dışı)
-      - name: Run ZAP full scan (Docker)
-        run: |
-          set -euo pipefail
-          docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker run --rm \
-            -v "$PWD:/zap/wrk" \
-            --network=host \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
-              -t "${{ steps.target.outputs.URL }}" \
-              -c .zap/rules.tsv \
-              -J report_json.json \
-              -w report_md.md \
-              -r report_html.html \
-              -a
+      - name: ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.8.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: ${{ steps.resolve.outputs.url }}
+          rules_file_name: '.zap/rules.tsv'
+          # Rapor dosyalarını üret
+          cmd_options: >-
+            -a
+            -J report_json.json
+            -w report_md.md
+            -r report_html.html
 
-      # Raporları biz yüklüyoruz — isim çakışması yok
       - name: Upload ZAP full-scan artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zap-full-report-${{ github.run_id }}
+          name: zap-full-report
           path: |
             report_md.md
             report_html.html
