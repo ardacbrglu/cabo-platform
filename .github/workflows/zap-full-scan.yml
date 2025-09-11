@@ -2,8 +2,12 @@ name: zap-full-scan
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
+        required: false
   schedule:
-    - cron: "0 2 * * 1"   # Pazartesi 02:00 UTC
+    - cron: "0 2 * * 1"  # Pazartesi 02:00 UTC
 
 permissions:
   contents: read
@@ -11,25 +15,42 @@ permissions:
 jobs:
   zap:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+
     steps:
       - uses: actions/checkout@v4
+
+      # <<< Güvenli hedef çözümleme (Semgrep friendly)
+      - name: Resolve target URL (safe)
+        id: resolve
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          VAR_TARGET: ${{ vars.ZAP_TARGET }}
+        run: |
+          if [ -n "$INPUT_TARGET" ]; then
+            echo "url=$INPUT_TARGET" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VAR_TARGET" ]; then
+            echo "url=$VAR_TARGET" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: Set repo variable ZAP_TARGET or provide 'target' input." >&2
+            exit 1
+          fi
 
       - name: ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.8.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          target: ${{ vars.ZAP_TARGET }}
+          target: ${{ steps.resolve.outputs.url }}
           rules_file_name: '.zap/rules.tsv'
-          allow_issue_writing: false
-          fail_action: false
-          cmd_options: >
+          # Rapor dosyalarını üret
+          cmd_options: >-
             -a
+            -J report_json.json
             -w report_md.md
             -r report_html.html
-            -J report_json.json
 
       - name: Upload ZAP full-scan artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zap-full-report

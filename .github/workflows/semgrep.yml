@@ -3,8 +3,7 @@ name: semgrep
 on:
   pull_request:
   push:
-  schedule:
-    - cron: "30 3 * * 1"   # Pazartesi 03:30 UTC
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -14,23 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Semgrep (community rules)
+        uses: returntocorp/semgrep-action@v1
         with:
-          fetch-depth: 0
-
-      - name: Install Semgrep
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install semgrep
-
-      - name: Run Semgrep (managed rules, metrics off)
+          config: p/ci
         env:
           SEMGREP_SEND_METRICS: "off"
-        run: |
-          semgrep --config p/ci --error --timeout 180 --json -o semgrep.json
-
-      - name: Upload Semgrep report
-        uses: actions/upload-artifact@v4
-        with:
-          name: semgrep-report
-          path: semgrep.json
-          retention-days: 7
