@@ -2,35 +2,28 @@ name: semgrep
 
 on:
   pull_request:
-  push:
   schedule:
-    - cron: "30 3 * * 1"   # Pazartesi 03:30 UTC
+    - cron: '30 3 * * 1'  # Pazartesi 03:30 UTC
 
 permissions:
   contents: read
+  security-events: write  # SARIF yüklemek için
 
 jobs:
   semgrep:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run Semgrep (p/ci rules)
+        uses: returntocorp/semgrep-action@v1
         with:
-          fetch-depth: 0
-
-      - name: Install Semgrep
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install semgrep
-
-      - name: Run Semgrep (managed rules, metrics off)
+          config: p/ci               # explicit config -> metrics off ile uyumlu
+          generateSarif: true
         env:
           SEMGREP_SEND_METRICS: "off"
-        run: |
-          semgrep --config p/ci --error --timeout 180 --json -o semgrep.json
 
-      - name: Upload Semgrep report
-        uses: actions/upload-artifact@v4
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          name: semgrep-report
-          path: semgrep.json
-          retention-days: 7
+          sarif_file: semgrep.sarif

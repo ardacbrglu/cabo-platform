@@ -2,8 +2,13 @@ name: zap-full-scan
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Optional: override target URL (leave empty to use repo var ZAP_TARGET)'
+        required: false
+        default: ''
   schedule:
-    - cron: "0 2 * * 1"   # Pazartesi 02:00 UTC
+    - cron: '0 2 * * 1'   # her Pazartesi 02:00 UTC
 
 permissions:
   contents: read
@@ -12,27 +17,47 @@ jobs:
   zap:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.8.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          target: ${{ vars.ZAP_TARGET }}
-          rules_file_name: '.zap/rules.tsv'
-          allow_issue_writing: false
-          fail_action: false
-          cmd_options: >
-            -a
-            -w report_md.md
-            -r report_html.html
-            -J report_json.json
+      # Hedef URL'yi belirle (workflow input > repo var)
+      - name: Resolve target URL
+        id: target
+        run: |
+          if [ -n "${{ github.event.inputs.target }}" ]; then
+            echo "URL=${{ github.event.inputs.target }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ vars.ZAP_TARGET }}" ]; then
+            echo "URL=${{ vars.ZAP_TARGET }}" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: Set ZAP_TARGET repo variable or provide target input."
+            exit 1
+          fi
 
+      # ZAP'ı direkt Docker ile çalıştır (action içindeki artifact upload devre dışı)
+      - name: Run ZAP full scan (Docker)
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run --rm \
+            -v "$PWD:/zap/wrk" \
+            --network=host \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+              -t "${{ steps.target.outputs.URL }}" \
+              -c .zap/rules.tsv \
+              -J report_json.json \
+              -w report_md.md \
+              -r report_html.html \
+              -a
+
+      # Raporları biz yüklüyoruz — isim çakışması yok
       - name: Upload ZAP full-scan artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zap-full-report
+          name: zap-full-report-${{ github.run_id }}
           path: |
             report_md.md
             report_html.html
