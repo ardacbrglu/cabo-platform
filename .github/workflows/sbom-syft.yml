@@ -2,8 +2,6 @@ name: sbom
 on:
   pull_request:
   push:
-    branches: [ "main", "dev", "feature/**" ]
-  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -13,11 +11,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: anchore/sbom-action@v0
         with:
-          path: .
-          format: spdx-json
-          output-file: sbom.spdx.json
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom.spdx.json
-          path: sbom.spdx.json
+          artifact-name: sbom-cyclonedx.json
+          format: cyclonedx-json

@@ -5,7 +5,7 @@ on:
   schedule: [ { cron: "0 4 * * *" } ]
 permissions:
   contents: read
-  pull-requests: read   # <-- önemli
+  pull-requests: read
 jobs:
   scan:
     runs-on: ubuntu-latest

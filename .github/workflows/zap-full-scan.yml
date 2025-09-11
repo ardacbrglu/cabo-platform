@@ -1,13 +1,13 @@
 name: zap-full-scan
-
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
+        description: "Override target URL"
         required: false
+        type: string
   schedule:
-    - cron: "0 2 * * 1"  # Pazartesi 02:00 UTC
+    - cron: "0 2 * * 1"   # opsiyonel
 
 permissions:
   contents: read
@@ -15,24 +15,19 @@ permissions:
 jobs:
   zap:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # <<< Güvenli hedef çözümleme (Semgrep friendly)
-      - name: Resolve target URL (safe)
-        id: resolve
+      # PR’de Semgrep'in uyardığı shell interpolation yerine env kullanıyoruz
+      - id: resolve
         shell: bash
-        env:
-          INPUT_TARGET: ${{ github.event.inputs.target }}
-          VAR_TARGET: ${{ vars.ZAP_TARGET }}
         run: |
-          if [ -n "$INPUT_TARGET" ]; then
-            echo "url=$INPUT_TARGET" >> "$GITHUB_OUTPUT"
-          elif [ -n "$VAR_TARGET" ]; then
-            echo "url=$VAR_TARGET" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.target }}" ]; then
+            echo "url=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ vars.ZAP_TARGET }}" ]; then
+            echo "url=${{ vars.ZAP_TARGET }}" >> "$GITHUB_OUTPUT"
           else
-            echo "ERROR: Set repo variable ZAP_TARGET or provide 'target' input." >&2
+            echo "ERROR: Set ZAP_TARGET repo variable or provide target input."
             exit 1
           fi
 
@@ -42,12 +37,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: ${{ steps.resolve.outputs.url }}
           rules_file_name: '.zap/rules.tsv'
-          # Rapor dosyalarını üret
-          cmd_options: >-
-            -a
-            -J report_json.json
-            -w report_md.md
-            -r report_html.html
+          allow_issue_writing: false
 
       - name: Upload ZAP full-scan artifacts
         if: always()

@@ -4,8 +4,11 @@ on:
     workflows: [ "sbom" ]
     types: [ "completed" ]
 permissions:
-  contents: read
+  contents: read  
   actions: read
+  checks: write
+  issues: write
+  pull-requests: write
   security-events: write
 jobs:
   scan-sbom:
