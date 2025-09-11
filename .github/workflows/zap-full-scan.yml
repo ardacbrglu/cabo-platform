@@ -7,8 +7,9 @@ on:
         description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
         required: false
   schedule:
-    - cron: "0 2 * * 1"  # Pazartesi 02:00 UTC
+    - cron: "0 2 * * 1"  # Her Pazartesi 02:00 UTC
 
+# Issue açmayacağız; artifact yüklemek için read yeterli
 permissions:
   contents: read
 
@@ -19,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # <<< Güvenli hedef çözümleme (Semgrep friendly)
+      # Manuel input > repo variable (ZAP_TARGET) sıralamasıyla güvenli çözüm
       - name: Resolve target URL (safe)
         id: resolve
         shell: bash
@@ -36,13 +37,13 @@ jobs:
             exit 1
           fi
 
-      - name: ZAP Full Scan
+      - name: ZAP Full Scan (no issue writing)
         uses: zaproxy/action-full-scan@v0.8.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # token vermiyoruz -> Issue açma denemeyecek
           target: ${{ steps.resolve.outputs.url }}
           rules_file_name: '.zap/rules.tsv'
-          # Rapor dosyalarını üret
+          allow_issue_writing: false
           cmd_options: >-
             -a
             -J report_json.json

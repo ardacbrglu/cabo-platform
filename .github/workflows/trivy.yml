@@ -1,23 +1,45 @@
 name: trivy
+
 on:
-  pull_request:
   push:
+    branches: [ dev, main ]
+  pull_request:
+    branches: [ dev, main ]
+  workflow_dispatch: {}
+
 permissions:
   contents: read
+  security-events: write  # SARIF yüklemek için
+
 jobs:
   fs-scan:
+    name: Trivy FS Scan
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Run Trivy (filesystem)
-        uses: aquasecurity/trivy-action@0.24.0
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (filesystem) and produce SARIF
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
+          scan-ref: .
           format: sarif
-          output: trivy.sarif
-          severity: CRITICAL,HIGH
-      - name: Upload Trivy report as artifact (private repo)
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          vuln-type: library,os
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Keep raw artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy.sarif
-          path: trivy.sarif
+          name: trivy-fs-sarif
+          path: trivy-results.sarif
+          retention-days: 7
