@@ -9,10 +9,9 @@ on:
     branches: [ dev, main ]
   workflow_dispatch: {}
 
+# İzinlere artık gerek kalmadı çünkü bir yere yükleme yapmıyoruz.
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 jobs:
   fs-scan:
@@ -22,26 +21,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Trivy (filesystem) -> SARIF
+      # BU ADIM DEĞİŞTİRİLDİ
+      - name: Run Trivy (filesystem)
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
           scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
+          # Çıktı formatını 'table' yaptık, bu log'da okunabilir bir tablo demek.
+          format: 'table'
+          # Çıktıyı dosyaya değil, log'a yazmasını sağlıyoruz.
+          output: '' 
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           vuln-type: library,os
 
-      - name: Upload SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-
-      - name: Keep artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-fs-sarif
-          path: trivy-results.sarif
-          retention-days: 7
+      # BU İKİ ADIM TAMAMEN SİLİNDİ
+      # - name: Upload SARIF to Code Scanning
+      # ...
+      # - name: Keep artifact
+      # ...
