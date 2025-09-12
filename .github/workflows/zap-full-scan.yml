@@ -1,0 +1,67 @@
+# .github/workflows/zap-full-scan.yml
+
+name: OWASP ZAP Full Scan
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Optional: Target URL to scan'
+        required: false
+        
+  schedule:
+    - cron: "0 2 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  DEFAULT_TARGET: https://cabo-platform-production.up.railway.app
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    name: Run ZAP Full Scan
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve target URL
+        id: resolve
+        shell: bash
+        env:
+          RESOLVED_URL: ${{ github.event.inputs.target || vars.ZAP_TARGET || env.DEFAULT_TARGET }}
+        run: |
+          url="$RESOLVED_URL"
+          echo "Scanning target: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Run ZAP Full Scan using Docker
+        continue-on-error: true
+        run: |
+          mkdir -p zap-reports
+          chmod a+w zap-reports
+          docker run --rm \
+            -v "${{ github.workspace }}:/zap/wrk/:rw" \
+            -v "${{ github.workspace }}/zap-reports:/zap/reports/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py \
+              -t "${{ steps.resolve.outputs.url }}" \
+              -a \
+              -c .zap/rules.tsv \
+              -J /zap/reports/report_json.json \
+              -w /zap/reports/report_md.md \
+              -r /zap/reports/report_html.html
+
+      - name: Upload ZAP Scan Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-scan-reports
+          path: zap-reports/
+          retention-days: 7
