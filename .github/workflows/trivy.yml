@@ -9,18 +9,16 @@ on:
 
 permissions:
   contents: read
-  security-events: write  # SARIF yüklemek için
+  security-events: write
 
 jobs:
   fs-scan:
     name: Trivy FS Scan
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Run Trivy (filesystem) and produce SARIF
+      - name: Run Trivy (filesystem) -> SARIF
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
@@ -30,13 +28,11 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           vuln-type: library,os
-
       - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-
-      - name: Keep raw artifact
+      - name: Keep artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:

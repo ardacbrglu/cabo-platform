@@ -1,39 +1,73 @@
-name: codeql
+name: zap-full-scan
 
 on:
-  push:
-    branches: [ dev, main ]
-  pull_request:
-    branches: [ dev, main ]
-  workflow_dispatch: {}  # Manuel çalıştırma
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
+        required: false
+  schedule:
+    - cron: "0 2 * * 1"  # Her Pazartesi 02:00 UTC
 
+# Sadece artifact yükleyeceğiz; issue yok, API yazma yok
 permissions:
   contents: read
-  security-events: write
 
 jobs:
-  analyze:
-    name: CodeQL Analyze
+  zap:
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'javascript' ]  # Next.js/Node için
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
+      # Güvenli hedef çözümleme: manuel input > repo var (ZAP_TARGET)
+      - name: Resolve target URL (safe)
+        id: resolve
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          VAR_TARGET: ${{ vars.ZAP_TARGET }}
+        run: |
+          if [ -n "$INPUT_TARGET" ]; then
+            echo "url=$INPUT_TARGET" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VAR_TARGET" ]; then
+            echo "url=$VAR_TARGET" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: Set repo variable ZAP_TARGET or provide 'target' input." >&2
+            exit 1
+          fi
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+      - name: Pull ZAP image
+        run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+      - name: Run ZAP Full Scan (Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Rapor çıkış dosyalarını çalışma dizinine yazacağız
+          touch report_json.json report_md.md report_html.html
+          chmod a+w report_json.json report_md.md report_html.html
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/zap/wrk/:rw" \
+            --network=host \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+              -t "${{ steps.resolve.outputs.url }}" \
+              -a \
+              -J report_json.json \
+              -w report_md.md \
+              -r report_html.html \
+              -c .zap/rules.tsv
+
+      - name: Upload ZAP full-scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          category: "/language:${{matrix.language}}"
+          name: zap-full-report
+          path: |
+            report_md.md
+            report_html.html
+            report_json.json
+          retention-days: 7

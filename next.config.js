@@ -54,6 +54,7 @@ function cspValue() {
 const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  
 
   async headers() {
     return [

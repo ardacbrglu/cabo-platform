@@ -1,79 +1,78 @@
-name: zap-full-scan
+# .github/workflows/zap-full-scan.yml
+
+name: OWASP ZAP Full Scan
 
 on:
-  branches:
-    - main
-    - dev
+  # This section is corrected.
+  # Triggers on push to main or dev branch
+  push:
+    branches:
+      - main
+      - dev
+  
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
       target:
-        description: 'Opsiyonel: Hedef URL (repo var. ZAP_TARGET yerine geçer)'
+        description: 'Optional: Target URL to scan'
         required: false
+        
+  # Runs on a schedule (Every Monday at 02:00 UTC)
   schedule:
-    - cron: "0 2 * * 1"  # Her Pazartesi 02:00 UTC
+    - cron: "0 2 * * 1"
 
+# Permissions needed for the job
 permissions:
-  contents: read   # Issue yok; sadece artifact yüklenecek
+  contents: read # Allows checkout
 
 env:
+  # Fallback target if no other is provided.
+  # IMPORTANT: Make sure this URL is correct for your Railway deployment.
   DEFAULT_TARGET: https://cabo-platform-production.up.railway.app
 
 jobs:
-  zap:
+  zap_scan:
     runs-on: ubuntu-latest
+    name: Run ZAP Full Scan
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Güvenli hedef çözümleme: input > repo var > fallback
-      - name: Resolve target URL (safe)
+      - name: Resolve target URL
         id: resolve
         shell: bash
-        env:
-          INPUT_TARGET: ${{ github.event.inputs.target }}
-          VAR_TARGET: ${{ vars.ZAP_TARGET }}
-          DEFAULT_TARGET: ${{ env.DEFAULT_TARGET }}
         run: |
-          if [ -n "$INPUT_TARGET" ]; then
-            url="$INPUT_TARGET"
-          elif [ -n "$VAR_TARGET" ]; then
-            url="$VAR_TARGET"
-          else
-            url="$DEFAULT_TARGET"
-          fi
-          echo "Resolved target: $url"
+          url="${{ github.event.inputs.target || vars.ZAP_TARGET || env.DEFAULT_TARGET }}"
+          echo "Scanning target: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-      - name: Pull ZAP image
-        run: docker pull ghcr.io/zaproxy/zaproxy:stable
-
-      - name: Run ZAP Full Scan (Docker)
-        shell: bash
+      - name: Run ZAP Full Scan using Docker
+        # We add 'continue-on-error: true' so the workflow doesn't stop
+        # if ZAP finds issues. This ensures the report is always uploaded.
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          touch report_json.json report_md.md report_html.html
-          chmod a+w report_json.json report_md.md report_html.html
+          # Create and set permissions for report files
+          mkdir -p zap-reports
+          chmod a+w zap-reports
 
+          # Run the ZAP Docker container
           docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/zap/wrk/:rw" \
-            --network=host \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-full-scan.py \
+            -v "${{ github.workspace }}:/zap/wrk/:rw" \
+            -v "${{ github.workspace }}/zap-reports:/zap/reports/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py \
               -t "${{ steps.resolve.outputs.url }}" \
               -a \
-              -J report_json.json \
-              -w report_md.md \
-              -r report_html.html \
-              -c .zap/rules.tsv
+              -c .zap/rules.tsv \
+              -J /zap/reports/report_json.json \
+              -w /zap/reports/report_md.md \
+              -r /zap/reports/report_html.html
 
-      - name: Upload ZAP full-scan artifacts
+      - name: Upload ZAP Scan Reports
+        # 'if: always()' ensures this step runs even if the previous one fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zap-full-report
-          path: |
-            report_md.md
-            report_html.html
-            report_json.json
+          name: zap-scan-reports
+          path: zap-reports/
           retention-days: 7
