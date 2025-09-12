@@ -1,6 +1,9 @@
 name: zap-full-scan
 
 on:
+  branches:
+    - main
+    - dev
   workflow_dispatch:
     inputs:
       target:
