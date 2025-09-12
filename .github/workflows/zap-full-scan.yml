@@ -10,7 +10,10 @@ on:
     - cron: "0 2 * * 1"  # Her Pazartesi 02:00 UTC
 
 permissions:
-  contents: read   # Issue açmıyoruz, sadece artifact yükleyeceğiz
+  contents: read   # Issue yok; sadece artifact yüklenecek
+
+env:
+  DEFAULT_TARGET: https://cabo-platform-production.up.railway.app
 
 jobs:
   zap:
@@ -20,21 +23,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Güvenli hedef çözümleme: input > repo var > fallback
       - name: Resolve target URL (safe)
         id: resolve
         shell: bash
         env:
           INPUT_TARGET: ${{ github.event.inputs.target }}
           VAR_TARGET: ${{ vars.ZAP_TARGET }}
+          DEFAULT_TARGET: ${{ env.DEFAULT_TARGET }}
         run: |
           if [ -n "$INPUT_TARGET" ]; then
-            echo "url=$INPUT_TARGET" >> "$GITHUB_OUTPUT"
+            url="$INPUT_TARGET"
           elif [ -n "$VAR_TARGET" ]; then
-            echo "url=$VAR_TARGET" >> "$GITHUB_OUTPUT"
+            url="$VAR_TARGET"
           else
-            echo "ERROR: Set repo variable ZAP_TARGET or provide 'target' input." >&2
-            exit 1
+            url="$DEFAULT_TARGET"
           fi
+          echo "Resolved target: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Pull ZAP image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable

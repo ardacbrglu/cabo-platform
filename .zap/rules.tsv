@@ -5,3 +5,4 @@
 10109	WARN	Modern web app info
 90004	IGNORE	Spectre site isolation is informational
 90005	WARN	Missing Sec-Fetch-Dest header
+40025	WARN	Proxy disclosure from upstream (benign)
