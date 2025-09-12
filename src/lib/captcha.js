@@ -1,10 +1,27 @@
-// lib/captcha.js
 /**
- * reCAPTCHA v2 server verify helpers (Node/Edge)
+ * reCAPTCHA v2 server verify
+ * - PROD: gerçek secret zorunlu
+ * - DEV: host local/LAN ise veya secret yoksa TEST SECRET kullan
  */
 
-export async function verifyRecaptcha(token) {
-  const secret = process.env.RECAPTCHA_SECRET_KEY;
+const TEST_SECRET = "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe";
+
+function isLocalLikeHost(h = "") {
+  const hn = String(h || "").split(":")[0];
+  return (
+    /^localhost$/i.test(hn) ||
+    /^127\./.test(hn) ||
+    /^10\./.test(hn) ||
+    /^192\.168\./.test(hn) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hn)
+  );
+}
+
+export async function verifyRecaptcha(token, { forceTest = false } = {}) {
+  const isProd = process.env.NODE_ENV === "production";
+  let secret = process.env.RECAPTCHA_SECRET_KEY || "";
+  if (!isProd && (forceTest || !secret)) secret = TEST_SECRET;
+
   if (!secret) return { ok: false, code: "SECRET_MISSING" };
   if (!token) return { ok: false, code: "TOKEN_MISSING" };
 
@@ -30,13 +47,18 @@ export async function verifyRecaptcha(token) {
       const code = Array.isArray(data?.["error-codes"]) ? data["error-codes"][0] : "VERIFY_FAILED";
       return { ok: false, code, raw: data || null };
     } catch {
-      // sonraki endpoint denenir
+      // diğer endpoint'e geç
     }
   }
   return { ok: false, code: "NETWORK" };
 }
 
-export async function verifyRecaptchaFromRequest(_req, token) {
-  const out = await verifyRecaptcha(token);
+export async function verifyRecaptchaFromRequest(req, token) {
+  const host =
+    req.headers.get("x-forwarded-host") ||
+    req.headers.get("host") ||
+    "";
+  const forceTest = process.env.NODE_ENV !== "production" && isLocalLikeHost(host);
+  const out = await verifyRecaptcha(token, { forceTest });
   return out.ok;
 }

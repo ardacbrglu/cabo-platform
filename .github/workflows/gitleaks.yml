@@ -1,19 +1,87 @@
 name: gitleaks
+
 on:
   pull_request:
   push:
-  schedule: [ { cron: "0 4 * * *" } ]
+  schedule:
+    - cron: "0 4 * * *"
+
 permissions:
   contents: read
-  pull-requests: read   # <-- önemli
+  pull-requests: write
+  security-events: write
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
         with:
-          args: --redact
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          set -e
+          GITLEAKS_VERSION=8.18.4
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz \
+          | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+
+      - name: Run gitleaks (produce SARIF even on findings)
+        id: run
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          gitleaks detect \
+            --redact \
+            --source . \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --exit-code=2
+          status=$?
+          echo "exitcode=$status" >> $GITHUB_OUTPUT
+
+          # Eğer dosya oluşmadıysa boş/minimal SARIF yaz
+          if [ ! -f gitleaks.sarif ]; then
+            cat > gitleaks.sarif <<'JSON'
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { "name": "gitleaks", "informationUri": "https://github.com/gitleaks/gitleaks" } },
+                  "results": []
+                }
+              ]
+            }
+JSON
+          fi
+          # Bu adımı burada fail etmiyoruz; raporlar yüklensin.
+          exit 0
+
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks.sarif
+          if-no-files-found: warn
+
+      - name: Fail job if leaks found
+        if: steps.run.outputs.exitcode == '2'
+        run: |
+          echo "Gitleaks found secrets. See SARIF/annotations." >&2
+          exit 2
