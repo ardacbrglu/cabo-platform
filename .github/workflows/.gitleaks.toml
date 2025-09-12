@@ -1,11 +1,19 @@
-title = "cabo-platform allowlist"
+title = "Cabo Gitleaks Config"
+
 [allowlist]
-  description = "known non-secrets & public envs"
-  regexes = [
-    '''(?i)NEXT_PUBLIC_[A-Z0-9_]+''',
-    '''(?i)dummy|example|sample|test|placeholder|changeme'''
-  ]
-  paths = [
-    '''^public/''',
-    '''^package(-lock)?\.json$'''
-  ]
+description = "False-positive path/pattern allowlist"
+# Bu klasör ve dosya tiplerini tarama dışında bırak
+paths = [
+  '''^tests?/fixtures?/''',
+  '''^docs/''',
+  '''\.md$'''
+]
+
+# Sadece örnek/dev amaçlı bilinen kalıpları whitelist et (gerçek sırları ekleme!)
+regexes = [
+  '''(?i)\b(dummy|sample|test)(_|-)?(key|token|secret)\b''',
+  '''(?i)\blocalhost(:\d+)?\b'''
+]
+
+# (İsteğe bağlı) spesifik commit'leri allowliste al
+# commits = ["<SHA1>", "<SHA2>"]

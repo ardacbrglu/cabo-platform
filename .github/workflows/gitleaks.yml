@@ -1,19 +1,58 @@
 name: gitleaks
+
 on:
   pull_request:
   push:
-  schedule: [ { cron: "0 4 * * *" } ]
+  schedule:
+    - cron: "0 4 * * *" # her gün 04:00 UTC
+
+# PR'a yorum ve SARIF upload için gerekli minimum izinler
 permissions:
   contents: read
-  pull-requests: read   # <-- önemli
+  pull-requests: write        # PR yorum/annotasyon için
+  security-events: write      # SARIF'i Code Scanning'e yüklemek için
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --redact
+          # Raporu SARIF üret, sırları redakte et; sızıntı varsa exit 2 ile FAIL
+          args: >
+            detect
+            --redact
+            --exit-code=2
+            --report-format=sarif
+            --report-path=gitleaks.sarif
+            --source=.
+            --verbose
+
+      # SARIF'i Code Scanning paneline yükle (Security > Code scanning alerts)
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      # Raporu job artifaktı olarak da sakla
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks.sarif
+          if-no-files-found: warn
