@@ -2,13 +2,19 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Merchant Credentials Login Proxy (NextAuth callback) + güvenlik
- * - Origin/Referer + X-Requested-With + X-Request-Id zorunlu
- * - Rate limit: 5/dk IP + 5/dk user
- * - Lock: 5 başarısız → 15dk kilit
- * - RBAC: role === merchant, status === active
- * - CSRF: NextAuth /api/auth/csrf alınır, callback’e gönderilir
- * - Cookie forward: callback'ten gelen Set-Cookie'ler aynen iletilir
+ * Security Docblock — Cabo PROD
+ * Route: POST /api/merchant_login
+ * Purpose: Merchant Credentials Login Proxy (NextAuth credentials callback)
+ * Controls:
+ * - Input: Zod (email, password)
+ * - AuthZ gates: role === "merchant", status === "active"
+ * - Anti-abuse: Rate limit IP 5/min, user 5/min; 5 yanlış parola → 15 dk kilit
+ * - Headers: requireOrigin + requireAjax + requireRequestId
+ * - CSRF: NextAuth /api/auth/csrf; cookie’ler callback’e forward edilir
+ * - Cookies: callback’ten gelen Set-Cookie’ler birebir iletilir
+ * - Audit: kritik olaylar kaydedilir
+ * - Responses: {success?, error?, message?, request_id, retry_after?}
+ * - Cache: no-store; Vary: Cookie; hardened headers via applyApiSecurityHeaders
  */
 
 import { NextResponse } from "next/server";
@@ -73,17 +79,33 @@ function containsSessionCookie(setCookieHeader) {
     lower.includes("__host-next-auth.session-token=")
   );
 }
-function getOrigin(req) {
-  if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL;
-  const xfProto = (req.headers.get("x-forwarded-proto") || "").toLowerCase();
+
+/** Origin builder — proxy/https güvenli:
+ * - Önce X-Forwarded-Host/Proto → host/proto
+ * - Proto boşsa: https (prod); localhost/LAN için http
+ * - NEXTAUTH_URL host aynıysa onun origin’i tercih edilir (port/şema korunur)
+ */
+function getOriginFromReq(req) {
   const xfHost = req.headers.get("x-forwarded-host");
-  const host = xfHost || req.headers.get("host");
-  const scheme =
-    host?.startsWith("localhost") || host?.startsWith("127.0.0.1")
-      ? "http"
-      : xfProto || "https";
-  return `${scheme}://${host}`;
+  const host = (xfHost || req.headers.get("host") || "").trim();
+
+  let proto = (req.headers.get("x-forwarded-proto") || "").toLowerCase();
+  const isLocalLike =
+    /^localhost(:\d+)?$/i.test(host) ||
+    /^127\.0\.0\.1(:\d+)?$/.test(host) ||
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
+
+  if (!proto) proto = isLocalLike ? "http" : "https";
+
+  try {
+    if (process.env.NEXTAUTH_URL) {
+      const u = new URL(process.env.NEXTAUTH_URL);
+      if (u.host === host) return u.origin;
+    }
+  } catch {}
+  return `${proto}://${host}`;
 }
+
 async function getNextAuthCsrf(origin) {
   const csrfRes = await fetch(`${origin}/api/auth/csrf`, {
     method: "GET",
@@ -202,11 +224,7 @@ export async function POST(req) {
       );
 
     if (!user) {
-      audit({
-        evt: "merchant.login.invalid_email",
-        email: email.slice(0, 3) + "***",
-        requestId,
-      });
+      audit({ evt: "merchant.login.invalid_email", email: email.slice(0, 3) + "***", requestId });
       return generic();
     }
 
@@ -243,12 +261,7 @@ export async function POST(req) {
     if (user.role !== "merchant") {
       return withStd(
         NextResponse.json(
-          {
-            success: false,
-            error: "forbidden",
-            message: T.notMerchant,
-            request_id: requestId,
-          },
+          { success: false, error: "forbidden", message: T.notMerchant, request_id: requestId },
           { status: 403 }
         )
       );
@@ -261,10 +274,7 @@ export async function POST(req) {
         )
       );
     }
-    if (!user.passwordHash) {
-      // Google-only vb. için merchant tarafında parola zorunlu
-      return generic();
-    }
+    if (!user.passwordHash) return generic(); // merchant için parola zorunlu
     if (user.status !== "active") {
       return withStd(
         NextResponse.json(
@@ -293,33 +303,20 @@ export async function POST(req) {
     }
 
     // reset counters
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { failedAttempts: 0, lockUntil: null },
-    });
+    await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
     // --- NextAuth CSRF + callback
-    const origin = getOrigin(req);
+    const origin = getOriginFromReq(req);
 
     let csrfToken, cookieJar, csrfSetCookie;
     try {
       ({ token: csrfToken, cookieJar, csrfSetCookie } = await getNextAuthCsrf(origin));
     } catch (e) {
-      audit({
-        evt: "merchant.login.csrf_fetch_fail",
-        userId: user.id,
-        requestId,
-        err: e?.message,
-      });
+      audit({ evt: "merchant.login.csrf_fetch_fail", userId: user.id, requestId, err: e?.message });
       return debugHeader(
         withStd(
           NextResponse.json(
-            {
-              success: false,
-              error: "server_error",
-              message: T.fail,
-              request_id: requestId,
-            },
+            { success: false, error: "server_error", message: T.fail, request_id: requestId },
             { status: 500 }
           )
         ),
@@ -352,9 +349,7 @@ export async function POST(req) {
 
     const setCookieHeader = cbRes.headers.get("set-cookie") || "";
     let cbJson = {};
-    try {
-      cbJson = await cbRes.json();
-    } catch {}
+    try { cbJson = await cbRes.json(); } catch {}
 
     const okJson = cbRes.ok && !cbJson?.error;
     const okRedirectWithSession =
@@ -372,12 +367,7 @@ export async function POST(req) {
       return debugHeader(
         withStd(
           NextResponse.json(
-            {
-              success: false,
-              error: "auth_failed",
-              message: T.fail,
-              request_id: requestId,
-            },
+            { success: false, error: "auth_failed", message: T.fail, request_id: requestId },
             { status: 401 }
           )
         ),
@@ -404,12 +394,7 @@ export async function POST(req) {
     audit({ evt: "merchant.login.exception", requestId, err: e?.message });
     return withStd(
       NextResponse.json(
-        {
-          success: false,
-          error: "server_error",
-          message: MSG[locale]?.fail || MSG.en.fail,
-          request_id: requestId,
-        },
+        { success: false, error: "server_error", message: MSG[locale]?.fail || MSG.en.fail, request_id: requestId },
         { status: 500 }
       )
     );
