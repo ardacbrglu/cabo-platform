@@ -210,3 +210,48 @@ html, body, *{ scrollbar-width:none; -ms-overflow-style:none; }
 .cabo-recaptcha-clip iframe{ display:block; max-width:none !important; }
 @media (max-width:420px){ .cabo-recaptcha-plate{ padding:6px; border-radius:10px; } }
 
+
+/* reCAPTCHA'yi tam ortala; mikro ekranlarda nazikçe küçült */
+.recaptcha-center{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  line-height:0;
+}
+.recaptcha-center .g-recaptcha{
+  transform-origin:center;
+}
+@media (max-width: 320px){
+  .recaptcha-center .g-recaptcha{ transform: scale(0.92); }
+}
+@media (max-width: 300px){
+  .recaptcha-center .g-recaptcha{ transform: scale(0.85); }
+}
+
+/* Mikro kayma/jitter önlemi (tüm sayfalarda güvenli) */
+html { scrollbar-gutter: stable both-edges; }
+
+/* Scroll anchoring açık kalsın (dinamik içerikte zıplama azalır) */
+html, body, #__next, #cabo-main, main { overflow-anchor: auto !important; }
+
+/* Mobil overscroll zıplamasını azalt */
+@media (hover:none) and (pointer:coarse){
+  html, body { overscroll-behavior-y: contain; }
+}
+
+
+/* reCAPTCHA — merkez + ölçek kabuğu (pointer hizası bozulmaz) */
+.recaptcha-center{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  line-height:0;
+}
+
+/* JS 302px tabanına scale uygular; compact modda scale yok */
+.recaptcha-scale-shell{
+  width:302px;               /* BASE_W */
+  transform-origin: top left;
+}

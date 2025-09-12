@@ -1,12 +1,13 @@
+// app/support/page.jsx
 "use client";
 
 import Layout from "@/components/Layout";
 import { Headset, Info, CheckCircle, Phone, Mail, Instagram } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { useTranslation } from "@/hooks/useTranslation";
-import { useState, useRef } from "react";
+import useTranslation from "@/hooks/useTranslation";
+import { useRef, useState } from "react";
 import Captcha from "@/components/Captcha";
-import { apiFetch } from "@/lib/apiFetch";
+import apiFetch from "@/lib/apiFetch";
 
 export default function SupportPage() {
   const { user } = useUser();
@@ -16,9 +17,14 @@ export default function SupportPage() {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [captchaToken, setCaptchaToken] = useState(null);
+  const [captchaToken, setCaptchaToken] = useState("");
   const [captchaKey, setCaptchaKey] = useState(0);
   const msgRef = useRef(null);
+
+  const resetCaptcha = () => {
+    setCaptchaToken("");
+    setCaptchaKey((k) => k + 1);
+  };
 
   const mapError = (codeOrMsg) => {
     const s = String(codeOrMsg || "").toLowerCase();
@@ -29,34 +35,20 @@ export default function SupportPage() {
     return t("errorGeneric") || "Something went wrong. Please try again.";
   };
 
-  const resetCaptcha = () => {
-    setCaptchaToken(null);
-    setCaptchaKey((k) => k + 1);
-  };
-
   const handleSend = async (e) => {
     e.preventDefault();
     setError("");
 
     const text = message.trim();
     if (!text) return;
-    if (!captchaToken) {
-      setError(t("captchaRequired") || "Please complete the captcha.");
-      return;
-    }
-    if (!user?.id) {
-      setError(t("mustLogin") || "Please login first.");
-      return;
-    }
+    if (!captchaToken) { setError(t("captchaRequired") || "Please complete the captcha."); return; }
+    if (!user?.id) { setError(t("mustLogin") || "Please login first."); return; }
 
     setSending(true);
     try {
       const res = await apiFetch("/api/support", {
         method: "POST",
-        headers: {
-          "x-recaptcha-token": captchaToken,
-          "accept-language": locale || "en",
-        },
+        headers: { "x-recaptcha-token": captchaToken, "accept-language": locale || "en" },
         body: { message: text },
       });
 
@@ -91,7 +83,6 @@ export default function SupportPage() {
   return (
     <Layout>
       <main className="w-full flex flex-col items-center px-3 py-8">
-        {/* Tek sütun: tüm ekranlarda alt alta */}
         <div className="w-full max-w-2xl mx-auto flex flex-col gap-8">
           {/* Contact Support */}
           <section className="bg-[#181818] rounded-2xl shadow border border-[#222328]/70 p-6 sm:p-7">
@@ -115,7 +106,8 @@ export default function SupportPage() {
               <div
                 ref={msgRef}
                 className="flex items-center gap-2 bg-[#182f18] border border-[#81d74280] text-[#aaff99] rounded-md px-4 py-2 mb-4"
-                role="status" aria-live="polite"
+                role="status"
+                aria-live="polite"
               >
                 <CheckCircle size={18} className="text-[#81d742]" />
                 {t("messageSent")}
@@ -125,7 +117,8 @@ export default function SupportPage() {
               <div
                 ref={msgRef}
                 className="flex items-center gap-2 bg-red-900/80 border border-red-500 text-red-200 rounded-md px-4 py-2 mb-4"
-                role="alert" aria-live="assertive"
+                role="alert"
+                aria-live="assertive"
               >
                 {error}
               </div>
@@ -135,28 +128,30 @@ export default function SupportPage() {
               <label className="block text-[#d1ffd0] text-xs font-bold font-mono mb-2">
                 {t("yourMessage")}
               </label>
+
               <textarea
-                className="bg-[#161616] border border-[#222] rounded px-4 py-2 mb-3 text-white w-full outline-none text-sm font-mono resize-none min-h-[96px] transition"
+                className="bg-[#161616] border border-[#222] rounded px-4 py-3 mb-3 text-white w-full outline-none font-mono resize-none min-h-[112px] transition text-[16px] md:text-sm"
                 placeholder={t("supportPlaceholder")}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 disabled={sending}
                 required
                 maxLength={900}
+                inputMode="text"
               />
 
-              {/* Doğal (white) reCAPTCHA */}
+              {/* reCAPTCHA – tam merkez, auto compact */}
               <Captcha
                 key={captchaKey}
                 onChange={setCaptchaToken}
                 lang={(user?.languagePreference || locale || "en").toLowerCase()}
-                theme="light"                 // <-- beyaz tema
-                className="mb-4"
+                theme="light"
+                className="mb-3"
               />
 
               <button
                 type="submit"
-                className="w-full py-2 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full py-3 rounded font-bold font-mono bg-[#81d742] hover:bg-[#a9ff72] text-[#181818] text-base transition disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={sending || !message.trim() || !captchaToken || !user?.id}
               >
                 {sending ? t("sending") : t("send")}
@@ -190,12 +185,10 @@ export default function SupportPage() {
             <div className="flex items-center gap-2 mb-4 text-[#81d742] font-extrabold text-lg">
               <Info size={21} /> {t("faq")}
             </div>
-            {/* burada SSS içeriklerini listeleyebilirsin */}
+            {/* ... */}
           </section>
         </div>
       </main>
     </Layout>
   );
 }
-
-export const runtime = "nodejs";

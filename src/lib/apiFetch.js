@@ -14,9 +14,16 @@
 let _csrf = { token: "", ts: 0 };
 const CSRF_TTL = 10 * 60 * 1000; // 10 dk
 
+function escapeForRegex(name) {
+  // cookie adındaki . [ ] ( ) ? + * vs. regex karakterlerini kaçır
+  return name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
 function getCookie(name) {
   if (typeof document === "undefined") return "";
-  const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  const esc = escapeForRegex(name);
+  const re = new RegExp(`(?:^|;\\s*)${esc}=([^;]*)`);
+  const m = document.cookie.match(re);
   return m ? decodeURIComponent(m[1]) : "";
 }
 
@@ -85,11 +92,10 @@ export async function apiFetch(input, init = {}) {
     try {
       body = JSON.stringify(body);
     } catch {
-      // JSON.stringify patlarsa ham stringe düş
       body = String(body);
     }
   } else if (isFormData) {
-    // FormData ise Content-Type'ı fetch kendi set eder; varsa silelim
+    // FormData ise Content-Type'ı fetch kendi set eder
     if (headers.has("Content-Type")) headers.delete("Content-Type");
   }
 
@@ -107,6 +113,7 @@ export async function apiFetch(input, init = {}) {
     credentials: "include",
     cache: isMutation ? "no-store" : (init.cache ?? "no-store"),
     redirect: init.redirect || "follow",
+    mode: init.mode || "same-origin",
   };
 
   const exec = () => fetch(input, reqInit);
@@ -127,17 +134,25 @@ export async function apiFetch(input, init = {}) {
   // 401/403 → uygun login sayfasına yönlendir (opsiyonel kapatma)
   const noAuthRedirect = !!init.noAuthRedirect;
   if (typeof window !== "undefined" && (res.status === 401 || res.status === 403) && !noAuthRedirect) {
-    const path = window.location?.pathname || "";
-    const isMerchantArea =
-      path.startsWith("/merchant") ||
-      (typeof input === "string" && /\/api\/merchant_/i.test(input));
-    const to = isMerchantArea ? "/merchant/login" : "/login";
-    const url = new URL(to, window.location.origin);
-    url.searchParams.set("callbackUrl", window.location.href);
-    try {
-      window.location.replace(url.toString());
-    } catch {
-      window.location.href = url.toString();
+    const loc = window.location || {};
+    const herePath = loc.pathname || "";
+    const inputStr = typeof input === "string" ? input : "";
+
+    // Auth endpointlerinden gelen 401/403'te ya da zaten login sayfasındayken redirect döngüsünü engelle
+    const isAuthEndpoint =
+      /^\/api\/auth\//i.test(inputStr) ||
+      /\/api\/merchant_login/i.test(inputStr) ||
+      /\/api\/login/i.test(inputStr);
+    const alreadyOnLogin = /^\/(merchant\/)?login(?:\/|$)/i.test(herePath);
+
+    if (!isAuthEndpoint && !alreadyOnLogin) {
+      const isMerchantArea =
+        herePath.startsWith("/merchant") || /\/api\/merchant_/i.test(inputStr);
+      const to = isMerchantArea ? "/merchant/login" : "/login";
+      const url = new URL(to, loc.origin || window.location.origin);
+      url.searchParams.set("callbackUrl", window.location.href);
+      try { window.location.replace(url.toString()); }
+      catch { window.location.href = url.toString(); }
     }
   }
 

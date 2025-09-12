@@ -274,17 +274,26 @@ export default function RegisterPage() {
             </p>
           )}
 
+          
           {/* CAPTCHA */}
-          <div className={`mb-5 ${submitted && errors.captcha ? "ring-2 ring-red-400 rounded-xl p-2" : ""}`} aria-invalid={submitted && errors.captcha ? "true" : "false"}>
+          <div
+            className={`mb-5 ${submitted && errors.captcha ? "ring-2 ring-red-400 rounded-xl p-2" : ""}`}
+            aria-invalid={submitted && errors.captcha ? "true" : "false"}
+          >
             <Captcha
+              key={captchaResetKey}                // <— reset için
               onChange={(v) => setCaptcha(v || "")}
-              lang={isTR ? "tr" : "en"}
-              resetKey={captchaResetKey}
+              lang={(locale || "tr").toLowerCase()} // <— doğru dil kodu
               theme="light"
-              skin="card"
+              className="mb-3"
             />
-            {submitted && errors.captcha && <p className="mt-2 text-sm text-red-400" role="alert">{errors.captcha}</p>}
+            {submitted && errors.captcha && (
+              <p className="mt-2 text-sm text-red-400" role="alert">
+                {errors.captcha}
+              </p>
+            )}
           </div>
+
 
           {/* Server messages */}
           {serverError && (
