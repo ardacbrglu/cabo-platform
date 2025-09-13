@@ -3,18 +3,31 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Purchase webhook (merchant -> platform)
- * Security:
- * - HMAC-SHA256(timestamp + "." + rawBody) with per-merchant secret (MERCHANT_KEY_<keyId>)
- * - Timestamp window: ±5m
- * - Replay protection: unique (requestId, nonce)
- * - IP allowlist per MerchantIntegration
- * - Rate limit: IP+keyId
- * - Body size cap: 256KB
- * - Idempotency: unique (orderId, productId) in AffiliateUserSale
- * - Defensive product checks (active, sales limit)
- * - Comprehensive audit via WebhookRequestLog
- * - All responses: no-store + hardened headers
+ * Purchase webhook (merchant -> Cabo Platform) — JS version
+ *
+ * Security (Prod-Ready):
+ * - HMAC-SHA256 over `${timestamp}.${rawBody}` with per-merchant secret (MERCHANT_KEY_<KEYID>)
+ * - Headers (accepted aliases):
+ *   - KeyId:        X-Cabo-Key-Id  | X-Key-Id
+ *   - Timestamp:    X-Cabo-Timestamp | X-Timestamp         (epoch seconds)
+ *   - Signature:    X-Cabo-Signature | X-Signature         (hex)
+ *   - Optional:     X-Request-Id (idempotency), X-Nonce (replay token)
+ * - Timestamp window: ± WEBHOOK_TS_TOLERANCE (default 300s)
+ * - IP allowlist: from merchantIntegration.webhookIpAllowlist (CSV) if present
+ * - Body size cap: WEBHOOK_MAX_BODY (default 256KB)
+ * - Rate limit: IP + keyId scope (default 200/min)
+ * - Idempotency: reject duplicates via (requestId / nonce) and (orderId, productId)
+ * - Product gate: product_code line-item secret (REQUIRE_PRODUCT_CODE=1 ⇒ mandatory)
+ * - Defensive checks: active & admin-approved, sales limit, affiliate link validity (token / caboRef)
+ *
+ * Payload compatibility:
+ * - New:
+ *   { "orderNumber":"...", "userId":..., "caboRef":"...", "items":[
+ *     { "productCode":"...", "productId":"a", "productSlug":"a", "quantity":1, "unitPriceCharged":300, "lineTotal":300 }
+ *   ]}
+ * - Legacy:
+ *   { "token":"...", "orderId":"...", "status":"confirmed",
+ *     "products":[ { "productCode":"...", "quantity":1, "amount":300, "currency":"TRY" } ] }
  */
 
 import { NextResponse } from "next/server";
@@ -22,14 +35,24 @@ import prisma from "@/lib/prisma";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
+import crypto from "crypto";
 
-// ---- Config ----
-const WINDOW_S = 5 * 60; // ±5 minutes
-const MAX_BODY_BYTES = 256 * 1024;
+// ---------- Config ----------
+const TOLERANCE_S = Number.isFinite(Number(process.env.WEBHOOK_TS_TOLERANCE))
+  ? Number(process.env.WEBHOOK_TS_TOLERANCE)
+  : 300; // ±5m default
+
+const MAX_BODY_BYTES = Number.isFinite(Number(process.env.WEBHOOK_MAX_BODY))
+  ? Number(process.env.WEBHOOK_MAX_BODY)
+  : 256 * 1024; // 256KB
+
+const RATE_LIMIT_PER_MIN = 200;
+
 const ALLOWED_STATUSES = new Set(["pending", "confirmed", "canceled"]);
 const PLATFORM_COMMISSION_RATE = Number(process.env.PLATFORM_COMMISSION_RATE ?? "0");
+const REQUIRE_PRODUCT_CODE = String(process.env.REQUIRE_PRODUCT_CODE || "0") === "1";
 
-// ---- Helpers ----
+// ---------- Helpers ----------
 function withHeaders(res) {
   res.headers.set("Cache-Control", "no-store");
   return applyApiSecurityHeaders(res);
@@ -43,334 +66,420 @@ function getIP(req) {
 }
 function ipAllowed(ip, allowlist) {
   if (!allowlist) return true;
-  const list = allowlist.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+  const list = allowlist
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   return list.length === 0 || list.includes(ip);
+}
+function normalizeKeyIdForEnv(keyId) {
+  return keyId.replace(/[^A-Za-z0-9_]/g, "");
 }
 function resolveSecretForKeyId(keyId) {
   if (!keyId) return null;
-  const envName = `MERCHANT_KEY_${keyId}`;
+  const envName = `MERCHANT_KEY_${normalizeKeyIdForEnv(keyId)}`;
   return process.env[envName] || null;
 }
-function hexToUint8Array(hex) {
-  const clean = String(hex || "").trim().toLowerCase();
-  if (!/^[0-9a-f]+$/.test(clean)) return new Uint8Array(0);
-  const out = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
-  return out;
+function hexEqual(aHex, bHex) {
+  const a = Buffer.from(String(aHex || "").toLowerCase(), "hex");
+  const b = Buffer.from(String(bHex || "").toLowerCase(), "hex");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
-
-// Node >=18 has WebCrypto
-const cryptoApi = globalThis.crypto || (await import("crypto")).webcrypto;
-async function hmacVerify(secret, timestampSec, rawBody, signatureHex) {
-  const enc = new TextEncoder();
-  const key = await cryptoApi.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"]
-  );
-  const data = enc.encode(`${timestampSec}.${rawBody}`);
-  const sig = hexToUint8Array(signatureHex);
-  if (sig.length === 0) return false;
-  return cryptoApi.subtle.verify("HMAC", key, sig, data);
+function computeHmac(secret, ts, raw) {
+  return crypto.createHmac("sha256", secret).update(`${ts}.${raw}`).digest("hex");
 }
-
-// ---- GET optional health ----
-export async function GET() {
+function bad(status, msg, extra) {
   return withHeaders(
-    NextResponse.json({ ok: true })
+    new NextResponse(JSON.stringify({ ok: false, error: msg, ...(extra || {}) }), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    })
   );
 }
+function ok(obj) {
+  return withHeaders(
+    new NextResponse(JSON.stringify({ ok: true, ...(obj || {}) }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  );
+}
+function getHeader(req, keys) {
+  for (const k of keys) {
+    const v = req.headers.get(k);
+    if (v) return v;
+  }
+  return null;
+}
+function round4(n) {
+  return Math.round(n * 10000) / 10000;
+}
 
-// ---- POST webhook ----
-export async function POST(req) {
-  try {
-    const ip = getIP(req);
-
-    // Rate limit (IP + keyId)
-    const rawKeyId = req.headers.get("x-key-id") || "-";
-    const rlKey = makeRateLimitKey(req, { scope: "purchase_callback", extra: `${ip}:${rawKeyId}` });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 200, windowMs: 60_000 });
-    if (!ok) {
-      audit?.({ evt: "webhook.ratelimited", ip, keyId: rawKeyId });
-      return withHeaders(
-        NextResponse.json(
-          { error: "too_many_requests" },
-          { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
-        )
-      );
-    }
-
-    // Required headers
-    const keyId = req.headers.get("x-key-id");
-    const requestId = req.headers.get("x-request-id");
-    const nonce = req.headers.get("x-nonce");
-    const ts = req.headers.get("x-timestamp");
-    const signature = req.headers.get("x-signature");
-    const ua = req.headers.get("user-agent") || undefined;
-    if (!keyId || !requestId || !nonce || !ts || !signature) {
-      return withHeaders(
-        NextResponse.json({ error: "missing_auth_headers" }, { status: 400 })
-      );
-    }
-
-    // Lookup integration
-    const integration = await prisma.merchantIntegration.findUnique({
-      where: { keyId },
-      select: { merchantId: true, isActive: true, webhookIpAllowlist: true /*, secretHash: true*/ },
-    });
-    if (!integration || !integration.isActive) {
-      audit?.({ evt: "webhook.integration_inactive_or_missing", keyId });
-      return withHeaders(
-        NextResponse.json({ error: "unauthorized" }, { status: 401 })
-      );
-    }
-
-    // IP allowlist
-    if (!ipAllowed(ip, integration.webhookIpAllowlist || "")) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(Number(ts) * 1000 || Date.now()),
-          hmac: signature, ip, ua,
-          status: "unauthorized",
-          error: "ip_not_allowed",
-          rawBody: "",
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "ip_not_allowed" }, { status: 403 })
-      );
-    }
-
-    // Timestamp window
-    const tsNum = Number(ts);
-    if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > WINDOW_S) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(Number(ts) * 1000 || Date.now()),
-          hmac: signature, ip, ua,
-          status: "expired",
-          error: "stale_or_invalid_timestamp",
-          rawBody: "",
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "stale_or_invalid_timestamp" }, { status: 400 })
-      );
-    }
-
-    // Content-Length guard (if provided)
-    const clen = Number(req.headers.get("content-length"));
-    if (Number.isFinite(clen) && clen > MAX_BODY_BYTES) {
-      return withHeaders(
-        NextResponse.json({ error: "payload_too_large" }, { status: 413 })
-      );
-    }
-
-    // Early replay detection
-    const dup = await prisma.webhookRequestLog.findFirst({
+// Replay-safe logging (upsert by requestId or nonce)
+async function logOnce(base) {
+  const { requestId, nonce } = base || {};
+  if (requestId || nonce) {
+    const existing = await prisma.webhookRequestLog.findFirst({
       where: { OR: [{ requestId }, { nonce }] },
       select: { id: true },
     });
-    if (dup) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "replay",
-          error: "duplicate_requestId_or_nonce",
-          rawBody: "",
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
+    if (existing) {
+      return prisma.webhookRequestLog.update({
+        where: { id: existing.id },
+        data: base,
       });
-      return withHeaders(
-        NextResponse.json({ error: "replay_detected" }, { status: 409 })
-      );
     }
+  }
+  return prisma.webhookRequestLog.create({ data: base });
+}
 
-    // Read raw body (keep raw for HMAC)
-    const rawBody = await req.text();
-    if (rawBody.length > MAX_BODY_BYTES) {
-      return withHeaders(
-        NextResponse.json({ error: "payload_too_large" }, { status: 413 })
-      );
-    }
+// Allowed key ids (env whitelist, optional)
+const ALLOWED_KEY_IDS = (process.env.WEBHOOK_ALLOWED_KEY_IDS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-    // HMAC verify
-    const secret = resolveSecretForKeyId(keyId);
-    if (!secret) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "unauthorized",
-          error: "secret_not_found_for_keyId",
-          rawBody,
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "unauthorized" }, { status: 401 })
-      );
-    }
+// Optional static map (fallback) keyId -> merchantId
+function loadMerchantMap() {
+  try {
+    return JSON.parse(process.env.MERCHANT_ID_MAP_JSON || "{}");
+  } catch {
+    return {};
+  }
+}
+const MERCHANT_MAP = loadMerchantMap();
 
-    // Optional: verify env secret hash against DB secretHash (if you store a hash in DB)
-    // if (integration.secretHash?.startsWith("sha256:")) { ... }
+// ---------- Health ----------
+export async function GET() {
+  return ok({ healthy: true });
+}
 
-    const valid = await hmacVerify(secret, tsNum, rawBody, signature);
-    if (!valid) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "invalid_signature",
-          error: null,
-          rawBody,
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "invalid_signature" }, { status: 401 })
-      );
-    }
+// ---------- POST ----------
+export async function POST(req) {
+  const ip = getIP(req);
 
-    // Parse JSON (after signature verification)
-    let body;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "error",
-          error: "invalid_json",
-          rawBody,
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "invalid_json" }, { status: 400 })
-      );
-    }
+  // Read keyId early for rate limit key
+  const rawKeyId = getHeader(req, ["x-cabo-key-id", "x-key-id"]) || "-";
+  const rlKey = makeRateLimitKey(req, { scope: "purchase_callback", extra: `${ip}:${rawKeyId}` });
+  const { ok: rlOk, resetMs } = await checkRateLimit({
+    key: rlKey,
+    limit: RATE_LIMIT_PER_MIN,
+    windowMs: 60_000,
+  });
+  if (!rlOk) {
+    audit?.({ evt: "webhook.ratelimited", ip, keyId: rawKeyId });
+    return withHeaders(
+      NextResponse.json(
+        { error: "too_many_requests" },
+        { status: 429, headers: { "Retry-After": String(Math.ceil((resetMs || 0) / 1000)) } }
+      )
+    );
+  }
 
-    // Extract fields
-    const { token, orderId, status } = body || {};
-    const items = Array.isArray(body?.products)
-      ? body.products
-      : [{
-          productCode: body?.productCode,
-          quantity: body?.quantity,
-          amount: body?.amount,
-          currency: body?.currency,
-        }];
+  // Required headers (with aliases)
+  const keyId = getHeader(req, ["x-cabo-key-id", "x-key-id"]) || "";
+  const ts = getHeader(req, ["x-cabo-timestamp", "x-timestamp"]) || "";
+  const signature = getHeader(req, ["x-cabo-signature", "x-signature"]) || "";
 
-    if (!token || !orderId || !status || !ALLOWED_STATUSES.has(String(status))) {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "error",
-          error: "missing_or_invalid_fields",
-          rawBody,
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-          parsedBody: body,
-          itemsCount: Array.isArray(items) ? items.length : null,
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ error: "missing_or_invalid_fields" }, { status: 400 })
-      );
-    }
+  // Optional (we'll generate if missing)
+  let requestId = getHeader(req, ["x-request-id", "x-idempotency-key"]) || "";
+  let nonce = getHeader(req, ["x-nonce"]) || "";
 
-    // Ignore anything but confirmed (but log as accepted/ignored)
-    if (String(status) !== "confirmed") {
-      await prisma.webhookRequestLog.create({
-        data: {
-          merchantId: integration.merchantId,
-          requestId, nonce,
-          sentAt: new Date(tsNum * 1000),
-          hmac: signature, ip, ua,
-          status: "accepted",
-          error: `ignored_status_${status}`,
-          rawBody,
-          headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-          parsedBody: body,
-          itemsCount: Array.isArray(items) ? items.length : null,
-        },
-      });
-      return withHeaders(
-        NextResponse.json({ ok: true, message: `Order ${orderId} ignored (status=${status})` })
-      );
-    }
+  const ua = req.headers.get("user-agent") || undefined;
 
-    // Create primary log row (accepted)
-    const log = await prisma.webhookRequestLog.create({
-      data: {
-        merchantId: integration.merchantId,
-        requestId, nonce,
-        sentAt: new Date(tsNum * 1000),
-        hmac: signature, ip, ua,
-        status: "accepted",
-        error: null,
-        rawBody,
-        headers: { keyId, requestId, nonce, timestamp: ts, signature, ip, ua },
-        parsedBody: body,
-        itemsCount: Array.isArray(items) ? items.length : null,
+  if (!keyId || !ts || !signature) {
+    return bad(400, "missing_auth_headers");
+  }
+  if (ALLOWED_KEY_IDS.length && !ALLOWED_KEY_IDS.includes(keyId)) {
+    return bad(401, "keyid_not_allowed");
+  }
+
+  // Lookup integration (preferred) — fallback to MERCHANT_MAP
+  let integration = null;
+  try {
+    integration = await prisma.merchantIntegration.findUnique({
+      where: { keyId },
+      select: {
+        merchantId: true,
+        isActive: true,
+        webhookIpAllowlist: true,
       },
-      select: { id: true },
     });
+  } catch {
+    // ignore
+  }
 
-    // Resolve base link (visible + not expired)
-    const now = new Date();
-    let linkBase = await prisma.affiliateLink.findFirst({
-      where: { token, isVisible: true, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
-      include: {
-        product: {
-          select: {
-            productId: true,
-            merchantId: true,
-            commissionRate: true,
-            isActive: true,
-            maxSalesLimit: true,
-            totalPurchases: true,
+  const merchantId =
+    (integration && integration.merchantId) ||
+    (typeof MERCHANT_MAP[keyId] === "number" ? MERCHANT_MAP[keyId] : null);
+
+  if (!merchantId || (integration && !integration.isActive)) {
+    audit?.({ evt: "webhook.integration_missing_or_inactive", keyId });
+    return bad(401, "unauthorized");
+  }
+
+  // IP allowlist
+  if (integration && !ipAllowed(ip, integration.webhookIpAllowlist || "")) {
+    await logOnce({
+      merchantId,
+      requestId: requestId || null,
+      nonce: nonce || null,
+      sentAt: new Date(),
+      hmac: signature,
+      ip,
+      ua,
+      status: "unauthorized",
+      error: "ip_not_allowed",
+      rawBody: "",
+      headers: { keyId, ip, ua },
+    });
+    return bad(403, "ip_not_allowed");
+  }
+
+  // Timestamp window
+  const tsNum = Number(ts);
+  if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > TOLERANCE_S) {
+    await logOnce({
+      merchantId,
+      requestId: requestId || null,
+      nonce: nonce || null,
+      sentAt: new Date(Number.isFinite(tsNum) ? tsNum * 1000 : Date.now()),
+      hmac: signature,
+      ip,
+      ua,
+      status: "expired",
+      error: "stale_or_invalid_timestamp",
+      rawBody: "",
+      headers: { keyId, ts, ip, ua },
+    });
+    return bad(400, "stale_or_invalid_timestamp");
+  }
+
+  // Content-Length guard
+  const clen = Number(req.headers.get("content-length"));
+  if (Number.isFinite(clen) && clen > MAX_BODY_BYTES) {
+    return bad(413, "payload_too_large");
+  }
+
+  // Read raw body (keep for HMAC)
+  const rawBody = await req.text();
+  if (!rawBody || rawBody.length > MAX_BODY_BYTES) {
+    return bad(413, "payload_too_large");
+  }
+
+  // Secret & HMAC verify
+  const secret = resolveSecretForKeyId(keyId);
+  if (!secret) {
+    await logOnce({
+      merchantId,
+      requestId: requestId || null,
+      nonce: nonce || null,
+      sentAt: new Date(tsNum * 1000),
+      hmac: signature,
+      ip,
+      ua,
+      status: "unauthorized",
+      error: "secret_not_found_for_keyId",
+      rawBody,
+      headers: { keyId, ts, ip, ua },
+    });
+    return bad(401, "unauthorized");
+  }
+  const expected = computeHmac(secret, tsNum, rawBody);
+  if (!hexEqual(expected, signature)) {
+    await logOnce({
+      merchantId,
+      requestId: requestId || null,
+      nonce: nonce || null,
+      sentAt: new Date(tsNum * 1000),
+      hmac: signature,
+      ip,
+      ua,
+      status: "invalid_signature",
+      error: null,
+      rawBody,
+      headers: { keyId, ts, ip, ua },
+    });
+    return bad(401, "invalid_signature");
+  }
+
+  // Parse JSON
+  let parsed;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    await logOnce({
+      merchantId,
+      requestId: requestId || null,
+      nonce: nonce || null,
+      sentAt: new Date(tsNum * 1000),
+      hmac: signature,
+      ip,
+      ua,
+      status: "error",
+      error: "invalid_json",
+      rawBody,
+      headers: { keyId, ts, ip, ua },
+    });
+    return bad(400, "invalid_json");
+  }
+
+  // ---------- Normalize Payload ----------
+  const isNew = typeof parsed.orderNumber === "string" && Array.isArray(parsed.items);
+  const orderId = (parsed.orderId || parsed.orderNumber || "").toString();
+  const caboRef = parsed.caboRef || parsed.token || null;
+  const status = (parsed.status || "confirmed").toString();
+
+  if (!orderId || !ALLOWED_STATUSES.has(status)) {
+    return bad(400, "missing_or_invalid_order_or_status");
+  }
+
+  const items = [];
+  if (isNew) {
+    for (const it of parsed.items) {
+      const q = Number(it?.quantity || 1);
+      const unit = Number.isFinite(Number(it?.unitPriceCharged)) ? Number(it.unitPriceCharged) : undefined;
+      const lt = Number.isFinite(Number(it?.lineTotal))
+        ? Number(it.lineTotal)
+        : (unit != null ? round4(unit * q) : NaN);
+      items.push({
+        productCode: it?.productCode || undefined,
+        productId: it?.productId || undefined,
+        productSlug: it?.productSlug || undefined,
+        quantity: q,
+        unitPriceCharged: unit,
+        lineTotal: lt,
+      });
+    }
+  } else {
+    const arr = Array.isArray(parsed.products) ? parsed.products : [parsed];
+    for (const it of arr) {
+      const q = Number(it?.quantity || 1);
+      const amt = Number(it?.amount);
+      items.push({
+        productCode: it?.productCode || undefined,
+        quantity: q,
+        lineTotal: Number.isFinite(amt) ? amt : NaN,
+      });
+    }
+  }
+
+  if (!items.length || items.some((i) => !Number.isFinite(i.lineTotal) || i.lineTotal < 0 || i.quantity <= 0)) {
+    return bad(400, "invalid_items_payload");
+  }
+
+  // Deterministic requestId / nonce if not provided
+  if (!requestId) {
+    const sigBase = `${keyId}|${orderId}|${items
+      .map((i) => i.productCode || i.productId || i.productSlug || "?")
+      .join(",")}`;
+    requestId = crypto.createHash("sha256").update(sigBase).digest("hex").slice(0, 32);
+  }
+  if (!nonce) {
+    nonce = crypto.createHash("sha256").update(`${orderId}|${ts}`).digest("hex").slice(0, 32);
+  }
+
+  // Early replay detection (requestId / nonce)
+  const dup = await prisma.webhookRequestLog.findFirst({
+    where: { OR: [{ requestId }, { nonce }] },
+    select: { id: true },
+  });
+  if (dup) {
+    await prisma.webhookRequestLog.update({
+      where: { id: dup.id },
+      data: {
+        status: "replay",
+        error: "duplicate_requestId_or_nonce",
+        headers: { keyId, ts, ip, ua },
+      },
+    });
+    return bad(409, "replay_detected");
+  }
+
+  // Non-confirmed orders are accepted but ignored (logged)
+  if (status !== "confirmed") {
+    await logOnce({
+      merchantId,
+      requestId,
+      nonce,
+      sentAt: new Date(tsNum * 1000),
+      hmac: signature,
+      ip,
+      ua,
+      status: "accepted",
+      error: `ignored_status_${status}`,
+      rawBody,
+      headers: { keyId, ts, ip, ua },
+      parsedBody: parsed,
+      itemsCount: items.length,
+    });
+    return ok({ message: `Order ${orderId} ignored (status=${status})` });
+  }
+
+  // Create primary log
+  const logRow = await prisma.webhookRequestLog.create({
+    data: {
+      merchantId,
+      requestId,
+      nonce,
+      sentAt: new Date(tsNum * 1000),
+      hmac: signature,
+      ip,
+      ua,
+      status: "accepted",
+      error: null,
+      rawBody,
+      headers: { keyId, ts, ip, ua },
+      parsedBody: parsed,
+      itemsCount: items.length,
+      orderId,
+    },
+    select: { id: true },
+  });
+
+  // --------- Process items ---------
+  const now = new Date();
+  const results = [];
+  let affiliateIdForLog = null;
+
+  // Pre-candidate link by token (cache)
+  const linkBase = caboRef
+    ? await prisma.affiliateLink.findFirst({
+        where: {
+          token: caboRef,
+          isVisible: true,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        include: {
+          product: {
+            select: {
+              productId: true,
+              merchantId: true,
+              commissionRate: true,
+              isActive: true,
+              maxSalesLimit: true,
+              totalPurchases: true,
+              activatedByAdmin: true,
+            },
           },
         },
-      },
-    });
+        orderBy: { linkId: "desc" },
+      })
+    : null;
 
-    const results = [];
-    let affiliateIdForLog = null;
+  for (const it of items) {
+    // Enforce product code if configured
+    if (REQUIRE_PRODUCT_CODE && !it.productCode) {
+      results.push({ productCode: null, error: "product_code_required" });
+      continue;
+    }
 
-    for (const rawItem of items) {
-      const productCode = String(rawItem?.productCode || "").trim();
-      const quantity = Number(rawItem?.quantity ?? 1) || 1;
-      const amount = Number(rawItem?.amount);
-      if (!productCode || !Number.isFinite(amount) || amount < 0 || quantity <= 0) {
-        results.push({ productCode, error: "invalid_item_data" });
-        continue;
-      }
-
-      // Product must belong to this merchant
-      const product = await prisma.merchantProduct.findUnique({
-        where: { productCode },
+    // Lookup product
+    let mp = null;
+    if (it.productCode) {
+      mp = await prisma.merchantProduct.findFirst({
+        where: { productCode: it.productCode },
         select: {
           productId: true,
           merchantId: true,
@@ -378,113 +487,162 @@ export async function POST(req) {
           maxSalesLimit: true,
           totalPurchases: true,
           commissionRate: true,
+          activatedByAdmin: true,
         },
       });
-      if (!product || product.merchantId !== integration.merchantId) {
-        results.push({ productCode, error: "product_not_found_or_merchant_mismatch" });
-        continue;
-      }
+    } else if (it.productId || it.productSlug) {
+      const orConds = [];
+      if (it.productId) orConds.push({ productId: it.productId });
+      if (it.productSlug) orConds.push({ slug: it.productSlug });
+      mp = await prisma.merchantProduct.findFirst({
+        where: { OR: orConds },
+        select: {
+          productId: true,
+          merchantId: true,
+          isActive: true,
+          maxSalesLimit: true,
+          totalPurchases: true,
+          commissionRate: true,
+          activatedByAdmin: true,
+        },
+      });
+    }
 
-      // Ensure link matches this product (fallback to specific lookup)
-      let link = linkBase;
-      if (!link || link.product.productId !== product.productId) {
-        link = await prisma.affiliateLink.findFirst({
-          where: {
-            token,
-            productId: product.productId,
-            isVisible: true,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-          },
-          include: {
-            product: {
-              select: {
-                merchantId: true,
-                commissionRate: true,
-                maxSalesLimit: true,
-                totalPurchases: true,
-                isActive: true,
+    if (!mp) {
+      results.push({ product: it.productCode || it.productId || it.productSlug || null, error: "product_not_found" });
+      continue;
+    }
+
+    // Merchant binding
+    if (mp.merchantId !== merchantId) {
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "merchant_mismatch" });
+      continue;
+    }
+
+    // Admin approval + active
+    if (mp.activatedByAdmin === false || !mp.isActive) {
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "inactive_or_unapproved" });
+      continue;
+    }
+
+    // Sales quota check
+    const qty = it.quantity || 1;
+    const projectedTotal = (mp.totalPurchases ?? 0) + qty;
+    if (mp.maxSalesLimit != null && projectedTotal > mp.maxSalesLimit) {
+      await prisma.merchantProduct.update({
+        where: { productId: mp.productId },
+        data: { isActive: false },
+      });
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "quota_exceeded" });
+      continue;
+    }
+
+    // Affiliate link must match token + product
+    let link = linkBase;
+    if (!link || link.product.productId !== mp.productId) {
+      link = caboRef
+        ? await prisma.affiliateLink.findFirst({
+            where: {
+              token: caboRef,
+              productId: mp.productId,
+              isVisible: true,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            include: {
+              product: {
+                select: {
+                  merchantId: true,
+                  commissionRate: true,
+                  maxSalesLimit: true,
+                  totalPurchases: true,
+                  isActive: true,
+                  activatedByAdmin: true,
+                },
               },
             },
+            orderBy: { linkId: "desc" },
+          })
+        : null;
+    }
+    if (!link) {
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "invalid_or_inactive_token" });
+      continue;
+    }
+
+    if (affiliateIdForLog == null) {
+      if (link.userId == null) {
+        const lu = await prisma.affiliateLink.findUnique({
+          where: { linkId: link.linkId },
+          select: { userId: true },
+        });
+        link.userId = lu?.userId ?? null;
+      }
+      affiliateIdForLog = link.userId ?? null;
+    }
+
+    // Idempotency per (orderId, productId)
+    const exists = await prisma.affiliateUserSale.findUnique({
+      where: { orderId_productId: { orderId, productId: mp.productId } },
+      select: { saleId: true },
+    });
+    if (exists) {
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "duplicate_order" });
+      continue;
+    }
+
+    // Amount derivation: prefer lineTotal
+    const lineTotal = it.lineTotal;
+    const commissionAffiliate = round4(((lineTotal || 0) * (mp.commissionRate ?? 0)) / 100);
+    const commissionPlatform = round4(((lineTotal || 0) * (PLATFORM_COMMISSION_RATE || 0)) / 100);
+
+    try {
+      await prisma.$transaction([
+        prisma.affiliateUserSale.create({
+          data: {
+            orderId,
+            userId: link.userId,
+            merchantId,
+            productId: mp.productId,
+            amount: lineTotal,
+            quantity: qty,
+            commissionAffiliate,
+            commissionPlatform,
+            status: "confirmed",
+            convertedAt: new Date(),
+            affiliateLinkId: link.linkId,
+            webhookLogId: logRow.id,
+            token: caboRef || null,
+            keyId, // sender
           },
-        });
-      }
-      if (!link) {
-        results.push({ productCode, error: "invalid_or_inactive_token" });
-        continue;
-      }
-      affiliateIdForLog ||= link.userId;
+        }),
+        prisma.merchantProduct.update({
+          where: { productId: mp.productId },
+          data: {
+            totalPurchases: (mp.totalPurchases ?? 0) + qty,
+            ...(mp.maxSalesLimit != null && projectedTotal >= mp.maxSalesLimit
+              ? { isActive: false }
+              : {}),
+          },
+        }),
+      ]);
 
-      // Active + limit checks
-      const projectedTotal = (product.totalPurchases ?? 0) + quantity;
-      if (!product.isActive || (product.maxSalesLimit != null && projectedTotal > product.maxSalesLimit)) {
-        // Close product defensively if limit exceeded
-        await prisma.merchantProduct.update({
-          where: { productId: product.productId },
-          data: { isActive: false },
-        });
-        results.push({ productCode, error: "product_inactive_or_limit_reached" });
-        continue;
-      }
-
-      // Idempotency per (orderId, productId)
-      const existing = await prisma.affiliateUserSale.findUnique({
-        where: { orderId_productId: { orderId, productId: product.productId } },
-        select: { saleId: true },
+      results.push({
+        product: it.productCode || it.productId || it.productSlug,
+        status: "accepted",
+        commissionAffiliate,
+        commissionPlatform,
       });
-      if (existing) {
-        results.push({ productCode, error: "duplicate_order" });
-        continue;
-      }
-
-      // Commissions
-      const commissionAffiliate = Number(((amount * (product.commissionRate ?? 0)) / 100).toFixed(4));
-      const commissionPlatform = Number(((amount * (PLATFORM_COMMISSION_RATE || 0)) / 100).toFixed(4));
-
-      try {
-        await prisma.$transaction([
-          prisma.affiliateUserSale.create({
-            data: {
-              orderId,
-              userId: link.userId,
-              merchantId: integration.merchantId,
-              productId: product.productId,
-              amount,
-              quantity,
-              commissionAffiliate,
-              commissionPlatform,
-              status: "confirmed",
-              convertedAt: new Date(),
-              affiliateLinkId: link.linkId,
-              webhookLogId: log.id,
-            },
-          }),
-          prisma.merchantProduct.update({
-            where: { productId: product.productId },
-            data: { totalPurchases: { increment: quantity } },
-          }),
-        ]);
-
-        results.push({ productCode, success: true, commissionAffiliate, commissionPlatform });
-      } catch (e) {
-        results.push({ productCode, error: "db_error" });
-      }
+    } catch (e) {
+      results.push({ product: it.productCode || it.productId || it.productSlug, error: "db_error" });
     }
-
-    if (affiliateIdForLog) {
-      await prisma.webhookRequestLog.update({
-        where: { id: log.id },
-        data: { affiliateId: affiliateIdForLog },
-      });
-    }
-
-    return withHeaders(
-      NextResponse.json({ success: true, logId: log.id, results })
-    );
-  } catch (err) {
-    console.error("purchase_callback fatal:", err);
-    audit?.({ evt: "webhook.fatal", error: (err?.message || String(err)).slice(0, 200) });
-    return withHeaders(
-      NextResponse.json({ error: "server_error" }, { status: 500 })
-    );
   }
+
+  if (affiliateIdForLog != null) {
+    await prisma.webhookRequestLog.update({
+      where: { id: logRow.id },
+      data: { affiliateId: affiliateIdForLog },
+    });
+  }
+
+  return ok({ keyId, orderId, processed: results });
 }

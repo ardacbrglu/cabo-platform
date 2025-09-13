@@ -1,19 +1,9 @@
-// src/app/api/mylinks/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * File: src/app/api/mylinks/route.js
- * Purpose:
- *  - GET: Kullanıcının görünür ve (varsa) süresi geçmemiş linkleri + kullanıcıya özel istatistikler
- *  - POST: Bir linki “My Links” görünümünden kaldırır (isVisible=false)
- *
- * Security:
- *  - Auth: NextAuth (getServerSession) + ensureActiveRole(["affiliate"])  // RBAC: only affiliate
- *  - CSRF: YOK (JSON API’de Origin/Referer + X-Requested-With zorunlu)
- *  - Rate limit: GET 60/dk, POST 20/dk (IP+userId)
- *  - SameSite cookies + same-origin fetch (credentials:'include')
- *  - Headers: X-Request-Id önerilir (isteğe bağlı)
+ * GET: Kullanıcının görünür & süresi geçmemiş linkleri + kullanıcıya özel istatistikler (batched)
+ * POST: Seçili linki “My Links”'ten kaldır (isVisible=false)
  */
 
 import { NextResponse } from "next/server";
@@ -50,22 +40,12 @@ async function checkAndDeactivateProduct(p) {
 
 /* ───────────── GET ───────────── */
 export async function GET(req) {
-  // same-origin GET sertleştirme (frontend apiFetch zaten header’ları ekliyor)
-  try {
-    requireAjax(req);
-    requireOrigin(req);
-  } catch {
-    return json({ error: "bad_request" }, { status: 400 });
-  }
+  try { requireAjax(req); requireOrigin(req); } catch { return json({ error: "bad_request" }, { status: 400 }); }
   try { requireRequestId(req); } catch {}
 
   // Auth + RBAC (only affiliate)
   const session = await getServerSession(authOptions);
-  try {
-    ensureActiveRole(session, ["affiliate"]);
-  } catch {
-    return json({ error: "Unauthorized" }, { status: 401 });
-  }
+  try { ensureActiveRole(session, ["affiliate"]); } catch { return json({ error: "Unauthorized" }, { status: 401 }); }
   const userId = session.user.id;
 
   // Rate limit
@@ -113,8 +93,37 @@ export async function GET(req) {
       orderBy: { createdAt: "desc" },
     });
 
-    // Kalan kota + olası idempotent kapatma
-    const withQuota = await Promise.all(
+    const linkIds = links.map((l) => l.linkId);
+    // Batched: tıklamalar
+    const clicksGrouped = linkIds.length
+      ? await prisma.click.groupBy({
+          by: ["linkId"],
+          where: { linkId: { in: linkIds } },
+          _count: { _all: true },
+        })
+      : [];
+    const clicksMap = Object.fromEntries(clicksGrouped.map((c) => [c.linkId, c._count._all]));
+
+    // Batched: satış toplamları
+    const salesGrouped = linkIds.length
+      ? await prisma.affiliateUserSale.groupBy({
+          by: ["affiliateLinkId"],
+          where: { userId, affiliateLinkId: { in: linkIds } },
+          _sum: { commissionAffiliate: true, quantity: true },
+        })
+      : [];
+    const salesMap = Object.fromEntries(
+      salesGrouped.map((s) => [
+        s.affiliateLinkId,
+        {
+          qty: Number(s._sum.quantity || 0),
+          earn: Number(s._sum.commissionAffiliate || 0),
+        },
+      ])
+    );
+
+    // Kota + alias + sayılarla enrich
+    const enriched = await Promise.all(
       links.map(async (link) => {
         const p = link.product;
         let remainingSales = null;
@@ -122,10 +131,8 @@ export async function GET(req) {
           remainingSales = Math.max(0, p.maxSalesLimit - p.totalPurchases);
         }
         const maybeClosed = p ? await checkAndDeactivateProduct({ ...p }) : null;
-
         const prod = maybeClosed || p || null;
 
-        // Geriye uyum için alias’lar (snake_case)
         const productWithAliases = prod
           ? {
               ...prod,
@@ -135,25 +142,15 @@ export async function GET(req) {
             }
           : null;
 
-        return { ...link, product: productWithAliases };
-      })
-    );
-
-    // Kullanıcıya özel sayımlar
-    const enriched = await Promise.all(
-      withQuota.map(async (link) => {
-        const user_click_count = await prisma.click.count({ where: { linkId: link.linkId } });
-
-        const salesAgg = await prisma.affiliateUserSale.aggregate({
-          _sum: { commissionAffiliate: true, quantity: true },
-          where: { affiliateLinkId: link.linkId, userId },
-        });
+        const c = clicksMap[link.linkId] || 0;
+        const s = salesMap[link.linkId] || { qty: 0, earn: 0 };
 
         return {
           ...link,
-          user_click_count,
-          user_sales_count: Number(salesAgg._sum.quantity) || 0,
-          user_earnings: Number(salesAgg._sum.commissionAffiliate) || 0,
+          product: productWithAliases,
+          user_click_count: c,
+          user_sales_count: s.qty,
+          user_earnings: s.earn,
         };
       })
     );
@@ -168,23 +165,13 @@ export async function GET(req) {
 
 /* ───────────── POST (hide) ───────────── */
 export async function POST(req) {
-  try {
-    requireOrigin(req);
-    requireAjax(req);
-  } catch {
-    return json({ error: "bad_request" }, { status: 400 });
-  }
+  try { requireOrigin(req); requireAjax(req); } catch { return json({ error: "bad_request" }, { status: 400 }); }
   try { requireRequestId(req); } catch {}
 
   const session = await getServerSession(authOptions);
-  try {
-    ensureActiveRole(session, ["affiliate"]);
-  } catch {
-    return json({ error: "Unauthorized" }, { status: 401 });
-  }
+  try { ensureActiveRole(session, ["affiliate"]); } catch { return json({ error: "Unauthorized" }, { status: 401 }); }
   const userId = session.user.id;
 
-  // Rate limit
   const rlKey = makeRateLimitKey(req, { scope: "my-links:hide", userId });
   const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 20, windowMs: 60_000 });
   if (!ok) {
@@ -196,13 +183,24 @@ export async function POST(req) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const token = body?.token;
-    if (!token || typeof token !== "string") {
+    const token = typeof body?.token === "string" ? body.token : null;
+    const linkId = Number.isFinite(Number(body?.linkId)) ? Number(body.linkId) : null;
+    const productId = Number.isFinite(Number(body?.productId)) ? Number(body.productId) : null;
+
+    // Öncelik: linkId → token+productId → sadece token (geri uyum)
+    let where;
+    if (linkId) {
+      where = { linkId, userId, isVisible: true };
+    } else if (token && productId) {
+      where = { token, productId, userId, isVisible: true };
+    } else if (token) {
+      where = { token, userId, isVisible: true };
+    } else {
       return json({ error: "Missing token" }, { status: 400 });
     }
 
     const updated = await prisma.affiliateLink.updateMany({
-      where: { token, userId, isVisible: true },
+      where,
       data: { isVisible: false },
     });
 
@@ -210,7 +208,7 @@ export async function POST(req) {
       return json({ error: "Link not found or already hidden" }, { status: 404 });
     }
 
-    audit({ evt: "mylinks.hide.ok", who: userId, what: { token } });
+    audit({ evt: "mylinks.hide.ok", who: userId, what: { linkId, productId, token } });
     return json({ success: true }, { status: 200 });
   } catch (err) {
     audit({ evt: "mylinks.hide.db_error", who: userId, code: err?.code || "DB_ERR" });
