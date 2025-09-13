@@ -5,8 +5,7 @@
  * Page: /merchant/login
  * - SPA submit via apiFetch (credentials: include, X-Requested-With, X-Request-Id)
  * - NextAuth CSRF preload (read-only)
- * - Minimal UI (affiliate login ile aynı yaklaşım)
- * - Input yüzeyi beyaz; iOS/Chrome mavi highlight ve autofill renkleri bastırılır
+ * - Minimal UI; PublicLayout ile sarılır
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -55,13 +54,11 @@ export default function MerchantLoginPage() {
   const lang = (locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
   const t = useMemo(() => (k) => translations[lang]?.[k] ?? k, [lang]);
 
-  // form state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // validation
   const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
   const programmaticFocusRef = useRef(false);
@@ -135,7 +132,6 @@ export default function MerchantLoginPage() {
     }
   }
 
-  // Tailwind classes
   const inputBase =
     "cabo-input bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
   const ringOk = "focus:ring-[#81d742]";
@@ -236,11 +232,9 @@ export default function MerchantLoginPage() {
       </div>
 
       <style jsx global>{`
-        /* Beyaz yüzey/odak — mavi highlight’ı kapat */
         .cabo-input { -webkit-appearance: none; appearance: none; }
         .cabo-input:focus { outline: none !important; box-shadow: none !important; }
 
-        /* Autofill beyaz */
         input.cabo-input:-webkit-autofill,
         input.cabo-input:-webkit-autofill:hover,
         input.cabo-input:-webkit-autofill:focus {
@@ -257,6 +251,3 @@ export default function MerchantLoginPage() {
     </PublicLayout>
   );
 }
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";

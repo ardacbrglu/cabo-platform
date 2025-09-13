@@ -1,24 +1,27 @@
-// src/app/mylinks/page.js
+// app/mylinks/page.jsx
 "use client";
 
 /**
- * File: src/app/mylinks/page.js
- * Purpose: Affiliate “My Links” list — shows user’s visible, non-expired links as cards
- * Security Docblock (Frontend):
- * - Tüm istekler tek apiFetch wrapper’ı ile (credentials: 'include', X-Requested-With, X-Request-Id).
- * - Mutasyonlar backend’de RBAC + rate-limit + Origin/Referer doğrulaması altında.
- * - Custom CSRF/JWT yok; NextAuth kullanılır.
- * - UI: Spotify/Soundcloud koyu temaya uyumlu; kart tasarımı korunur.
+ * Affiliate “My Links” — PROD READY
+ * - Kopyalama state'i token yerine linkId ile tutulur (aynı tokenlı kartlar çakışmaz)
+ * - Kopyalanan URL: /ref/{token}?lid={linkId}  (tekilleştirme)
+ * - Mobil/desktop grid, skeleton, güvenli görseller
  */
 
 import { useEffect, useState } from "react";
 import Layout from "@/components/Layout";
-import { Link2, ShoppingCart, BarChart2, Copy, X, RotateCcw, Ban } from "lucide-react";
+import { Link2, ShoppingCart, BarChart2, Copy, X, Ban, CheckCircle2 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import useTranslation from "@/hooks/useTranslation";
 import { apiFetch } from "@/lib/apiFetch";
 
-const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
+const PLACEHOLDER = "https://placehold.co/160x160?text=Product";
+const CARD_BG = "#181818";
+const CARD_BORDER = "#232323";
+const SURFACE = "#232323";
+const SURFACE_BORDER = "#343a34";
+const ACCENT = "#81d742";
+
 function handleImgError(e) { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }
 
 function getCurrencySymbol(currency = "TRY") {
@@ -36,7 +39,7 @@ function getExpiresBadge(link, t) {
   const daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
   return (
     <span
-      className={`inline-block px-2 py-1 rounded font-mono text-xs border ml-1 ${
+      className={`inline-block px-2 py-1 rounded font-mono text-xs border ml-2 ${
         daysLeft > 0
           ? "bg-[#244d24]/80 text-[#d1ffd0] border-[#2c7c2c]"
           : "bg-[#391818]/80 text-[#ffbbbb] border-[#a03939]"
@@ -47,7 +50,6 @@ function getExpiresBadge(link, t) {
   );
 }
 
-// 👇 tek satırla yeniden kullanılabilir hover/kalkma efekti
 const CARD_HOVER =
   "will-change-transform transition-all duration-200 ease-out " +
   "motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-[0_12px_28px_rgba(0,0,0,.35)] " +
@@ -55,15 +57,13 @@ const CARD_HOVER =
 
 export default function MyLinksPage() {
   const [links, setLinks] = useState([]);
-  const [copiedToken, setCopiedToken] = useState(null);
-  const [removingTokens, setRemovingTokens] = useState([]);
+  const [copiedKey, setCopiedKey] = useState(null); // linkId-based
+  const [removing, setRemoving] = useState({});
   const [loading, setLoading] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-
   const { user, setUser } = useUser();
   const { t } = useTranslation();
 
-  // Kullanıcı bilgisi (navbar senkron)
+  // Navbar senkron
   useEffect(() => {
     if (!user?.name) {
       apiFetch("/api/me")
@@ -83,7 +83,7 @@ export default function MyLinksPage() {
     }
   }, [user, setUser]);
 
-  // Linkler
+  // Linkleri çek
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -93,119 +93,99 @@ export default function MyLinksPage() {
       .catch(() => { if (alive) setLinks([]); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [reloadKey]);
+  }, []);
 
-  const doRefresh = () => setReloadKey((k) => k + 1);
-
-  const copyLink = (token) => {
+  const copyLink = (link) => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const full = `${origin}/ref/${token}`;
+    const full = `${origin}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
     if (navigator?.clipboard?.writeText) {
       navigator.clipboard.writeText(full).catch(() => {});
-    } else {
-      const ta = document.createElement("textarea");
-      ta.value = full;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch {}
-      document.body.removeChild(ta);
     }
-    setCopiedToken(token);
-    setTimeout(() => setCopiedToken(null), 2000);
+    setCopiedKey(link.linkId);
+    setTimeout(() => setCopiedKey(null), 1600);
   };
 
-  const removeLink = async (token) => {
+  const removeLink = async (link) => {
+    setRemoving((s) => ({ ...s, [link.linkId]: true }));
     try {
       const res = await apiFetch("/api/mylinks", {
         method: "POST",
-        body: { token },
+        body: { linkId: link.linkId, productId: link.productId, token: link.token }, // yeni + geri uyum
       });
       if (res.ok) {
-        setRemovingTokens((prev) => [...prev, token]);
-        setTimeout(() => {
-          setLinks((prev) => prev.filter((l) => l.token !== token));
-          setRemovingTokens((prev) => prev.filter((t) => t !== token));
-        }, 300);
+        setLinks((prev) => prev.filter((l) => l.linkId !== link.linkId));
+      } else {
+        setRemoving((s) => ({ ...s, [link.linkId]: false }));
       }
-    } catch {}
+    } catch {
+      setRemoving((s) => ({ ...s, [link.linkId]: false }));
+    }
   };
 
   return (
     <Layout>
-      <div className="flex flex-col items-center mt-12 mb-6 px-2 sm:px-0">
+      {/* header */}
+      <div className="flex flex-col items-center mt-12 mb-6 px-3">
         <div className="flex items-center gap-3">
           <Link2 size={44} className="text-[#d1ffd0] drop-shadow-xl" />
-          <h1
-            className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight drop-shadow-2xl font-sans"
-            style={{ lineHeight: "1.13" }}
-          >
+          <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight" style={{ lineHeight: "1.13" }}>
             {t("myLinks")}
           </h1>
         </div>
-        <p className="mt-4 text-base md:text-lg text-gray-200 font-mono font-medium opacity-90 text-center max-w-2xl">
+        <p className="mt-4 text-base md:text-lg text-gray-200 font-mono opacity-90 text-center max-w-2xl">
           {t("myLinksSubtitle")}
         </p>
-
-        {/* Refresh
-        <button
-          onClick={doRefresh}
-          className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg border border-[#2a2a2a] bg-[#1a1a1a] text-[#caffb6] hover:bg-[#222] transition disabled:opacity-60"
-          title={t("postlogs.refresh")}
-          type="button"
-          disabled={loading}
-        >
-          <RotateCcw size={18} className={loading ? "animate-spin" : ""} />
-          <span className="text-sm">{loading ? t("processing") : t("postlogs.refresh")}</span>
-        </button> */}
-
       </div>
 
-      <div className="w-full max-w-7xl mx-auto px-2 md:px-8 pb-14 flex-1">
+      {/* grid */}
+      <div className="w-full mx-auto px-3 md:px-8 pb-14 max-w-[1640px]">
         {(!links || links.length === 0) && !loading ? (
-          <div className="text-center text-gray-400 font-mono text-lg py-24">
-            {t("myLinksEmpty")}
-          </div>
+          <div className="text-center text-gray-400 font-mono text-lg py-24">{t("myLinksEmpty")}</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-9 gap-x-6 md:gap-x-8">
-            {links.map((link) => {
-              const isRemoving = removingTokens.includes(link.token);
-              const p = link.product || null;
-
-              // Ürün tamamen kaldırılmışsa
-              if (!p) {
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-x-7 gap-y-9">
+            {(loading ? Array.from({ length: 4 }).map((_, i) => ({ skeleton: true, key: i })) : links).map((link, idx) => {
+              const isSkeleton = !!link.skeleton;
+              if (isSkeleton) {
                 return (
-                  <div
-                    key={link.token}
-                    className={`cabo-link-card bg-[#181818] border border-[#872222] rounded-xl shadow-md p-6 flex flex-col justify-between ${CARD_HOVER} transition-all duration-300 ease-in-out ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
-                  >
-                    <div className="text-red-400 font-bold mb-2">
-                      {t("myLinksRemoved")}
-                    </div>
-                    <button
-                      onClick={() => removeLink(link.token)}
-                      className="mt-4 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
-                    >
-                      <X size={14} /> {t("removeFromDashboard")}
-                    </button>
-                  </div>
+                  <div key={`sk-${idx}`} className="animate-pulse rounded-2xl" style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, height: 360 }} />
                 );
               }
 
-              // Alan uyumluluğu (API hem camel hem snake döndürüyor; yine de tedbir)
+              const p = link.product || null;
+
+              // Ürün silinmişse
+              if (!p) {
+                return (
+                  <article
+                    key={link.linkId}
+                    className={`bg-[${CARD_BG}] border border-[#872222] rounded-2xl p-6 ${CARD_HOVER}`}
+                    style={{ background: CARD_BG }}
+                  >
+                    <div className="text-red-400 font-bold mb-2">{t("myLinksRemoved")}</div>
+                    <button
+                      onClick={() => removeLink(link)}
+                      className="mt-3 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
+                    >
+                      <X size={14} /> {t("removeFromDashboard")}
+                    </button>
+                  </article>
+                );
+              }
+
               const imgSrc = p.imageUrl || p.image_url || PLACEHOLDER;
               const remaining = (p.remainingSales ?? p.remaining_sales ?? null);
               const quotaReached = typeof remaining === "number" && remaining <= 0;
               const earnPerSale = (((p.price || 0) * (p.commissionRate || 0)) / 100).toFixed(2);
+              const removingThis = !!removing[link.linkId];
 
-              // Aktif / inaktif ürün kartı
               return (
-                <div
+                <article
                   key={link.linkId}
-                  className={`cabo-link-card relative bg-[#181818] border border-[#272727] rounded-xl shadow-md px-4 py-5 sm:p-6 flex flex-col justify-between ${CARD_HOVER} transition-all duration-300 ease-in-out hover:shadow-lg ${isRemoving ? "opacity-0 translate-y-3 pointer-events-none" : ""}`}
-                  style={{ maxWidth: "420px", width: "100%", margin: "0 auto" }}
+                  className={`relative rounded-2xl shadow-lg ${CARD_HOVER} transition-all duration-300 ease-in-out ${removingThis ? "opacity-40 pointer-events-none" : ""}`}
+                  style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
                 >
                   {(p.isActive === false || quotaReached) && (
-                    <div className="absolute left-4 -top-3">
+                    <div className="absolute left-5 top-5">
                       <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs ${p.isActive === false ? "bg-red-700/90 text-white" : "bg-yellow-700/90 text-white"}`}>
                         <Ban size={13} />
                         {p.isActive === false ? t("inactive") : t("quotaReached")}
@@ -213,88 +193,86 @@ export default function MyLinksPage() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-16 h-16 bg-[#22262a] rounded-lg overflow-hidden border border-[#2a2e31] flex items-center justify-center">
-                      <img
-                        src={imgSrc}
-                        alt={p.name}
-                        className="object-cover w-full h-full"
-                        onError={handleImgError}
-                      />
+                  {/* üst: görsel + başlık */}
+                  <div className="px-6 pt-6 flex items-center gap-4">
+                    <div
+                      className="rounded-xl overflow-hidden shrink-0"
+                      style={{ width: 72, height: 72, background: SURFACE, border: `1px solid ${SURFACE_BORDER}` }}
+                    >
+                      <img src={imgSrc} alt={p.name} className="object-cover w-full h-full" onError={handleImgError} loading="lazy" decoding="async" />
                     </div>
-                    <div>
-                      <div className="text-gray-100 font-bold text-lg flex items-center">
+                    <div className="min-w-0">
+                      <h2 className="text-gray-100 font-bold text-lg leading-6 break-words">
                         {p.name}
                         {getExpiresBadge(link, t)}
-                      </div>
-                      <div className="text-gray-400 text-sm font-mono mt-1">
-                        {(p.description || "").slice(0, 60)}
-                      </div>
+                      </h2>
+                      <p className="text-gray-400 text-sm font-mono mt-1 break-words">
+                        {(p.description || "").slice(0, 100)}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="text-sm font-mono text-gray-300 mb-1">
-                    <span className="text-gray-500">{t("productEarn")}:</span>{" "}
-                    <span className="text-[#81d742] font-bold">
-                      {getCurrencySymbol(user?.currencyCode || "TRY")}{earnPerSale}
-                    </span>
+                  {/* metrikler */}
+                  <div className="px-6 mt-4 grid grid-cols-3 gap-3">
+                    <TinyMetric label={t("productEarn")} value={<span className="font-extrabold" style={{ color: ACCENT }}>{getCurrencySymbol(user?.currencyCode || "TRY")}{earnPerSale}</span>} />
+                    <TinyMetric icon={<ShoppingCart size={14} />} label={t("productPurchases")} value={link.user_sales_count} />
+                    <TinyMetric icon={<BarChart2 size={14} />} label={t("productClicks")} value={link.user_click_count} />
                   </div>
 
-                  <div className="text-xs font-mono text-gray-500 mb-2 flex flex-row items-center gap-3">
-                    <span>
-                      <ShoppingCart size={13} className="inline mr-1" /> <b>{link.user_sales_count}</b>{" "}
-                      {t("productPurchases")}
-                    </span>
-                    <span>
-                      <BarChart2 size={13} className="inline mr-1" /> <b>{link.user_click_count}</b>{" "}
-                      {t("productClicks")}
-                    </span>
-                  </div>
-
-                  <div className="text-xs font-mono text-gray-500 mb-2">
+                  {/* toplam kazanç */}
+                  <div className="px-6 mt-3 text-xs font-mono text-gray-400">
                     {t("productYourTotalEarnings")}:{" "}
-                    <b>
+                    <b className="text-gray-200">
                       {getCurrencySymbol(user?.currencyCode || "TRY")}
                       {Number(link.user_earnings || 0).toFixed(2)}
                     </b>
                   </div>
 
-                  {/* Kalan komisyon hakkı */}
-                  <div className="text-xs font-mono mb-2">
-                    {typeof remaining === "number" ? (
-                      remaining > 0 ? (
+                  {/* kalan komisyon hakkı */}
+                  {typeof remaining === "number" && (
+                    <div className="px-6 mt-2 text-xs font-mono">
+                      {remaining > 0 ? (
                         <span className="text-[#81d742]">
                           {t("productCanEarn")} <b>{remaining}</b> {t("productMoreCommission")}
                         </span>
                       ) : (
-                        <span className="text-red-400">
-                          {t("productNoMoreCommission")}
-                        </span>
-                      )
-                    ) : null}
+                        <span className="text-red-400">{t("productNoMoreCommission")}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* kopyalanabilir link */}
+                  <div className="px-6 mt-4">
+                    <div
+                      className="px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-200 text-sm"
+                      style={{ background: SURFACE, border: `1px solid ${SURFACE_BORDER}` }}
+                    >
+                      <span className="truncate">
+                        {(typeof window !== "undefined" ? window.location.origin : "")}/ref/{link.token}?lid={link.linkId}
+                      </span>
+                      <button onClick={() => copyLink(link)} className="text-gray-400 hover:text-white transition">
+                        {copiedKey === link.linkId ? (
+                          <span className="text-green-400 font-mono text-xs flex items-center gap-1">
+                            <CheckCircle2 size={14} /> {t("copied")}
+                          </span>
+                        ) : (
+                          <Copy size={16} />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Kopyalanabilir link */}
-                  <div className="bg-[#232323] px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-200 text-sm border border-[#2c2c2c]">
-                    <span className="truncate">
-                      {(typeof window !== "undefined" ? window.location.origin : "")}/ref/{link.token}
-                    </span>
-                    <button onClick={() => copyLink(link.token)} className="text-gray-400 hover:text-white transition">
-                      {copiedToken === link.token ? (
-                        <span className="text-green-400 font-mono text-xs">{t("copied")}</span>
-                      ) : (
-                        <Copy size={16} />
-                      )}
+                  {/* aksiyon */}
+                  <div className="px-6 pb-6 mt-4">
+                    <button
+                      onClick={() => removeLink(link)}
+                      className="text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
+                      disabled={removingThis}
+                    >
+                      <X size={14} /> {t("removeFromDashboard")}
                     </button>
                   </div>
-
-                  <button
-                    onClick={() => removeLink(link.token)}
-                    className="mt-4 text-red-400 text-xs font-mono hover:underline flex items-center gap-1"
-                  >
-                    <X size={14} /> {t("removeFromDashboard")}
-                  </button>
-                </div>
+                </article>
               );
             })}
           </div>
@@ -302,29 +280,29 @@ export default function MyLinksPage() {
       </div>
 
       <style jsx global>{`
-        /* Mobile spacing tweaks */
-        @media (max-width: 640px) {
-          .grid {
-            gap-y: 20px !important;
-            gap-x: 3vw !important;
-            justify-items: center !important;
-          }
-          .flex.flex-col.items-center.mt-12.mb-6.px-2.sm\\:px-0 {
-            margin-bottom: 28px !important;
-          }
-        }
-        /* Hareketi istemeyen kullanıcılar için kapat */
+        @media (max-width: 640px) { .grid { justify-items: stretch; } }
         @media (prefers-reduced-motion: reduce) {
-          .cabo-link-card {
-            transition: none !important;
-            transform: none !important;
-          }
-          .cabo-link-card:hover {
-            transform: none !important;
-            box-shadow: none !important;
-          }
+          article { transition: none !important; transform: none !important; }
+          article:hover { transform: none !important; box-shadow: none !important; }
         }
       `}</style>
     </Layout>
+  );
+}
+
+/* --- bits --- */
+function TinyMetric({ icon = null, label, value }) {
+  return (
+    <div
+      className="rounded-xl px-3 py-3 text-center"
+      style={{ background: SURFACE, border: `1px solid ${SURFACE_BORDER}` }}
+      title={typeof label === "string" ? label : undefined}
+    >
+      <div className="text-[12px] text-gray-300 flex items-center justify-center gap-1">
+        {icon ? <span className="text-gray-300">{icon}</span> : null}
+        <span className="break-words">{label}</span>
+      </div>
+      <div className="text-white text-base font-bold mt-1">{value}</div>
+    </div>
   );
 }

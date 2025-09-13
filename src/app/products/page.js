@@ -1,14 +1,8 @@
 "use client";
 
 /**
- * File: src/app/products/page.js
- * Purpose: Product Marketplace (Affiliate) — PROD (UI refresh)
- * Highlights:
- * - Desktop: max container 1840px, 4 sütun, daha GENİŞ kart; dikey yükseklik azaltıldı.
- * - Mobil: tek sütun, kart içi tüm metrik kutuları eşit yükseklikte.
- * - Görsel üstte, başlık + açıklama altında; harf harf kırılma yok, içerik alanı geniş.
- * - "Linkimi Al" bildirimi buton hizasında inline şerit (success/error).
- * - Ellipsis yok; metinler satıra kırılır (break-words).
+ * Product Marketplace (Affiliate) — PROD
+ * Kart ölçüleri akışkan; grid 1/2/3/4 sütun; hareketler ve metrikler korunur.
  */
 
 import { useEffect, useLayoutEffect, useState } from "react";
@@ -202,7 +196,7 @@ export default function ProductsPage() {
         </p>
 
         <div className="mt-5 w-full flex justify-center">
-          <div className="relative w-full max-w-[640px]">
+          <div className="relative w-full max-w-[680px]">
             <input
               type="text"
               className="w-full rounded-xl px-4 py-3 pl-11 text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-[#888]/30 placeholder:text-gray-400 transition shadow-sm"
@@ -227,11 +221,9 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Cards grid — geniş container, 4 sütun */}
+      {/* Cards grid — geniş container, akışkan kolonlar */}
       <div
-        className={`w-full mx-auto px-3 md:px-8 pb-14 ${
-          loading ? "opacity-60" : "opacity-100"
-        } max-w-[1840px]`}
+        className={`w-full mx-auto px-3 md:px-8 pb-14 ${loading ? "opacity-60" : "opacity-100"} max-w-[1840px]`}
       >
         {cardMessages.global?.text && (
           <div
@@ -239,15 +231,14 @@ export default function ProductsPage() {
             style={{
               color: cardMessages.global.kind === "error" ? "#ffd9a8" : ACCENT,
               background: cardMessages.global.kind === "error" ? "#2a1f12" : "#202820",
-              border:
-                cardMessages.global.kind === "error" ? "1px solid #5a3a14" : "1px solid #263826",
+              border: cardMessages.global.kind === "error" ? "1px solid #5a3a14" : "1px solid #263826",
             }}
           >
             {cardMessages.global.text}
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 justify-items-stretch gap-x-8 gap-y-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 justify-items-stretch gap-x-7 gap-y-9">
           {loading
             ? Array.from({ length: 4 }).map((_, i) => (
                 <div
@@ -256,7 +247,7 @@ export default function ProductsPage() {
                   style={{
                     background: CARD_BG,
                     border: `1px solid ${CARD_BORDER}`,
-                    height: 480,
+                    height: 460,
                     width: "100%",
                   }}
                 />
@@ -290,11 +281,16 @@ export default function ProductsPage() {
                       </div>
                     </div>
 
-                    {/* Görsel üstte, başlık + açıklama altında (daha geniş içerik alanı) */}
+                    {/* Görsel + başlık + açıklama */}
                     <div className="px-6 pt-4 flex flex-col items-center text-center">
                       <div
-                        className="w-44 h-44 md:w-52 md:h-52 rounded-xl overflow-hidden"
-                        style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
+                        className="rounded-xl overflow-hidden"
+                        style={{
+                          width: "min(14rem, 80%)",
+                          height: "min(14rem, 80vw)",
+                          background: SURFACE_GREY,
+                          border: `1px solid ${SURFACE_GREY_BORDER}`,
+                        }}
                       >
                         <img
                           src={p.imageUrl || PLACEHOLDER}
@@ -303,6 +299,8 @@ export default function ProductsPage() {
                           onError={handleImgError}
                           onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.03)")}
                           onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1.0)")}
+                          loading="lazy"
+                          decoding="async"
                         />
                       </div>
 
@@ -319,14 +317,14 @@ export default function ProductsPage() {
 
                     {/* status badge */}
                     {disabled && (
-                      <div className="absolute left-5 top-[78px] md:top-[86px]">
+                      <div className="absolute left-5 top-[74px] md:top-[84px]">
                         <span className="flex items-center gap-1 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs">
                           <Ban size={13} /> {status === "inactive" ? t("productInactive") : t("productQuota")}
                         </span>
                       </div>
                     )}
 
-                    {/* Metrics — eşit kutular, simetrik grid */}
+                    {/* Metrics */}
                     <div className="px-6 pt-5 grid grid-cols-2 gap-4 items-stretch">
                       <MetricBox
                         className="h-[110px]"
@@ -357,14 +355,13 @@ export default function ProductsPage() {
                       />
                     </div>
 
-                    {/* Inline card notice (buton hizasında) */}
+                    {/* Inline card notice */}
                     {cardMessages[p.productId]?.text && (
                       <div
                         aria-live="polite"
                         className="mx-6 mt-4 rounded-lg px-3 py-2 text-sm font-mono flex items-center gap-2"
                         style={{
-                          background:
-                            cardMessages[p.productId].kind === "error" ? "#2a1f12" : "#202820",
+                          background: cardMessages[p.productId].kind === "error" ? "#2a1f12" : "#202820",
                           border:
                             cardMessages[p.productId].kind === "error"
                               ? "1px solid #5a3a14"
@@ -381,7 +378,7 @@ export default function ProductsPage() {
                       </div>
                     )}
 
-                    {/* Actions — her durumda aynı hizada, aşağı taşmıyor */}
+                    {/* Actions */}
                     <div className="px-6 pb-5 pt-4">
                       {disabled ? (
                         <button
@@ -409,7 +406,9 @@ export default function ProductsPage() {
                           <div className="flex items-center justify-center gap-1 mt-2 text-gray-400 text-xs font-mono">
                             <Link2 size={14} />
                             {t("productManage")}{" "}
-                            <span className="underline ml-1">{t("productMyLinks")}</span>
+                            <a href="/mylinks" className="underline ml-1">
+                              {t("productMyLinks")}
+                            </a>
                           </div>
                         </>
                       ) : (
@@ -475,18 +474,13 @@ function MetricBox({ icon, label, value, caption, className = "" }) {
       style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
       title={typeof label === "string" ? label : undefined}
     >
-      {/* etiket + ikon */}
       <div className="flex items-center justify-center gap-2">
         <span className="text-gray-300 text-sm font-medium text-center break-words">{label}</span>
         {icon ? <span className="text-gray-300 shrink-0">{icon}</span> : null}
       </div>
-
-      {/* değer */}
       <div className="flex items-center justify-center text-white text-xl font-bold tabnums mt-2 break-words">
         {value}
       </div>
-
-      {/* caption */}
       <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">
         {caption ? caption : "\u00A0"}
       </div>
