@@ -2,16 +2,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * File: src/app/api/products/promote/route.js
- * Purpose: Bir ürünü “My Links”e ekle (unique token oluştur / görünür yap)
- * Security Docblock:
- * - Auth: NextAuth → require status:active & role:affiliate|admin
- * - CSRF: NextAuth’ın /api/auth/csrf + header “x-csrf-token” (frontend wrapper). Sunucu, header varlığını bekler.
- * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id (zorunlu)
- * - Ratelimit: POST 10/dk (IP+userId)
- * - Validation: Zod (productId)
- * - TX: Tüm mutasyonlar transaction; audit({who, what, ip, ua, requestId, result})
- * - Errors: {error, request_id, retry_after?}
+ * Bir ürünü “My Links”e ekle (token oluştur / görünür yap)
+ * Notlar:
+ * - token artık unique değil → findFirst kullanıyoruz
+ * - aynı kullanıcı + aynı merchant için tek token reuse
  */
 
 import { NextResponse } from "next/server";
@@ -100,10 +94,10 @@ export async function POST(req) {
   const productId = Number(parsed.data.productId);
 
   try {
-    // Ürün aktif + admin onaylı mı? (şemaya göre camelCase)
+    // Ürün aktif + admin onaylı mı? reuse için merchantId da al
     const product = await prisma.merchantProduct.findFirst({
       where: { productId, isActive: true, activatedByAdmin: true },
-      select: { productId: true },
+      select: { productId: true, merchantId: true },
     });
     if (!product) {
       audit({ evt: "products.promote.not_found", who: user.id, requestId, productId });
@@ -113,6 +107,7 @@ export async function POST(req) {
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
     const result = await prisma.$transaction(async (tx) => {
+      // Bu kullanıcı bu ürünü daha önce eklediyse görünür/yenile
       const existing = await tx.affiliateLink.findFirst({
         where: { userId: user.id, productId },
         select: { linkId: true, token: true, isVisible: true, expiresAt: true },
@@ -121,20 +116,35 @@ export async function POST(req) {
       if (existing) {
         if (!existing.isVisible || !existing.expiresAt || existing.expiresAt < new Date()) {
           await tx.affiliateLink.update({
-            where: { linkId: existing.linkId }, // ✅ primary key adı
+            where: { linkId: existing.linkId },
             data: { isVisible: true, expiresAt },
           });
         }
         return { token: existing.token, created: false, expiresAt: existing.expiresAt || expiresAt };
       }
 
-      // yeni unique token (collision check)
-      let token = newToken();
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const dup = await tx.affiliateLink.findUnique({ where: { token } });
-        if (!dup) break;
+      // 1) Aynı kullanıcı + aynı merchant için daha önce üretilmiş token varsa reuse et
+      const reuse = await tx.affiliateLink.findFirst({
+        where: {
+          userId: user.id,
+          product: { merchantId: product.merchantId },
+        },
+        select: { token: true },
+        orderBy: { createdAt: "asc" },
+      });
+
+      let token = reuse?.token;
+
+      // 2) Hiç yoksa yeni token üret; global çakışmayı soft kontrol et
+      if (!token) {
         token = newToken();
+        // token unique değil → findFirst ile soft check
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const dup = await tx.affiliateLink.findFirst({ where: { token } });
+          if (!dup) break;
+          token = newToken();
+        }
       }
 
       await tx.affiliateLink.create({
@@ -147,7 +157,7 @@ export async function POST(req) {
         },
       });
 
-      return { token, created: true, expiresAt };
+      return { token, created: !reuse, expiresAt };
     });
 
     audit({
@@ -157,6 +167,7 @@ export async function POST(req) {
       requestId,
       result: "success",
     });
+
     return json(
       {
         ok: true,

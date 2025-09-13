@@ -1,5 +1,3 @@
-// prisma/schema.prisma — DB ile eşleşir, eksik snapshot sütunları da içerir
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,52 +8,48 @@ datasource db {
 }
 
 model User {
-  id                 Int       @id @default(autoincrement())
-  name               String    @db.VarChar(100)
-  email              String    @unique @db.VarChar(255)
-  companyName        String?   @db.VarChar(150)
-  emailVerified      DateTime? @db.DateTime(0)
-  passwordHash       String?   @db.VarChar(255)
-  role               Role      @default(affiliate)
-  languagePreference String    @default("en") @db.VarChar(10)
-  currencyCode       String    @default("TRY") @db.Char(3)
-  createdAt          DateTime  @default(now()) @db.DateTime(0)
+  id                       Int                   @id @default(autoincrement())
+  name                     String                @db.VarChar(100)
+  email                    String                @unique @db.VarChar(255)
+  companyName              String?               @db.VarChar(150)
+  emailVerified            DateTime?             @db.DateTime(0)
+  passwordHash             String?               @db.VarChar(255)
+  role                     Role                  @default(affiliate)
+  languagePreference       String                @default("en") @db.VarChar(10)
+  currencyCode             String                @default("TRY") @db.Char(3)
+  createdAt                DateTime              @default(now()) @db.DateTime(0)
+  bankName                 String?               @db.VarChar(120)
+  iban                     String?               @db.VarChar(34)
+  phoneNumber              String?               @db.VarChar(25)
+  image                    String?               @db.Text
+  status                   Userstatus            @default(pending)
+  failedAttempts           Int                   @default(0)
+  lockUntil                DateTime?
+  isFlagged                Boolean               @default(false)
+  flagReason               String?               @db.VarChar(255)
+  realUserFullname         String?               @db.VarChar(120)
+  termsAccepted            Boolean               @default(false)
+  activationToken          String?               @db.VarChar(255)
+  activationRequestedCount Int                   @default(0)
+  lastActivationRequestAt  DateTime?
+  salesAsMerchant          AffiliateUserSale[]   @relation("AffiliateUserSale_merchantIdToUsers")
+  salesAsAffiliate         AffiliateUserSale[]   @relation("AffiliateUserSale_userIdToUsers")
+  MerchantIntegration      MerchantIntegration[]
+  merchantSettlements      MerchantSettlement[]  @relation("MS_Merchant")
+  payoutRequestItems       PayoutRequestItem[]
+  accounts                 Account[]
+  affiliateLinks           AffiliateLink[]
+  contactMessages          ContactMessage[]
+  merchantProducts         MerchantProduct[]     @relation("MerchantProducts")
+  notifications            Notification[]
+  passwordResetTokens      PasswordResetToken[]
+  payoutRequests           PayoutRequest[]
+  sessions                 Session[]
+  webhookLogsAsAffiliate   WebhookRequestLog[]   @relation("WebhookLogAffiliate")
+  webhookLogsAsMerchant    WebhookRequestLog[]   @relation("WebhookLogMerchant")
 
-  bankName         String?    @db.VarChar(120)
-  iban             String?    @db.VarChar(34)
-  phoneNumber      String?    @db.VarChar(25)
-  image            String?    @db.Text
-  status           Userstatus @default(pending)
-  failedAttempts   Int        @default(0)
-  lockUntil        DateTime?  @db.DateTime(3)
-  isFlagged        Boolean    @default(false)
-  flagReason       String?    @db.VarChar(255)
-  realUserFullname String?    @db.VarChar(120)
-  termsAccepted    Boolean    @default(false)
-
-  activationToken          String?   @db.VarChar(255)
-  activationRequestedCount Int       @default(0)
-  lastActivationRequestAt  DateTime? @db.DateTime(3)
-
-  passwordResetTokens PasswordResetToken[]
-  salesAsMerchant     AffiliateUserSale[]  @relation("AffiliateUserSale_merchantIdToUsers")
-  salesAsAffiliate    AffiliateUserSale[]  @relation("AffiliateUserSale_userIdToUsers")
-  affiliateLinks      AffiliateLink[]
-  contactMessages     ContactMessage[]
-  merchantProducts    MerchantProduct[]    @relation("MerchantProducts")
-  notifications       Notification[]
-  payoutRequestItems  PayoutRequestItem[]
-  payoutRequests      PayoutRequest[]
-  accounts            Account[]
-  sessions            Session[]
-  merchantSettlements MerchantSettlement[] @relation("MS_Merchant")
-
-  webhookLogsAsMerchant  WebhookRequestLog[]   @relation("WebhookLogMerchant")
-  webhookLogsAsAffiliate WebhookRequestLog[]   @relation("WebhookLogAffiliate")
-  MerchantIntegration    MerchantIntegration[]
-
-  @@index([activationToken, status], name: "users_activationToken_status_idx")
-  @@index([role, companyName], name: "users_role_companyName_idx")
+  @@index([activationToken, status])
+  @@index([role, companyName])
   @@map("users")
 }
 
@@ -64,12 +58,11 @@ model PasswordResetToken {
   userId    Int
   token     String   @unique
   used      Boolean  @default(false)
-  expiresAt DateTime @db.DateTime(3)
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, used], name: "password_reset_tokens_userId_used_idx")
-  @@index([expiresAt], name: "password_reset_tokens_expiresAt_idx")
+  @@index([userId, used])
+  @@index([expiresAt])
   @@map("password_reset_tokens")
 }
 
@@ -88,8 +81,7 @@ model Account {
   sessionState      String?
   oauthTokenSecret  String? @db.Text
   oauthToken        String? @db.Text
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@index([userId])
@@ -100,9 +92,8 @@ model Session {
   id           Int      @id @default(autoincrement())
   sessionToken String   @unique @db.VarChar(255)
   userId       Int
-  expires      DateTime @db.DateTime(3)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("sessions")
@@ -111,27 +102,27 @@ model Session {
 model VerificationToken {
   identifier String   @db.VarChar(255)
   token      String   @db.VarChar(255)
-  expires    DateTime @db.DateTime(3)
+  expires    DateTime
 
   @@unique([identifier, token])
   @@map("verification_tokens")
 }
 
 model AffiliateLink {
-  linkId    Int       @id @default(autoincrement())
-  userId    Int
-  productId Int
-  token     String    @unique @db.VarChar(64)
-  createdAt DateTime  @default(now()) @db.DateTime(0)
-  isVisible Boolean   @default(true)
-  expiresAt DateTime? @db.DateTime(3)
-
+  linkId             Int                 @id @default(autoincrement())
+  userId             Int
+  productId          Int
+  token              String              @db.VarChar(64)
+  createdAt          DateTime            @default(now()) @db.DateTime(0)
+  isVisible          Boolean             @default(true)
+  expiresAt          DateTime?
   affiliateUserSales AffiliateUserSale[] @relation("LinkSales")
   product            MerchantProduct     @relation(fields: [productId], references: [productId])
   user               User                @relation(fields: [userId], references: [id])
   clicks             Click[]
 
   @@unique([userId, productId], map: "uniq_user_product_link")
+  @@index([token], map: "idx_affiliateLinks_token")
   @@index([userId])
   @@index([productId])
   @@index([expiresAt])
@@ -147,24 +138,20 @@ model AffiliateUserSale {
   amount              Decimal                 @db.Decimal(19, 4)
   quantity            Int                     @default(1)
   commissionAffiliate Decimal                 @db.Decimal(19, 4)
-  commissionPlatform  Decimal                 @default(5) @db.Decimal(19, 4)
+  commissionPlatform  Decimal                 @default(5.0000) @db.Decimal(19, 4)
   status              AffiliateUserSalestatus @default(pending)
   convertedAt         DateTime                @default(now()) @db.DateTime(0)
-
-  payoutItemId    Int?
-  updatedAt       DateTime? @default(now()) @db.DateTime(0)
-  affiliateLinkId Int?
-  webhookLogId    Int?
-
-  affiliateLink     AffiliateLink?     @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
-  merchantProduct   MerchantProduct    @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
-  merchant          User               @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
-  affiliate         User               @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
-  webhookRequestLog WebhookRequestLog? @relation("WebhookToSales", fields: [webhookLogId], references: [id])
-  platformEarnings  PlatformEarning[]
-
-  // FK’yi DB’ye ekleyince bu ilişki birebir oturur
-  payoutItem PayoutRequestItem? @relation("SalePayoutItem", fields: [payoutItemId], references: [itemId])
+  payoutItemId        Int?
+  updatedAt           DateTime?               @default(now()) @db.DateTime(0)
+  affiliateLinkId     Int?
+  webhookLogId        Int?
+  affiliateLink       AffiliateLink?          @relation("LinkSales", fields: [affiliateLinkId], references: [linkId])
+  merchantProduct     MerchantProduct         @relation(fields: [productId], references: [productId], map: "AffiliateUserSale_ibfk_2")
+  merchant            User                    @relation("AffiliateUserSale_merchantIdToUsers", fields: [merchantId], references: [id], map: "AffiliateUserSale_ibfk_merchant")
+  affiliate           User                    @relation("AffiliateUserSale_userIdToUsers", fields: [userId], references: [id], map: "AffiliateUserSale_ibfk_user")
+  payoutItem          PayoutRequestItem?      @relation("SalePayoutItem", fields: [payoutItemId], references: [itemId])
+  webhookRequestLog   WebhookRequestLog?      @relation("WebhookToSales", fields: [webhookLogId], references: [id])
+  platformEarnings    PlatformEarning[]
 
   @@unique([orderId, productId], map: "order_product_unique")
   @@index([userId])
@@ -173,18 +160,17 @@ model AffiliateUserSale {
   @@index([payoutItemId])
   @@index([affiliateLinkId], map: "idx_affiliateLinkId")
   @@index([webhookLogId], map: "idx_webhookLogId")
-  @@index([userId, status, convertedAt], name: "idx_AffiliateUserSale_userId_status_convAt")
+  @@index([userId, status, convertedAt], map: "idx_AffiliateUserSale_userId_status_convAt")
   @@map("AffiliateUserSale")
 }
 
 model Click {
-  clickId   Int      @id @default(autoincrement())
-  linkId    Int
-  ipAddress String?  @db.VarChar(45)
-  userAgent String?  @db.Text
-  referrer  String?  @db.Text
-  clickedAt DateTime @default(now()) @db.DateTime(0)
-
+  clickId       Int           @id @default(autoincrement())
+  linkId        Int
+  ipAddress     String?       @db.VarChar(45)
+  userAgent     String?       @db.Text
+  referrer      String?       @db.Text
+  clickedAt     DateTime      @default(now()) @db.DateTime(0)
   affiliateLink AffiliateLink @relation(fields: [linkId], references: [linkId], map: "clicks_ibfk_1")
 
   @@index([linkId])
@@ -198,34 +184,32 @@ model ContactMessage {
   email       String?  @db.VarChar(255)
   message     String   @db.Text
   submittedAt DateTime @default(now()) @db.DateTime(0)
-
-  user User? @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
+  user        User?    @relation(fields: [userId], references: [id], map: "contactMessages_ibfk_1")
 
   @@index([userId])
   @@map("contactMessages")
 }
 
 model MerchantProduct {
-  productId        Int      @id @default(autoincrement())
-  merchantId       Int
-  name             String   @db.VarChar(255)
-  description      String?  @db.Text
-  imageUrl         String   @db.Text
-  merchantUrl      String   @db.Text
-  commissionRate   Decimal  @db.Decimal(5, 2)
-  isActive         Boolean  @default(true)
-  totalClicks      Int      @default(0)
-  totalPurchases   Int      @default(0)
-  createdAt        DateTime @default(now()) @db.DateTime(0)
-  price            Decimal? @default(20.00) @db.Decimal(10, 2)
-  activatedByAdmin Boolean  @default(false)
-  maxSalesLimit    Int?     @default(100)
-  productCode      String   @unique @db.VarChar(64)
-
+  productId          Int                 @id @default(autoincrement())
+  merchantId         Int
+  name               String              @db.VarChar(255)
+  description        String?             @db.Text
+  imageUrl           String              @db.Text
+  merchantUrl        String              @db.Text
+  commissionRate     Decimal             @db.Decimal(5, 2)
+  isActive           Boolean             @default(true)
+  totalClicks        Int                 @default(0)
+  totalPurchases     Int                 @default(0)
+  createdAt          DateTime            @default(now()) @db.DateTime(0)
+  price              Decimal?            @default(20.00) @db.Decimal(10, 2)
+  activatedByAdmin   Boolean             @default(false)
+  maxSalesLimit      Int?                @default(100)
+  productCode        String              @unique @db.VarChar(64)
   affiliateUserSales AffiliateUserSale[]
+  payoutRequestItems PayoutRequestItem[]
   affiliateLinks     AffiliateLink[]
   merchant           User                @relation("MerchantProducts", fields: [merchantId], references: [id], map: "merchantProducts_ibfk_1")
-  payoutRequestItems PayoutRequestItem[]
 
   @@index([merchantId])
   @@map("merchantProducts")
@@ -240,95 +224,77 @@ model Notification {
   createdAt DateTime         @default(now()) @db.DateTime(0)
   read      Boolean          @default(false)
   isDeleted Boolean          @default(false)
-
-  user User @relation(fields: [userId], references: [id], map: "fk_notification_user")
+  user      User             @relation(fields: [userId], references: [id], map: "fk_notification_user")
 
   @@unique([userId, link], map: "uniq_user_link")
-  @@index([userId, read, isDeleted, createdAt], name: "idx_notifications_user_read_deleted_created")
+  @@index([userId, read, isDeleted, createdAt], map: "idx_notifications_user_read_deleted_created")
   @@index([userId])
   @@map("notifications")
 }
 
 model PayoutRequest {
-  requestId   Int     @id @default(autoincrement())
-  userId      Int
-  amountTotal Decimal @db.Decimal(19, 4)
-
-  platformCommissionPercent Decimal? @db.Decimal(5, 2)
-  platformCommissionTotal   Decimal? @db.Decimal(19, 4)
-  netPayable                Decimal? @db.Decimal(19, 4)
-
-  status      Payoutstatus @default(pending)
-  requestedAt DateTime?    @default(now()) @db.DateTime(0)
-  paidAt      DateTime?    @db.DateTime(0)
-
-  // NEW: roll-up aşamaları
-  merchantPaidAt      DateTime? @db.DateTime(0)
-  platformConfirmedAt DateTime? @db.DateTime(0)
-
-  // IBAN snapshot
-  bankName         String?   @db.VarChar(120)
-  iban             String?   @db.VarChar(34)
-  platformPaid     Boolean   @default(false) // (legacy; status='paid' ile senkron tutulur)
-  platformPaidAt   DateTime? @db.DateTime(0) // (legacy)
-  realUserFullname String?   @db.VarChar(120)
-
-  rejectedReason String?   @db.VarChar(255)
-  updatedAt      DateTime? @default(now()) @db.DateTime(0)
-  idempotencyKey String?   @db.VarChar(100)
-
-  payoutRequestItems  PayoutRequestItem[]
-  user                User                 @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
-  merchantSettlements MerchantSettlement[] @relation("MS_Request")
+  requestId                 Int                  @id @default(autoincrement())
+  userId                    Int
+  amountTotal               Decimal              @db.Decimal(19, 4)
+  platformCommissionPercent Decimal?             @db.Decimal(5, 2)
+  platformCommissionTotal   Decimal?             @db.Decimal(19, 4)
+  netPayable                Decimal?             @db.Decimal(19, 4)
+  status                    Payoutstatus         @default(pending)
+  requestedAt               DateTime?            @default(now()) @db.DateTime(0)
+  paidAt                    DateTime?            @db.DateTime(0)
+  bankName                  String?              @db.VarChar(120)
+  iban                      String?              @db.VarChar(34)
+  platformPaid              Boolean              @default(false)
+  platformPaidAt            DateTime?            @db.DateTime(0)
+  realUserFullname          String?              @db.VarChar(120)
+  rejectedReason            String?              @db.VarChar(255)
+  updatedAt                 DateTime?            @default(now()) @db.DateTime(0)
+  idempotencyKey            String?              @db.VarChar(100)
+  merchantPaidAt            DateTime?            @db.DateTime(0)
+  platformConfirmedAt       DateTime?            @db.DateTime(0)
+  merchantSettlements       MerchantSettlement[] @relation("MS_Request")
+  payoutRequestItems        PayoutRequestItem[]
+  user                      User                 @relation(fields: [userId], references: [id], map: "payoutRequests_ibfk_1")
 
   @@unique([userId, idempotencyKey], map: "uniq_user_idempotencyKey")
   @@index([userId])
-  @@index([userId, requestedAt], name: "idx_payoutRequests_userId_requestedAt")
-  @@index([userId, status], name: "idx_payoutRequests_userId_status")
+  @@index([userId, requestedAt], map: "idx_payoutRequests_userId_requestedAt")
+  @@index([userId, status], map: "idx_payoutRequests_userId_status")
   @@map("payoutRequests")
 }
 
 model PayoutRequestItem {
-  itemId     Int     @id @default(autoincrement())
-  requestId  Int
-  merchantId Int
-  amount     Decimal @db.Decimal(19, 4)
-
-  platformCommissionAmount Decimal? @db.Decimal(19, 4)
-  netPayable               Decimal? @db.Decimal(19, 4)
-
-  sourceSaleIds String?   @db.Text
-  createdAt     DateTime? @default(now()) @db.DateTime(0)
-
-  // Ödeme/akış sütunları
-  paidAt              DateTime? @db.DateTime(0)
-  paidBy              Int?
-  platformConfirmedAt DateTime? @db.DateTime(0)
-
-  // NEW: merchant bildirimi
-  merchantPaidAt     DateTime? @db.DateTime(0)
-  merchantPaymentRef String?   @db.VarChar(100)
-
-  productId      Int?
-  rejectedReason String?                  @db.VarChar(255)
-  status         PayoutRequestItemstatus? @default(pending)
-  transactionId  String?                  @db.VarChar(100)
-  updatedAt      DateTime?                @default(now()) @db.DateTime(0)
-  idempotencyKey String?                  @db.VarChar(100)
-
-  payoutRequest   PayoutRequest    @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
-  user            User             @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
-  merchantProduct MerchantProduct? @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
-
-  affiliateSales      AffiliateUserSale[]  @relation("SalePayoutItem")
-  merchantSettlements MerchantSettlement[] @relation("MS_Item")
+  itemId                   Int                      @id @default(autoincrement())
+  requestId                Int
+  merchantId               Int
+  amount                   Decimal                  @db.Decimal(19, 4)
+  platformCommissionAmount Decimal?                 @db.Decimal(19, 4)
+  netPayable               Decimal?                 @db.Decimal(19, 4)
+  sourceSaleIds            String?                  @db.Text
+  createdAt                DateTime?                @default(now()) @db.DateTime(0)
+  paidAt                   DateTime?                @db.DateTime(0)
+  paidBy                   Int?
+  platformConfirmedAt      DateTime?                @db.DateTime(0)
+  productId                Int?
+  rejectedReason           String?                  @db.VarChar(255)
+  status                   PayoutRequestItemstatus? @default(pending)
+  transactionId            String?                  @db.VarChar(100)
+  updatedAt                DateTime?                @default(now()) @db.DateTime(0)
+  idempotencyKey           String?                  @db.VarChar(100)
+  merchantPaidAt           DateTime?                @db.DateTime(0)
+  merchantPaymentRef       String?                  @db.VarChar(100)
+  affiliateSales           AffiliateUserSale[]      @relation("SalePayoutItem")
+  merchantSettlements      MerchantSettlement[]     @relation("MS_Item")
+  payoutRequest            PayoutRequest            @relation(fields: [requestId], references: [requestId], map: "payoutRequestItems_ibfk_1")
+  user                     User                     @relation(fields: [merchantId], references: [id], map: "payoutRequestItems_ibfk_2")
+  merchantProduct          MerchantProduct?         @relation(fields: [productId], references: [productId], onDelete: Restrict, map: "payoutRequestItems_ibfk_product")
 
   @@unique([merchantId, idempotencyKey], map: "uniq_merchant_idempotencyKey")
-  @@index([merchantId], name: "PayoutRequestItem_merchantId_idx")
-  @@index([requestId], name: "PayoutRequestItem_requestId_idx")
-  @@index([productId], name: "PayoutRequestItem_productId_idx")
-  @@index([requestId, status], name: "idx_PayoutRequestItem_requestId_status")
-  @@map("PayoutRequestItem") // <-- DB'deki gerçek tablo adı
+  @@index([merchantId])
+  @@index([requestId])
+  @@index([productId])
+  @@index([requestId, status], map: "idx_PayoutRequestItem_requestId_status")
+  @@map("PayoutRequestItem")
 }
 
 model PayoutRequestLog {
@@ -342,33 +308,31 @@ model PayoutRequestLog {
   note      String?   @db.Text
   createdAt DateTime? @default(now()) @db.DateTime(0)
 
-  @@index([requestId], name: "idx_PayoutRequestLog_requestId")
-  @@index([itemId], name: "idx_PayoutRequestLog_itemId")
-  @@index([userId], name: "idx_PayoutRequestLog_userId")
-  @@index([createdAt], name: "idx_PayoutRequestLog_createdAt")
+  @@index([requestId], map: "idx_PayoutRequestLog_requestId")
+  @@index([itemId], map: "idx_PayoutRequestLog_itemId")
+  @@index([userId], map: "idx_PayoutRequestLog_userId")
+  @@index([createdAt], map: "idx_PayoutRequestLog_createdAt")
   @@map("PayoutRequestLog")
 }
 
 model Currency {
-  code      String   @id @db.Char(3)
-  symbol    String   @db.VarChar(5)
-  minorUnit Int
-  updatedAt DateTime @default(now()) @db.DateTime(0)
-
+  code             String            @id @db.Char(3)
+  symbol           String            @db.VarChar(5)
+  minorUnit        Int
+  updatedAt        DateTime          @default(now()) @db.DateTime(0)
+  platformEarnings PlatformEarning[]
   baseRates        ExchangeRate[]    @relation("baseCurrency")
   targetRates      ExchangeRate[]    @relation("targetCurrency")
-  platformEarnings PlatformEarning[]
 
   @@map("currencies")
 }
 
 model ExchangeRate {
-  baseCurrency   String   @db.Char(3)
-  targetCurrency String   @db.Char(3)
-  rate           Decimal  @db.Decimal(18, 8)
-  validFrom      DateTime @db.DateTime(0)
-  validTo        DateTime @db.DateTime(0)
-
+  baseCurrency      String   @db.Char(3)
+  targetCurrency    String   @db.Char(3)
+  rate              Decimal  @db.Decimal(18, 8)
+  validFrom         DateTime @db.DateTime(0)
+  validTo           DateTime @db.DateTime(0)
   baseCurrencyRel   Currency @relation("baseCurrency", fields: [baseCurrency], references: [code], map: "exchange_rates_ibfk_1")
   targetCurrencyRel Currency @relation("targetCurrency", fields: [targetCurrency], references: [code], map: "exchange_rates_ibfk_2")
 
@@ -378,17 +342,16 @@ model ExchangeRate {
 }
 
 model PlatformEarning {
-  earningId    Int      @id @default(autoincrement())
-  saleId       Int
-  amount       Decimal  @db.Decimal(19, 4)
-  currencyCode String   @default("TRY") @db.Char(3)
-  loggedAt     DateTime @default(now()) @db.DateTime(0)
-
+  earningId         Int               @id @default(autoincrement())
+  saleId            Int
+  amount            Decimal           @db.Decimal(19, 4)
+  currencyCode      String            @default("TRY") @db.Char(3)
+  loggedAt          DateTime          @default(now()) @db.DateTime(0)
   affiliateUserSale AffiliateUserSale @relation(fields: [saleId], references: [saleId], map: "platform_earnings_ibfk_1")
   currency          Currency          @relation(fields: [currencyCode], references: [code], map: "platform_earnings_ibfk_2")
 
-  @@index([currencyCode], name: "PlatformEarning_currencyCode_idx")
-  @@index([saleId], name: "PlatformEarning_saleId_idx")
+  @@index([currencyCode])
+  @@index([saleId])
   @@map("PlatformEarning")
 }
 
@@ -408,37 +371,33 @@ model MerchantIntegration {
   webhookIpAllowlist String?   @db.Text
   isActive           Boolean   @default(true)
   createdAt          DateTime  @default(now()) @db.DateTime(0)
-  rotatedAt          DateTime? @db.DateTime(3)
-
-  merchant User @relation(fields: [merchantId], references: [id])
+  rotatedAt          DateTime?
+  merchant           User      @relation(fields: [merchantId], references: [id])
 
   @@index([merchantId])
   @@map("MerchantIntegration")
 }
 
 model WebhookRequestLog {
-  id          Int           @id @default(autoincrement())
+  id          Int                 @id @default(autoincrement())
   merchantId  Int
   affiliateId Int?
-  requestId   String        @unique @db.VarChar(100)
-  nonce       String        @unique @db.VarChar(100)
-  sentAt      DateTime      @db.DateTime(3)
-  receivedAt  DateTime      @default(now()) @db.DateTime(0)
-  hmac        String        @db.VarChar(255)
-  ip          String        @db.VarChar(45)
-  ua          String?       @db.Text
+  requestId   String              @unique @db.VarChar(100)
+  nonce       String              @unique @db.VarChar(100)
+  sentAt      DateTime
+  receivedAt  DateTime            @default(now()) @db.DateTime(0)
+  hmac        String              @db.VarChar(255)
+  ip          String              @db.VarChar(45)
+  ua          String?             @db.Text
   status      WebhookStatus
-  error       String?       @db.Text
-
-  rawBody    String @db.LongText
-  headers    Json?
-  parsedBody Json?
-  itemsCount Int?
-
-  merchant  User  @relation("WebhookLogMerchant", fields: [merchantId], references: [id])
-  affiliate User? @relation("WebhookLogAffiliate", fields: [affiliateId], references: [id])
-
-  sales AffiliateUserSale[] @relation("WebhookToSales")
+  error       String?             @db.Text
+  rawBody     String              @db.LongText
+  headers     Json?
+  parsedBody  Json?
+  itemsCount  Int?
+  sales       AffiliateUserSale[] @relation("WebhookToSales")
+  affiliate   User?               @relation("WebhookLogAffiliate", fields: [affiliateId], references: [id])
+  merchant    User                @relation("WebhookLogMerchant", fields: [merchantId], references: [id])
 
   @@index([merchantId])
   @@index([affiliateId])
@@ -453,32 +412,27 @@ model ApiLog {
   event     String
   email     String?
   error     String?
-  createdAt DateTime @default(now()) @db.DateTime(3)
+  createdAt DateTime @default(now())
 }
 
-/// --- EKLE / GÜNCELLE: MerchantSettlement modeli ---
-
 model MerchantSettlement {
-  id                 Int       @id @default(autoincrement())
+  id                 Int                @id @default(autoincrement())
   requestId          Int
   merchantId         Int
   itemId             Int?
-  amount             Decimal   @db.Decimal(19, 4)
-  // isteğe bağlı alanlar:
-  commissionPlatform Decimal?  @db.Decimal(19, 4)
-  settledAt          DateTime? @db.DateTime(0)
-  createdAt          DateTime  @default(now()) @db.DateTime(0)
-  note               String?   @db.VarChar(255)
-  txRef              String?   @db.VarChar(100)
+  amount             Decimal            @db.Decimal(19, 4)
+  commissionPlatform Decimal?           @db.Decimal(19, 4)
+  settledAt          DateTime?          @db.DateTime(0)
+  createdAt          DateTime           @default(now()) @db.DateTime(0)
+  note               String?            @db.VarChar(255)
+  txRef              String?            @db.VarChar(100)
+  item               PayoutRequestItem? @relation("MS_Item", fields: [itemId], references: [itemId])
+  merchant           User               @relation("MS_Merchant", fields: [merchantId], references: [id])
+  payoutRequest      PayoutRequest      @relation("MS_Request", fields: [requestId], references: [requestId])
 
-  // İlişkiler — relation name’ler eklendi
-  merchant      User               @relation("MS_Merchant", fields: [merchantId], references: [id])
-  payoutRequest PayoutRequest      @relation("MS_Request", fields: [requestId], references: [requestId])
-  item          PayoutRequestItem? @relation("MS_Item", fields: [itemId], references: [itemId])
-
-  @@index([merchantId], name: "MerchantSettlement_merchantId_idx")
-  @@index([requestId], name: "MerchantSettlement_requestId_idx")
-  @@index([itemId], name: "MerchantSettlement_itemId_idx")
+  @@index([merchantId])
+  @@index([requestId])
+  @@index([itemId])
   @@map("MerchantSettlement")
 }
 

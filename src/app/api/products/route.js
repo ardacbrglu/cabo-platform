@@ -2,15 +2,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * File: src/app/api/products/route.js
- * Purpose: Product Marketplace – aktif ürünleri getir (login zorunlu)
- * Security Docblock:
- * - Auth: NextAuth getServerSession(authOptions) → require status:active & role:affiliate|admin
- * - Headers: Origin/Referer eşleşmesi; X-Requested-With; X-Request-Id (zorunlu)
- * - Ratelimit: GET 60/dk (IP+userId)
- * - Data access: Prisma (raw SQL yok)
- * - Response: no-store + security headers; audit access (PII’siz)
- * - Errors: {error, request_id, retry_after?}
+ * Product Marketplace – aktif ürünleri getir (login zorunlu)
  */
 
 import { NextResponse } from "next/server";
@@ -68,7 +60,6 @@ export async function GET(req) {
   }
 
   try {
-    // ŞEMA: MerchantProduct camelCase alanlar
     const productsRaw = await prisma.merchantProduct.findMany({
       where: { isActive: true, activatedByAdmin: true },
       select: {
@@ -77,8 +68,8 @@ export async function GET(req) {
         description: true,
         imageUrl: true,
         merchantUrl: true,
-        commissionRate: true, // Decimal
-        price: true,          // Decimal?
+        commissionRate: true,
+        price: true,
         totalClicks: true,
         totalPurchases: true,
         createdAt: true,
@@ -89,7 +80,6 @@ export async function GET(req) {
 
     const productIds = productsRaw.map((p) => p.productId);
 
-    // ŞEMA: AffiliateLink camelCase alanlar
     const linksRaw = productIds.length
       ? await prisma.affiliateLink.findMany({
           where: { userId: user.id, productId: { in: productIds } },
@@ -97,7 +87,6 @@ export async function GET(req) {
         })
       : [];
 
-    // Response camelCase (frontend ile uyumlu)
     const products = productsRaw.map((p) => ({
       productId: p.productId,
       name: p.name,
@@ -109,7 +98,7 @@ export async function GET(req) {
       totalClicks: p.totalClicks ?? 0,
       totalPurchases: p.totalPurchases ?? 0,
       createdAt: p.createdAt?.toISOString?.() || null,
-      isActive: true, // zaten filtrede aktif
+      isActive: true,
       maxSalesLimit: p.maxSalesLimit ?? null,
     }));
 

@@ -1,15 +1,21 @@
-// components/merchant/MerchantLayout.jsx
 "use client";
 
+/**
+ * Security Docblock — Cabo PROD
+ * Component: MerchantLayout
+ * - Client-only; App Router context’inde çalışır
+ * - Nav linkleri aktif route’a göre renklendirir
+ * - Logout basit <a href="/api/logout"> ile yapılır (idempotent, CSRF gerekmez)
+ */
+
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import { LogOut, Menu } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 export default function MerchantLayout({ children }) {
-  const router = useRouter();
   const pathname = usePathname();
   const t = useTranslation();
   const isMobile = useIsMobile();
@@ -24,14 +30,6 @@ export default function MerchantLayout({ children }) {
   useEffect(() => {
     setMobileOpen(false);
   }, [currentPath]);
-
-  function handleLogout() {
-    try {
-      window.location.assign("/api/logout");
-    } catch {
-      router.push("/");
-    }
-  }
 
   const links = [
     { href: "/merchant/dashboard",           label: t("Manage Products") },
@@ -49,7 +47,6 @@ export default function MerchantLayout({ children }) {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#101010] text-white font-sans tracking-tight">
-      {/* min-h-screen + flex-col: footer her zaman en altta */}
       <header className="w-full bg-[#111] shadow-sm">
         <div className="max-w-7xl mx-auto px-6 md:px-12 py-4 flex items-center justify-between">
           <h1
@@ -80,14 +77,15 @@ export default function MerchantLayout({ children }) {
                   </Link>
                 ))}
               </nav>
-              <button
-                onClick={handleLogout}
+
+              {/* Basit anchor ile logout */}
+              <a
+                href="/api/logout"
                 className="text-red-500 hover:text-red-400 transition ml-3"
                 title={t("Logout")}
-                type="button"
               >
                 <LogOut size={20} />
-              </button>
+              </a>
             </div>
           )}
         </div>
@@ -106,19 +104,18 @@ export default function MerchantLayout({ children }) {
                 {l.label}
               </Link>
             ))}
-            <button
-              onClick={handleLogout}
-              className="text-red-500 hover:text-red-400 transition mt-2"
+            <a
+              href="/api/logout"
+              className="text-red-500 hover:text-red-400 transition mt-2 inline-flex items-center gap-2"
               title={t("Logout")}
-              type="button"
             >
               <LogOut size={20} />
-            </button>
+              <span>{t("Logout")}</span>
+            </a>
           </div>
         )}
       </header>
 
-      {/* pb-* yok; tek paddingBottom → çakışma/uyarı yok */}
       <main
         className="max-w-5xl w-full mx-auto mt-8 px-2 flex-1 flex flex-col"
         style={{ paddingBottom: "max(8rem, env(safe-area-inset-bottom))" }}
