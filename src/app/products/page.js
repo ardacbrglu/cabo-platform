@@ -2,7 +2,9 @@
 
 /**
  * Product Marketplace (Affiliate) — PROD
- * Kart ölçüleri akışkan; grid 1/2/3/4 sütun; hareketler ve metrikler korunur.
+ * - Masaüstünde sabit 3 sütun; tablet 2, mobil 1 sütun. Satırlar 3'lü bloklar halinde stack'lenir.
+ * - Kartlar ortalanır; aralıklar sabit (gap-x-7 gap-y-9).
+ * - Chip'ler ve metrikler taşmaz; yeşil "satış başı komisyon" kutusu clamp'lı.
  */
 
 import { useEffect, useLayoutEffect, useState } from "react";
@@ -24,14 +26,17 @@ import { apiFetch } from "@/lib/apiFetch";
 
 const PLACEHOLDER = "https://placehold.co/240x240?text=Product";
 
-/* -------- Palette -------- */
 const CARD_BG = "#181818";
 const CARD_BORDER = "#232323";
 const SURFACE_GREY = "#232323";
 const SURFACE_GREY_BORDER = "#343a34";
 const ACCENT = "#81d742";
 
-const money = (n) => `₺${Number(n || 0).toFixed(2)}`;
+const money = (n) =>
+  `₺${Number(n || 0).toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 const perSale = (p) =>
   Math.max(0, (Number(p.price || 0) * Number(p.commissionRate || 0)) / 100);
 
@@ -51,7 +56,6 @@ export default function ProductsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const { setUser } = useUser();
 
-  /* Navbar cache senkronu */
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
     const name = localStorage.getItem("cabo_username");
@@ -68,7 +72,6 @@ export default function ProductsPage() {
     }
   }, [setUser]);
 
-  /* Data load */
   useEffect(() => {
     let alive = true;
     const MIN = 300;
@@ -196,7 +199,7 @@ export default function ProductsPage() {
         </p>
 
         <div className="mt-5 w-full flex justify-center">
-          <div className="relative w-full max-w-[680px]">
+          <div className="relative w-full max-w-[720px]">
             <input
               type="text"
               className="w-full rounded-xl px-4 py-3 pl-11 text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-[#888]/30 placeholder:text-gray-400 transition shadow-sm"
@@ -221,10 +224,8 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Cards grid — geniş container, akışkan kolonlar */}
-      <div
-        className={`w-full mx-auto px-3 md:px-8 pb-14 ${loading ? "opacity-60" : "opacity-100"} max-w-[1840px]`}
-      >
+      {/* Cards grid — tam 3 sütun, ortalı */}
+      <div className={`w-full mx-auto px-3 md:px-8 pb-14 ${loading ? "opacity-60" : "opacity-100"} max-w-[1360px]`}>
         {cardMessages.global?.text && (
           <div
             className="mb-5 text-center font-mono font-bold rounded-lg px-5 py-3 max-w-lg mx-auto text-base"
@@ -238,16 +239,16 @@ export default function ProductsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 justify-items-stretch gap-x-7 gap-y-9">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-7 gap-y-9 justify-items-stretch">
           {loading
-            ? Array.from({ length: 4 }).map((_, i) => (
+            ? Array.from({ length: 3 }).map((_, i) => (
                 <div
                   key={i}
                   className="animate-pulse rounded-2xl"
                   style={{
                     background: CARD_BG,
                     border: `1px solid ${CARD_BORDER}`,
-                    height: 460,
+                    height: 420,
                     width: "100%",
                   }}
                 />
@@ -286,8 +287,8 @@ export default function ProductsPage() {
                       <div
                         className="rounded-xl overflow-hidden"
                         style={{
-                          width: "min(14rem, 80%)",
-                          height: "min(14rem, 80vw)",
+                          width: "min(12rem, 78%)",
+                          height: "min(12rem, 64vw)",
                           background: SURFACE_GREY,
                           border: `1px solid ${SURFACE_GREY_BORDER}`,
                         }}
@@ -297,27 +298,34 @@ export default function ProductsPage() {
                           alt={p.name}
                           className="object-cover w-full h-full transition-transform duration-300"
                           onError={handleImgError}
-                          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.03)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1.0)")}
                           loading="lazy"
                           decoding="async"
                         />
                       </div>
 
                       <h2
-                        className="mt-4 text-[1.55rem] md:text-[1.7rem] font-extrabold text-white leading-tight break-words"
+                        className="mt-4 text-[1.45rem] md:text-[1.55rem] font-extrabold text-white leading-tight break-words"
                         style={{ wordBreak: "break-word" }}
                       >
                         {p.name}
                       </h2>
-                      <p className="mt-2 text-gray-300 text-[15px] md:text-base leading-6 break-words">
+                      <p
+                        className="mt-2 text-gray-300 text-[14px] md:text-[15px] leading-6"
+                        style={{
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          maxWidth: "46ch",
+                        }}
+                      >
                         {p.description || ""}
                       </p>
                     </div>
 
                     {/* status badge */}
                     {disabled && (
-                      <div className="absolute left-5 top-[74px] md:top-[84px]">
+                      <div className="absolute left-5 top-[64px] md:top-[74px]">
                         <span className="flex items-center gap-1 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs">
                           <Ban size={13} /> {status === "inactive" ? t("productInactive") : t("productQuota")}
                         </span>
@@ -325,41 +333,49 @@ export default function ProductsPage() {
                     )}
 
                     {/* Metrics */}
-                    <div className="px-6 pt-5 grid grid-cols-2 gap-4 items-stretch">
+                    <div className="px-6 pt-4 grid grid-cols-2 gap-4 items-stretch">
                       <MetricBox
-                        className="h-[110px]"
+                        className="h-[96px]"
                         label={t("clicks")}
                         icon={<MousePointerClick size={16} />}
                         value={p.totalClicks || 0}
                         caption={t("totalClicks")}
                       />
                       <MetricBox
-                        className="h-[110px]"
+                        className="h-[96px]"
                         label={t("sales")}
                         icon={<Activity size={16} />}
                         value={p.totalPurchases || 0}
                         caption={t("totalSales")}
                       />
                       <MetricBox
-                        className="h-[110px]"
+                        className="h-[96px]"
                         label={t("productEarn")}
                         icon={<Coins size={16} />}
-                        value={<span className="font-extrabold" style={{ color: ACCENT }}>{money(earn)}</span>}
+                        value={
+                          <span
+                            className="font-extrabold tabnums text-base md:text-lg whitespace-nowrap"
+                            style={{ color: ACCENT }}
+                            title={money(earn)}
+                          >
+                            {money(earn)}
+                          </span>
+                        }
                         caption={t("perSale") || "per sale"}
                       />
                       <MetricBox
-                        className="h-[110px]"
+                        className="h-[96px]"
                         label={t("quotaLeft")}
                         value={isFinite(quota) ? quota : "∞"}
                         caption={t("remaining") || "remaining"}
                       />
                     </div>
 
-                    {/* Inline card notice */}
+                    {/* Inline notice */}
                     {cardMessages[p.productId]?.text && (
                       <div
                         aria-live="polite"
-                        className="mx-6 mt-4 rounded-lg px-3 py-2 text-sm font-mono flex items-center gap-2"
+                        className="mx-6 mt-3 rounded-lg px-3 py-2 text-sm font-mono flex items-center gap-2"
                         style={{
                           background: cardMessages[p.productId].kind === "error" ? "#2a1f12" : "#202820",
                           border:
@@ -379,7 +395,7 @@ export default function ProductsPage() {
                     )}
 
                     {/* Actions */}
-                    <div className="px-6 pb-5 pt-4">
+                    <div className="px-6 pb-5 pt-3">
                       {disabled ? (
                         <button
                           type="button"
@@ -431,9 +447,7 @@ export default function ProductsPage() {
 
       <style jsx global>{`
         .tabnums { font-variant-numeric: tabular-nums; }
-        @media (max-width: 640px) {
-          .grid { justify-items: stretch; }
-        }
+        @media (max-width: 640px) { .grid { justify-items: stretch; } }
       `}</style>
     </Layout>
   );
@@ -451,17 +465,16 @@ function Chip({ icon, text, tone = "default" }) {
         ? "inset 0 1px 0 rgba(255,255,255,0.05)"
         : "inset 0 1px 0 rgba(255,255,255,0.03)",
     borderRadius: "12px",
-    whiteSpace: "normal",
+    whiteSpace: "nowrap",
     lineHeight: 1.15,
   };
-
   return (
     <span
-      className="inline-flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold"
+      className="inline-flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold max-w-full"
       style={base}
       title={typeof text === "string" ? text : undefined}
     >
-      <span className="opacity-90 break-words">{text}</span>
+      <span className="opacity-90 truncate">{text}</span>
       {icon ? <span className="opacity-90 shrink-0">{icon}</span> : null}
     </span>
   );
@@ -470,15 +483,15 @@ function Chip({ icon, text, tone = "default" }) {
 function MetricBox({ icon, label, value, caption, className = "" }) {
   return (
     <div
-      className={`rounded-xl px-4 py-4 grid grid-rows-[auto,1fr,auto] ${className}`}
+      className={`rounded-xl px-4 py-3 grid grid-rows-[auto,1fr,auto] ${className}`}
       style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
       title={typeof label === "string" ? label : undefined}
     >
       <div className="flex items-center justify-center gap-2">
-        <span className="text-gray-300 text-sm font-medium text-center break-words">{label}</span>
+        <span className="text-gray-300 text-sm font-medium text-center">{label}</span>
         {icon ? <span className="text-gray-300 shrink-0">{icon}</span> : null}
       </div>
-      <div className="flex items-center justify-center text-white text-xl font-bold tabnums mt-2 break-words">
+      <div className="flex items-center justify-center text-white font-bold tabnums mt-2 max-w-full">
         {value}
       </div>
       <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">

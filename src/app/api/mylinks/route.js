@@ -87,6 +87,8 @@ export async function GET(req) {
             maxSalesLimit: true,
             productCode: true,
             activatedByAdmin: true,
+            // 👇 Paylaşılacak marka alanı
+            merchantUrl: true,
           },
         },
       },
@@ -139,6 +141,8 @@ export async function GET(req) {
               remainingSales,
               remaining_sales: remainingSales,
               image_url: prod.imageUrl,
+              // 👇 Frontend kolaylığı için alias
+              merchant_url: prod.merchantUrl,
             }
           : null;
 
