@@ -1,4 +1,13 @@
 // src/lib/authOptions.js
+/**
+ * Security Docblock (Cabo PROD)
+ * - Tek oturum kaynağı: NextAuth (Credentials + Google)
+ * - JWT session stratejisi; kullanıcı rol/durum bilgisi token'a yazılır.
+ * - JWT, rol/durum bilgisini düzenli aralıklarla DB'den tazeler (TTL).
+ * - Adapter: PrismaAdapter (OAuth hesaplarının persist edilmesi için)
+ * - RBAC + status kapıları authorize/signIn aşamasında da uygulanır.
+ */
+
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
@@ -27,16 +36,14 @@ function getUserLocale(u) {
   return "tr";
 }
 
+const ROLE_SYNC_TTL_MS = 60 * 1000; // 60s: middleware token'ı güncel tutma amaçlı makul TTL
+
 /* --------------------------------------------------------------- */
 
 export const authOptions = {
   trustHost: true,
   secret: process.env.NEXTAUTH_SECRET,
-
-  // 👇 EKLENDİ: OAuth hesaplarını DB'ye yazmak için
   adapter: PrismaAdapter(prisma),
-
-  // JWT stratejisi kalabilir; adapter sadece user/account persist eder
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
 
   providers: [
@@ -81,7 +88,6 @@ export const authOptions = {
       ? [GoogleProvider({
           clientId: process.env.GOOGLE_CLIENT_ID,
           clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-          // aynı email ile linking doğal olarak yapılır; farklı email’lere link engelli
           allowDangerousEmailAccountLinking: false,
         })]
       : []),
@@ -96,14 +102,12 @@ export const authOptions = {
       const emailLower = (user?.email || "").toLowerCase();
       if (!emailLower) return false;
 
-      // Mevcut user varsa sadece active olan girsin
       const existing = await prisma.user.findUnique({
         where: { email: emailLower },
         select: { status: true },
       });
       if (existing) return existing.status === "active";
 
-      // Yeni user için precheck cookie zorunlu
       const cookieHeader = req?.headers?.get?.("cookie") || "";
       const m = cookieHeader.match(/(?:^|;\s*)google_reg_precheck=([^;]+)/i);
       const token = m ? decodeURIComponent(m[1]) : null;
@@ -124,15 +128,22 @@ export const authOptions = {
     },
 
     async jwt({ token, user }) {
+      // Login/first issue: kullanıcıdan gelen değerler token'a yazılır
       if (user) {
         token.id = user.id;
         token.role = user.role;
         token.status = user.status;
         token.name = user.name || "";
         token.email = user.email || token.email;
+        token._rls = Date.now(); // role last sync
         return token;
       }
-      if ((!token.role || !token.status) && token?.email) {
+
+      // Periyodik DB senkronu: rol/durum değişmişse middleware'ın gördüğü token güncellensin
+      const now = Date.now();
+      const shouldResync = !token._rls || (now - token._rls) > ROLE_SYNC_TTL_MS;
+
+      if (shouldResync && token?.email) {
         try {
           const u = await prisma.user.findUnique({
             where: { email: token.email.toLowerCase() },
@@ -140,11 +151,14 @@ export const authOptions = {
           });
           if (u) {
             token.id = u.id;
-            token.role = u.role || token.role;
-            token.status = u.status || token.status;
+            token.role = u.role;
+            token.status = u.status;
             token.name = u.name || token.name;
+            token._rls = now;
           }
-        } catch {}
+        } catch {
+          // sessiz yut
+        }
       }
       return token;
     },
@@ -171,7 +185,7 @@ export const authOptions = {
   },
 
   events: {
-    // OAuth ile ilk kez user oluştuğunda tetiklenir (Adapter gerekliydi!)
+    // OAuth ile ilk kez user oluştuğunda tetiklenir
     async createUser({ user }) {
       try {
         const idNum = Number(user.id);

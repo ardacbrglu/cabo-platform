@@ -5,6 +5,8 @@
  * Page: /merchant/login
  * - SPA submit via apiFetch (credentials: include, X-Requested-With, X-Request-Id)
  * - NextAuth CSRF preload (read-only)
+ * - Başarılı login -> hard redirect (window.location.assign) + cache-bust:
+ *   middleware token'ını kesinlikle yeni cookie ile okutmak için.
  * - Minimal UI; PublicLayout ile sarılır
  */
 
@@ -124,7 +126,15 @@ export default function MerchantLoginPage() {
         setServerError(data?.message || t("serverError"));
         return;
       }
-      router.push("/merchant/dashboard");
+
+      // ÖNEMLİ: hard redirect + cache-bust => middleware yeni session token'ı kesinlikle görsün
+      if (typeof window !== "undefined") {
+        const next = new URL("/merchant/dashboard", window.location.origin);
+        next.searchParams.set("t", String(Date.now()));
+        window.location.assign(next.toString());
+      } else {
+        router.push("/merchant/dashboard");
+      }
     } catch {
       setServerError(t("serverError"));
     } finally {

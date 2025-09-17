@@ -3,6 +3,12 @@
  * Purpose: Köken doğrulama, AJAX işareti ve Request-Id zorunluluğu.
  * Prod: Mutasyonlarda Origin/Referer host eşleşmesi zorunlu.
  * Dev: LAN/localhost toleransı, isteğe bağlı esneklik bayrakları.
+ *
+ * Security Docblock (Cabo PROD):
+ * - Allowed host listesi: ALLOWED_HOSTS (virgüllü) > NEXTAUTH_URL/BASE_URL.
+ * - Prod'da Origin/Referer zorunlu, ancak bazı tarayıcıların same-origin POST'larda
+ *   Origin/Referer göndermemesi durumunda güvenli fallback: reqHost ∈ allowedHosts ise kabul.
+ * - Dev'de LAN ve localhost otomatik toleranslı (DEV_ALLOW_LAN=0 ile kapatılabilir).
  */
 
 function parseHostsFromEnv() {
@@ -61,14 +67,17 @@ export function requireOrigin(req) {
   const referer = req.headers.get("referer");
   const candidate = hostOf(origin) || hostOf(referer); // "host:port"
 
-  // DEV: LAN/localhost otomatik serbest (DEV_ALLOW_LAN=0 ile kapat)
+  // --- DEV toleransı: LAN/localhost serbest ---
   if (process.env.NODE_ENV !== "production") {
     const allowLan = (process.env.DEV_ALLOW_LAN ?? "1") !== "0";
     if (allowLan && candidate && isPrivateLanHost(candidate)) return;
-    // Candidate yoksa ve istek aynı origin’den geliyorsa (fetch same-origin),
-    // reqHost’i de kabul et (mobil/localhost kenarları)
     if (!candidate && reqHost && isPrivateLanHost(reqHost)) return;
   }
+
+  // --- PROD güvenli fallback ---
+  // Bazı tarayıcılar same-origin POST'larda Origin/Referer göndermeyebiliyor.
+  // Eğer Origin/Referer yoksa ve isteğin geldiği host allowed listesinde ise kabul et.
+  if (!candidate && reqHost && allowedHosts.includes(reqHost)) return;
 
   const ok = candidate && allowedHosts.includes(candidate);
   if (!ok) {
