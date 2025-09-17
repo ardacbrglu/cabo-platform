@@ -1,10 +1,10 @@
-"use client";
+"use client"; 
 
 /**
  * Affiliate “My Links” — PROD READY
  * - Kopyalanan URL: {BASE_URL}/ref/{token}?lid={linkId}
  * - BASE_URL: process.env.NEXT_PUBLIC_BASE_URL (varsa) → window.location.origin (yoksa)
- * - Böylece prod’da Railway domain’i kullanılır, local’de localhost görülür (doğal davranış).
+ * - Desktop’ta kartlarda hover hareketi (product sayfası ile tutarlı).
  */
 
 import { useEffect, useState } from "react";
@@ -60,6 +60,7 @@ function getExpiresBadge(link, t) {
   );
 }
 
+/* Desktop hover hareketi için tek bir sınıf */
 const CARD_HOVER =
   "will-change-transform transition-all duration-200 ease-out " +
   "motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-[0_12px_28px_rgba(0,0,0,.35)] " +
@@ -167,7 +168,7 @@ export default function MyLinksPage() {
                 return (
                   <article
                     key={link.linkId}
-                    className={`bg-[${CARD_BG}] border border-[#872222] rounded-2xl p-6`}
+                    className={`bg-[${CARD_BG}] border border-[#872222] rounded-2xl p-6 ${CARD_HOVER}`}
                     style={{ background: CARD_BG }}
                   >
                     <div className="text-red-400 font-bold mb-2">{t("myLinksRemoved")}</div>
@@ -192,7 +193,7 @@ export default function MyLinksPage() {
               return (
                 <article
                   key={link.linkId}
-                  className={`relative rounded-2xl shadow-lg transition-all duration-300 ease-in-out ${removingThis ? "opacity-40 pointer-events-none" : ""}`}
+                  className={`relative rounded-2xl shadow-lg ${CARD_HOVER} transition-all duration-300 ease-in-out ${removingThis ? "opacity-40 pointer-events-none" : ""}`}
                   style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
                 >
                   {(p.isActive === false || quotaReached) && (
@@ -287,6 +288,14 @@ export default function MyLinksPage() {
           </div>
         )}
       </div>
+
+      {/* reduce-motion için güvenli kapama */}
+      <style jsx global>{`
+        @media (prefers-reduced-motion: reduce) {
+          article { transition: none !important; transform: none !important; }
+          article:hover { transform: none !important; box-shadow: none !important; }
+        }
+      `}</style>
     </Layout>
   );
 }
