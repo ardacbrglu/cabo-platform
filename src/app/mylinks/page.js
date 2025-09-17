@@ -1,11 +1,10 @@
-// app/mylinks/page.jsx
 "use client";
 
 /**
  * Affiliate “My Links” — PROD READY
- * - Kopyalama state'i token yerine linkId ile tutulur (aynı tokenlı kartlar çakışmaz)
- * - Kopyalanan URL: /ref/{token}?lid={linkId}  (tekilleştirme)
- * - Mobil/desktop grid, skeleton, güvenli görseller
+ * - Kopyalanan URL: {BASE_URL}/ref/{token}?lid={linkId}
+ * - BASE_URL: process.env.NEXT_PUBLIC_BASE_URL (varsa) → window.location.origin (yoksa)
+ * - Böylece prod’da Railway domain’i kullanılır, local’de localhost görülür (doğal davranış).
  */
 
 import { useEffect, useState } from "react";
@@ -23,6 +22,17 @@ const SURFACE_BORDER = "#343a34";
 const ACCENT = "#81d742";
 
 function handleImgError(e) { e.currentTarget.onerror = null; e.currentTarget.src = PLACEHOLDER; }
+
+// ---- base url helper (client-safe) ----
+const ENV_BASE =
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_BASE_URL) || "";
+
+function getBaseUrl() {
+  const fromEnv = (ENV_BASE || "").trim().replace(/\/+$/, "");
+  if (fromEnv) return fromEnv;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "";
+}
 
 function getCurrencySymbol(currency = "TRY") {
   if (currency === "USD") return "$";
@@ -95,12 +105,11 @@ export default function MyLinksPage() {
     return () => { alive = false; };
   }, []);
 
+  const baseUrl = getBaseUrl();
+
   const copyLink = (link) => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const full = `${origin}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(full).catch(() => {});
-    }
+    const full = `${baseUrl}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
+    navigator?.clipboard?.writeText?.(full).catch(() => {});
     setCopiedKey(link.linkId);
     setTimeout(() => setCopiedKey(null), 1600);
   };
@@ -138,12 +147,12 @@ export default function MyLinksPage() {
       </div>
 
       {/* grid */}
-      <div className="w-full mx-auto px-3 md:px-8 pb-14 max-w-[1640px]">
+      <div className="w-full mx-auto px-3 md:px-8 pb-14 max-w-[1360px]">
         {(!links || links.length === 0) && !loading ? (
           <div className="text-center text-gray-400 font-mono text-lg py-24">{t("myLinksEmpty")}</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-x-7 gap-y-9">
-            {(loading ? Array.from({ length: 4 }).map((_, i) => ({ skeleton: true, key: i })) : links).map((link, idx) => {
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-7 gap-y-9">
+            {(loading ? Array.from({ length: 3 }).map((_, i) => ({ skeleton: true, key: i })) : links).map((link, idx) => {
               const isSkeleton = !!link.skeleton;
               if (isSkeleton) {
                 return (
@@ -158,7 +167,7 @@ export default function MyLinksPage() {
                 return (
                   <article
                     key={link.linkId}
-                    className={`bg-[${CARD_BG}] border border-[#872222] rounded-2xl p-6 ${CARD_HOVER}`}
+                    className={`bg-[${CARD_BG}] border border-[#872222] rounded-2xl p-6`}
                     style={{ background: CARD_BG }}
                   >
                     <div className="text-red-400 font-bold mb-2">{t("myLinksRemoved")}</div>
@@ -178,10 +187,12 @@ export default function MyLinksPage() {
               const earnPerSale = (((p.price || 0) * (p.commissionRate || 0)) / 100).toFixed(2);
               const removingThis = !!removing[link.linkId];
 
+              const shareUrl = `${baseUrl}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
+
               return (
                 <article
                   key={link.linkId}
-                  className={`relative rounded-2xl shadow-lg ${CARD_HOVER} transition-all duration-300 ease-in-out ${removingThis ? "opacity-40 pointer-events-none" : ""}`}
+                  className={`relative rounded-2xl shadow-lg transition-all duration-300 ease-in-out ${removingThis ? "opacity-40 pointer-events-none" : ""}`}
                   style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
                 >
                   {(p.isActive === false || quotaReached) && (
@@ -247,9 +258,7 @@ export default function MyLinksPage() {
                       className="px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-gray-200 text-sm"
                       style={{ background: SURFACE, border: `1px solid ${SURFACE_BORDER}` }}
                     >
-                      <span className="truncate">
-                        {(typeof window !== "undefined" ? window.location.origin : "")}/ref/{link.token}?lid={link.linkId}
-                      </span>
+                      <span className="truncate">{shareUrl}</span>
                       <button onClick={() => copyLink(link)} className="text-gray-400 hover:text-white transition">
                         {copiedKey === link.linkId ? (
                           <span className="text-green-400 font-mono text-xs flex items-center gap-1">
@@ -278,14 +287,6 @@ export default function MyLinksPage() {
           </div>
         )}
       </div>
-
-      <style jsx global>{`
-        @media (max-width: 640px) { .grid { justify-items: stretch; } }
-        @media (prefers-reduced-motion: reduce) {
-          article { transition: none !important; transform: none !important; }
-          article:hover { transform: none !important; box-shadow: none !important; }
-        }
-      `}</style>
     </Layout>
   );
 }
