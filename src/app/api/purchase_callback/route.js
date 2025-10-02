@@ -1,4 +1,3 @@
-// app/api/purchase_callback/route.js
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -23,20 +22,19 @@ const hexEq = (a,b) => {
 };
 const round4 = n => Math.round(Number(n||0)*10000)/10000;
 
-function stableStringify(obj){
+function stableStringify(input){
+  // Kanonik JSON: anahtarları alfabetik sırala, değerleri derinlemesine işle
   const seen = new WeakSet();
-  const norm = v => {
-    if (v && typeof v === "object"){
-      if (seen.has(v)) return v;
-      seen.add(v);
-      if (Array.isArray(v)) return v.map(norm);
-      const out = {};
-      for (const k of Object.keys(v).sort()) out[k] = norm(v[k]);
-      return out;
-    }
-    return v;
+  const normalize = (v) => {
+    if (!v || typeof v !== "object") return v;
+    if (seen.has(v)) return v;
+    seen.add(v);
+    if (Array.isArray(v)) return v.map(normalize);
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = normalize(v[k]);
+    return out;
   };
-  return JSON.stringify(norm(obj));
+  return JSON.stringify(normalize(input));
 }
 
 async function resolveMerchantId(keyId){
@@ -59,9 +57,10 @@ export async function POST(req){
   const ua = req.headers.get("user-agent") || "unknown";
 
   try{
-    const keyId = get(req, ["x-cabo-key-id","x-key-id"]);
-    const tsStr = get(req, ["x-cabo-timestamp","x-timestamp"]);
-    const sigRaw = get(req, ["x-cabo-signature","x-signature"]);
+    // --- Headers & TS
+    const keyId   = get(req, ["x-cabo-key-id","x-key-id"]);
+    const tsStr   = get(req, ["x-cabo-timestamp","x-timestamp"]);
+    const sigRaw  = get(req, ["x-cabo-signature","x-signature"]);
     const sigCanonHdr = get(req, ["x-cabo-signature-canonical"]);
     let requestId = get(req, ["x-request-id","x-idempotency-key"]);
     let nonce     = get(req, ["x-nonce"]);
@@ -70,23 +69,30 @@ export async function POST(req){
     const ts = Number(tsStr);
     if (!Number.isFinite(ts) || Math.abs(Date.now()/1000 - ts) > TOLERANCE_S) return bad(400, "stale_or_invalid_timestamp");
 
+    // --- Body (ham)
     const rawBody = await req.text();
     const clen = Number(req.headers.get("content-length"));
     if (!rawBody || (Number.isFinite(clen) && clen > MAX_BODY_BYTES) || rawBody.length > MAX_BODY_BYTES) return bad(413, "payload_too_large");
 
+    // --- Secret
     const secretEnv = `MERCHANT_KEY_${String(keyId).replace(/[^A-Za-z0-9_]/g,"")}`;
     const secret = (process.env[secretEnv] || "").trim();
     if (!secret) return bad(401, "unauthorized", { reason:"secret_not_found_for_keyId" });
 
-    // İmza kontrolü (raw + canonical)
+    // --- Signature candidates (3 yol)
     let parsed = null;
     try { parsed = JSON.parse(rawBody); } catch {}
     const wantRaw   = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+    const wantJson  = parsed ? crypto.createHmac("sha256", secret).update(`${ts}.${JSON.stringify(parsed)}`).digest("hex") : "";
     const wantCanon = parsed ? crypto.createHmac("sha256", secret).update(`${ts}.${stableStringify(parsed)}`).digest("hex") : "";
 
-    const sigOk = hexEq(wantRaw, sigRaw) || (sigCanonHdr && hexEq(wantCanon, sigCanonHdr));
+    const sigOk =
+      hexEq(wantRaw,  sigRaw) ||
+      (wantJson  && hexEq(wantJson,  sigRaw)) ||
+      (sigCanonHdr && wantCanon && hexEq(wantCanon, sigCanonHdr));
+
     if (!sigOk){
-      // anlaşılır debug logu
+      // Ayrıntılı, tek satır debug logu
       try{
         const merchantId = await resolveMerchantId(keyId);
         const orderId = parsed ? String(parsed.orderId || parsed.orderNumber || "invalid_sig") : "invalid_sig";
@@ -99,9 +105,9 @@ export async function POST(req){
             hmac: String(sigRaw),
             ip, ua,
             status:"invalid_signature",
-            error: `got=${sigRaw} wantRaw=${wantRaw}${sigCanonHdr?` wantCanon=${wantCanon}`:""}`,
+            error: `got=${sigRaw} wantRaw=${wantRaw}${wantJson?` wantJson=${wantJson}`:""}${wantCanon?` wantCanon=${wantCanon}`:""}`,
             rawBody,
-            headers:{ keyId, ts, ip, ua },
+            headers:{ keyId, ts, ip, ua, sigCanonHdr: sigCanonHdr || "" },
             orderId
           }
         });
@@ -109,13 +115,13 @@ export async function POST(req){
       return bad(401, "invalid_signature");
     }
 
-    // buradan sonrası önceki mantığınızla aynı…
-    // Parse garanti olsun
+    // --- Parse garanti
     if (!parsed) {
       try { parsed = JSON.parse(rawBody); } catch { return bad(400, "invalid_json"); }
     }
 
-    const isNew  = typeof parsed.orderNumber === "string" && Array.isArray(parsed.items);
+    // --- Normalize payload
+    const isNew   = typeof parsed.orderNumber === "string" && Array.isArray(parsed.items);
     const orderId = String(parsed.orderId || parsed.orderNumber || "");
     const caboRef = parsed.caboRef || parsed.token || null;
     const status  = String(parsed.status || "confirmed");
@@ -139,9 +145,11 @@ export async function POST(req){
     }
     if (!items.length || items.some(i => !Number.isFinite(i.lineTotal) || i.lineTotal<0 || i.quantity<=0)) return bad(400, "invalid_items_payload");
 
+    // --- Merchant
     const merchantId = await resolveMerchantId(keyId);
     if (merchantId == null) return bad(401, "unauthorized", { reason:"merchant_not_mapped" });
 
+    // --- Idempotency
     requestId = requestId || crypto.createHash("sha256").update(`${keyId}|${ts}|${rawBody.slice(0,256)}`).digest("hex").slice(0,32);
     nonce     = nonce     || crypto.createHash("sha256").update(`${orderId}|${ts}`).digest("hex").slice(0,32);
 
@@ -151,6 +159,7 @@ export async function POST(req){
       return bad(409, "replay_detected");
     }
 
+    // --- Non-confirmed => sadece logla
     if (status !== "confirmed"){
       await prisma.webhookRequestLog.create({
         data:{ merchantId, requestId, nonce, sentAt:new Date(ts*1000), hmac:String(sigRaw), ip, ua, status:"accepted", error:`ignored_status_${status}`, rawBody, headers:{keyId,ts,ip,ua}, parsedBody:parsed, itemsCount:items.length, orderId }
@@ -158,11 +167,13 @@ export async function POST(req){
       return ok({ message:`Order ${orderId} ignored (status=${status})` });
     }
 
+    // --- Primary log
     const logRow = await prisma.webhookRequestLog.create({
       data:{ merchantId, requestId, nonce, sentAt:new Date(ts*1000), hmac:String(sigRaw), ip, ua, status:"accepted", error:null, rawBody, headers:{keyId,ts,ip,ua}, parsedBody:parsed, itemsCount:items.length, orderId },
       select:{ id:true }
     });
 
+    // --- İşlem
     const now = new Date();
     let baseLink = null;
     if (caboRef){
@@ -250,7 +261,7 @@ export async function POST(req){
     }
 
     return ok({ keyId, orderId, processed: results });
-  }catch(e){
+  }catch{
     return bad(500, "unhandled_error");
   }
 }
