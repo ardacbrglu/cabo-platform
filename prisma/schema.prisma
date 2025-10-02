@@ -395,12 +395,14 @@ model WebhookRequestLog {
   headers     Json?
   parsedBody  Json?
   itemsCount  Int?
+  orderId     String?             @db.VarChar(100)
   sales       AffiliateUserSale[] @relation("WebhookToSales")
   affiliate   User?               @relation("WebhookLogAffiliate", fields: [affiliateId], references: [id])
   merchant    User                @relation("WebhookLogMerchant", fields: [merchantId], references: [id])
 
   @@index([merchantId])
   @@index([affiliateId])
+  @@index([orderId], name: "idx_webhookRequestLogs_orderId")
   @@map("webhookRequestLogs")
 }
 
