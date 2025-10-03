@@ -88,6 +88,8 @@
   "productExpired": "Expired",
   "copied": "Copied!",
   "walletSectionTitle": "Your Earnings Wallet",
+  "activeRequestLimitReachedExplain": "You have reached the limit of active payout requests. Please wait for existing requests to be processed before creating a new one.",
+  "activeRequestLimitReachedButton": "Active request limit reached",
   "confirmedBalance": "Confirmed Balance",
   "pending": "Pending",
   "eligibleForPayout": "Eligible for payout!",
