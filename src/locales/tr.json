@@ -89,6 +89,8 @@
   "pending": "Bekleyen",
   "eligibleForPayout": "Çekim için uygunsunuz!",
   "walletRequirements": "IBAN, Banka ve Gerçek İsim Gerekli",
+  "activeRequestLimitReachedExplain": "Aktif ödeme talebi limitine ulaştınız. Mevcut talepler işlenene kadar bekleyin.",
+  "activeRequestLimitReachedButton": "Aktif talep limiti aşıldı",
   "pendingPayoutExists": "Bekleyen ödeme talebiniz var",
   "alreadyPendingPayout": "Zaten bekleyen bir ödeme talebiniz var",
   "payoutRequested": "Ödeme talebi oluşturuldu!",

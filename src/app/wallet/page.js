@@ -578,7 +578,7 @@ export default function WalletPage() {
               <Lock size={18} />
               <span className="text-center">
                 {disabledReason === "bank" && t("walletRequirements")}
-                {disabledReason === "activeLimit" && t("activeRequestLimitReached")}
+                {disabledReason === "activeLimit" && t("activeRequestLimitReachedButton")}
                 {disabledReason === "min" && t("minThresholdNotMet")}
               </span>
             </>
@@ -592,7 +592,7 @@ export default function WalletPage() {
 
       {!loading && payoutDisabled && disabledReason === "activeLimit" && (
         <div className="text-[11px] text-yellow-300 font-mono mt-1 text-center">
-          {t("activeRequestLimitReached")}
+          {t("activeRequestLimitReachedExplain")}
         </div>
       )}
 
