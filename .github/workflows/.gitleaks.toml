@@ -2,18 +2,14 @@ title = "Cabo Gitleaks Config"
 
 [allowlist]
 description = "False-positive path/pattern allowlist"
-# Bu klasör ve dosya tiplerini tarama dışında bırak
 paths = [
   '''^tests?/fixtures?/''',
   '''^docs/''',
   '''\.md$'''
 ]
 
-# Sadece örnek/dev amaçlı bilinen kalıpları whitelist et (gerçek sırları ekleme!)
+# Sadece örnek/dev kelimelerini whitelista al (gerçek sırları ASLA ekleme)
 regexes = [
   '''(?i)\b(dummy|sample|test)(_|-)?(key|token|secret)\b''',
   '''(?i)\blocalhost(:\d+)?\b'''
 ]
-
-# (İsteğe bağlı) spesifik commit'leri allowliste al
-# commits = ["<SHA1>", "<SHA2>"]
