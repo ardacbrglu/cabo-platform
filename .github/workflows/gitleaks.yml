@@ -6,10 +6,12 @@ on:
   schedule:
     - cron: '0 4 * * *'
 
+# Private repo'da upload-sarif gereksiz; ama public olunca çalışabilsin diye izinleri koruyoruz
 permissions:
+  actions: read              # <- telemetry/workflow-run okuması için şart
   contents: read
   pull-requests: write
-  security-events: write
+  security-events: write     # <- yalnızca public repo'da SARIF yüklemek için kullanılır
 
 concurrency:
   group: gitleaks-${{ github.ref }}
@@ -18,10 +20,6 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
@@ -44,13 +42,14 @@ jobs:
           gitleaks detect \
             --redact \
             --source . \
+            --config .gitleaks.toml \
             --report-format sarif \
             --report-path gitleaks.sarif \
             --exit-code=2
           code=$?
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
 
-          # Dosya oluşmadıysa minimal SARIF üret
+          # Dosya hiç oluşmadıysa boş SARIF bırak
           if [ ! -f gitleaks.sarif ]; then
             printf '%s\n' \
               '{' \
@@ -63,24 +62,25 @@ jobs:
           fi
           exit 0
 
-      # Fork/Dependabot PR'larında SARIF upload atlanır (token yazamaz)
-      - name: Upload SARIF to Code Scanning
-        if: ${{ always() && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      # Sadece PUBLIC repoda Code Scanning'e yükle (private'da atla)
+      - name: Upload SARIF to Code Scanning (public only)
+        if: ${{ always() && github.repository_visibility == 'public' && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
 
-      - name: Upload artifact
+      - name: Attach SARIF as artifact (always)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-results
           path: gitleaks.sarif
           if-no-files-found: warn
+          retention-days: 7
 
       - name: Fail job if leaks found
         if: ${{ steps.run.outputs.exitcode == '2' }}
         run: |
-          echo "Gitleaks found secrets. See SARIF/annotations." >&2
+          echo "Gitleaks found secrets. See artifact gitleaks-results." >&2
           exit 2
