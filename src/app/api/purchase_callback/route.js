@@ -8,7 +8,8 @@
  * - Idempotency: x-request-id / x-idempotency-key / nonce ile tekrarlar engellenir.
  * - Product kapıları: isActive, activatedByAdmin, maxSalesLimit, merchant eşleşmesi.
  * - Token kapıları: link.isVisible && !expired.
- * - Platform komisyonu: **PlatformConfig.platform_commission_rate** canlı okunur; env sadece fallback.
+ * - Platform komisyonu: **PlatformConfig.platform_commission_rate** canlı okunur; env fallback.
+ * - Komisyon tabanı: **platform = (affiliate komisyonu × %platform)** (güncellendi).
  * - Tüm yanıtlar no-store; hatalı imzalar ve replay’ler kayıt altına alınır.
  */
 
@@ -57,13 +58,11 @@ function parsePercentTo0_100(input) {
   if (s.endsWith("%")) s = s.slice(0, -1).trim();
   const num = Number(s);
   if (!Number.isFinite(num)) return null;
-  // 0–1 aralığında gelirse oran kabul edip yüzdeye çevir
   const pct = num <= 1 ? num * 100 : num;
-  // güvenli aralık
   return Math.max(0, Math.min(100, pct));
 }
 
-/** Kanonik JSON üretimi (imza doğrulamada 3. yol) */
+/** Kanonik JSON (imza doğrulamada 3. yol) */
 function stableStringify(input) {
   const seen = new WeakSet();
   const normalize = (v) => {
@@ -96,7 +95,6 @@ async function resolveMerchantId(keyId) {
 
 /** Platform komisyon yüzdesi (0–100). Öncelik: DB -> ENV -> 0 */
 async function getPlatformCommissionPercent() {
-  // 1) DB (PlatformConfig)
   try {
     const row = await prisma.platformConfig.findUnique({
       where: { keyName: "platform_commission_rate" },
@@ -105,10 +103,8 @@ async function getPlatformCommissionPercent() {
     const fromDb = parsePercentTo0_100(row?.value);
     if (fromDb != null) return fromDb;
   } catch {}
-  // 2) ENV fallback
   const fromEnv = parsePercentTo0_100(process.env.PLATFORM_COMMISSION_RATE);
   if (fromEnv != null) return fromEnv;
-  // 3) default
   return 0;
 }
 
@@ -329,7 +325,7 @@ export async function POST(req) {
       select: { id: true },
     });
 
-    // --- Platform komisyon yüzdesini (0–100) **DB'den** oku
+    // --- Platform komisyon yüzdesi (0–100) **DB'den**
     const platformPct = await getPlatformCommissionPercent();
 
     // --- İşlem
@@ -464,7 +460,8 @@ export async function POST(req) {
 
       const lineTotal = Number(it.lineTotal);
       const commissionAffiliate = round4((lineTotal * Number(mp.commissionRate || 0)) / 100);
-      const commissionPlatform = round4((lineTotal * platformPct) / 100);
+      // 🔁 GÜNCEL HESAP: Platform komisyonu, affiliate komisyonunun yüzdesi
+      const commissionPlatform = round4((commissionAffiliate * platformPct) / 100);
 
       try {
         await prisma.$transaction([
@@ -477,7 +474,7 @@ export async function POST(req) {
               amount: lineTotal,
               quantity: qty,
               commissionAffiliate,
-              commissionPlatform, // <-- artık DB’den gelen yüzde ile
+              commissionPlatform, // <-- affiliate komisyonu baz alınarak
               status: "confirmed",
               convertedAt: new Date(),
               affiliateLinkId: link.linkId,
@@ -498,6 +495,7 @@ export async function POST(req) {
           commissionAffiliate,
           commissionPlatform,
           platformPctUsed: platformPct,
+          platformBase: "affiliate_commission", // debug için bilgi
         });
       } catch {
         results.push({ product: it.productCode || it.productId || it.productSlug, error: "db_error" });
