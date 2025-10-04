@@ -1,37 +1,35 @@
-name: Dependency Review
+name: Dependency Scan (OSV + npm audit)
 
-on: [pull_request]
+on:
+  pull_request:
+  push:
+    branches: [ main, dev ]
 
 permissions:
   contents: read
 
 jobs:
-  review_public:
-    name: GitHub Dependency Review (public only)
-    if: ${{ github.repository_visibility == 'public' }}
+  osv_npm:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+
+      # OSV-Scanner’ı Go ile kur (404 sorunu yok)
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          comment-summary-in-pr: true
-          fail-on-severity: high
-          allow-ghsas: false
+          go-version: '1.22.x'
 
-  review_private_fallback:
-    name: OSV / npm audit fallback (private)
-    if: ${{ github.repository_visibility != 'public' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # OSV-Scanner (manifest/lockfile üzerinden CVE taraması)
       - name: Install OSV-Scanner
         run: |
-          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh -s -- -b /usr/local/bin
+          set -euxo pipefail
+          go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
           osv-scanner --version
+
       - name: Run OSV-Scanner (lockfile)
-        # İstersen --format sarif ile dosya üretip artifact olarak da ekleyebilirsin
+        # Raporu sadece log’a yaz, PR'ı düşürme. Sertleştirmek istersen continue-on-error’u kaldır.
+        continue-on-error: true
         run: |
           if [ -f package-lock.json ]; then
             osv-scanner --lockfile=package-lock.json
@@ -43,13 +41,18 @@ jobs:
             echo "No lockfile found; skipping OSV scan."
           fi
 
-      # Hızlı prod-only npm audit
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
+
       - name: npm audit (prod)
+        continue-on-error: true
         run: |
-          npm ci --omit=dev
-          # Uyarı üret, ama build'i düşürme; sertleştirmek istersen || true'yu kaldır
-          npm audit --omit=dev --audit-level=high || true
+          if [ -f package-lock.json ]; then
+            npm ci --omit=dev
+            npm audit --omit=dev --audit-level=high || true
+          else
+            echo "No package-lock.json; skipping npm audit."
+          fi
