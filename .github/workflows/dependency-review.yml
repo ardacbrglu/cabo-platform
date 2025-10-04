@@ -1,9 +1,14 @@
 name: Dependency Review
+
 on: [pull_request]
+
 permissions:
   contents: read
+
 jobs:
-  review:
+  review_public:
+    name: GitHub Dependency Review (public only)
+    if: ${{ github.repository_visibility == 'public' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,3 +17,39 @@ jobs:
           comment-summary-in-pr: true
           fail-on-severity: high
           allow-ghsas: false
+
+  review_private_fallback:
+    name: OSV / npm audit fallback (private)
+    if: ${{ github.repository_visibility != 'public' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # OSV-Scanner (manifest/lockfile üzerinden CVE taraması)
+      - name: Install OSV-Scanner
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh -s -- -b /usr/local/bin
+          osv-scanner --version
+      - name: Run OSV-Scanner (lockfile)
+        # İstersen --format sarif ile dosya üretip artifact olarak da ekleyebilirsin
+        run: |
+          if [ -f package-lock.json ]; then
+            osv-scanner --lockfile=package-lock.json
+          elif [ -f pnpm-lock.yaml ]; then
+            osv-scanner --lockfile=pnpm-lock.yaml
+          elif [ -f yarn.lock ]; then
+            osv-scanner --lockfile=yarn.lock
+          else
+            echo "No lockfile found; skipping OSV scan."
+          fi
+
+      # Hızlı prod-only npm audit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: npm audit (prod)
+        run: |
+          npm ci --omit=dev
+          # Uyarı üret, ama build'i düşürme; sertleştirmek istersen || true'yu kaldır
+          npm audit --omit=dev --audit-level=high || true
