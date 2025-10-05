@@ -14,7 +14,31 @@ import apiFetch from "@/lib/apiFetch";
 import { useLocale } from "@/context/LocaleContext";
 
 const dicts = {
-  en: { /* ... İngilizce sözlük ... */ },
+  en: {
+    title: "Create your Cabo account",
+    username: "Username",
+    usernamePH: "Enter a username",
+    email: "Email",
+    emailPH: "you@example.com",
+    password: "Password",
+    passwordPH: "Create a password",
+    termsTos: "Terms of Service",
+    termsAnd: "and",
+    termsPrivacy: "Privacy Policy",
+    registerBtn: "Sign up",
+    already: "Already have an account?",
+    loginLink: "Log in",
+    req_name: "Please fill out this field.",
+    req_email: "Please fill out this field.",
+    req_password: "Please fill out this field.",
+    req_terms: "You must accept the terms.",
+    req_captcha: "Please verify you are not a robot.",
+    invalidEmail: "Invalid email.",
+    invalidName: "3–32 chars; letters, numbers, _.",
+    weakPassword: "At least 8 chars; include letters and numbers.",
+    server: "Server error. Please try again.",
+    success: "Registration successful! Redirecting to login…"
+  },
   tr: {
     title: "Cabo hesabını oluştur",
     username: "Kullanıcı adı",
@@ -117,7 +141,7 @@ export default function RegisterPage() {
           document.querySelector(".cabo-recaptcha-wrap")?.getAttribute("data-token") || "";
         const tok = fromGre || fromGlobal || fromDom || "";
         if (tok) setCaptcha(tok);
-      } catch {}
+      } catch { }
     }
     // ------------------------
 
@@ -274,7 +298,7 @@ export default function RegisterPage() {
             </p>
           )}
 
-          
+
           {/* CAPTCHA */}
           <div
             className={`mb-5 ${submitted && errors.captcha ? "ring-2 ring-red-400 rounded-xl p-2" : ""}`}
