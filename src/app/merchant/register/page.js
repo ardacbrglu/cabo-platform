@@ -1,14 +1,15 @@
 "use client";
 
 /**
- * File: src/app/merchant/register/page.js
- * Purpose: Merchant Register (manual only, no Google) — prod-ready form
+ * File: app/merchant/register/page.js
+ * Purpose: Merchant Register (manual only) — prod-ready form
  *
  * Security Docblock (Cabo PROD):
  * - Tüm istekler merkezi apiFetch ile gider (credentials:include, X-Requested-With, X-Request-Id).
- * - Mutasyonlar için client tarafında ekstra CSRF işlemi yok; server Origin/Referer + AJAX + Request-Id doğrular.
- * - Ratelimit ve reCAPTCHA server'da zorunlu; burada yalnız token üretimi yapılır.
- * - PII client loglanmaz; token/şifre vs. console'a yazılmaz.
+ * - Mutasyonlar için client tarafında ekstra CSRF yok; server Origin/Referer + AJAX + Request-Id doğrular.
+ * - reCAPTCHA token TTL ~110s; submit’te token fallback uygulanır (grecaptcha.getResponse vs).
+ * - Ratelimit ve reCAPTCHA server’da; burada yalnız token üretimi yapılır.
+ * - PII client log’lanmaz; token/şifre console’a yazılmaz.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +20,7 @@ import { useLocale } from "@/context/LocaleContext";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/apiFetch";
 
-// reCAPTCHA (SSR off)
+// reCAPTCHA (SSR kapalı)
 const Captcha = dynamic(() => import("@/components/Captcha"), { ssr: false });
 
 const dicts = {
@@ -28,8 +29,7 @@ const dicts = {
     infoTitle: "Grow your business with Cabo",
     infoDesc:
       "Register your business, create your merchant account and start tracking affiliate-driven product sales.",
-    infoStrong:
-      "Cabo gives you a complete affiliate infrastructure — so you can focus on growth.",
+    infoStrong: "Cabo gives you a complete affiliate infrastructure — so you can focus on growth.",
     li1: "Live tracking & conversion validation",
     li2: "Control commissions per product",
     li3: "Webhook integration & analytics",
@@ -47,18 +47,16 @@ const dicts = {
       "Your merchant request has been received and is pending approval. You’ll be notified by email once your account is activated.",
     failed: "Registration failed.",
     invalidCompany: "Company name must be 2–150 valid characters.",
-    invalidName:
-      "Full name must be 3–40 characters (letters/numbers/space/_).",
+    invalidName: "Full name must be 3–40 characters (letters/numbers/space/_).",
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
-    invalidPassword:
-      "Password must be at least 8 characters and include both letters and numbers.",
+    invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
     passwordMismatch: "Passwords do not match.",
     acceptTerms: (
       <>
         I accept the{" "}
         <Link
-          href="/merchant/terms"
+          href="/terms"
           className="text-[#81d742] underline hover:text-[#b3ffb3]"
           target="_blank"
           rel="noopener noreferrer"
@@ -67,7 +65,7 @@ const dicts = {
         </Link>{" "}
         and{" "}
         <Link
-          href="/merchant/privacy"
+          href="/privacy"
           className="text-[#81d742] underline hover:text-[#b3ffb3]"
           target="_blank"
           rel="noopener noreferrer"
@@ -89,7 +87,7 @@ const dicts = {
     req_captcha: "Please complete the captcha.",
     bottomLoginText: "Already have an account?",
     bottomLoginLink: "Log in",
-    // server error map
+    // server map
     e_required: "Please fill in all fields.",
     e_email: "Invalid email address.",
     e_uniq: "This email is already registered.",
@@ -104,8 +102,7 @@ const dicts = {
     infoTitle: "İşletmeni Cabo ile büyüt",
     infoDesc:
       "İşletmeni kaydet, satıcı hesabını oluştur ve affiliate yönlendirmeleriyle gelen satışlarını anlık takip et.",
-    infoStrong:
-      "Cabo eksiksiz bir affiliate altyapısı sunar — sen sadece büyümeye odaklan.",
+    infoStrong: "Cabo eksiksiz bir affiliate altyapısı sunar — sen sadece büyümeye odaklan.",
     li1: "Anlık takip & dönüşüm doğrulama",
     li2: "Ürün başına komisyon kontrolü",
     li3: "Webhook entegrasyonu & analiz",
@@ -126,13 +123,12 @@ const dicts = {
     invalidName: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
-    invalidPassword:
-      "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
+    invalidPassword: "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
     passwordMismatch: "Şifreler eşleşmiyor.",
     acceptTerms: (
       <>
         <Link
-          href="/merchant/terms"
+          href="/terms"
           className="text-[#81d742] underline hover:text-[#b3ffb3]"
           target="_blank"
           rel="noopener noreferrer"
@@ -141,7 +137,7 @@ const dicts = {
         </Link>{" "}
         ve{" "}
         <Link
-          href="/merchant/privacy"
+          href="/privacy"
           className="text-[#81d742] underline hover:text-[#b3ffb3]"
           target="_blank"
           rel="noopener noreferrer"
@@ -151,7 +147,7 @@ const dicts = {
         kabul ediyorum
       </>
     ),
-    mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisin.",
+    mustAccept: "Kullanım ve Gizlilik Şartlarını kabul etmelisiniz.",
     howWorksQ: "Sistemimiz nasıl çalışır?",
     howWorksLink: "Detaylı Bilgi",
     req_company: "Lütfen bu alanı doldurun.",
@@ -164,7 +160,7 @@ const dicts = {
     req_captcha: "Lütfen robot olmadığınızı doğrulayın.",
     bottomLoginText: "Zaten hesabın var mı?",
     bottomLoginLink: "Giriş yap",
-    // server error map
+    // server map
     e_required: "Lütfen tüm alanları doldurun.",
     e_email: "Geçersiz e-posta.",
     e_uniq: "Bu e-posta zaten kayıtlı.",
@@ -222,19 +218,15 @@ export default function MerchantRegisterPage() {
   const [success, setSuccess] = useState(false);
   const [serverError, setServerError] = useState("");
 
-  // Tooltip visibility
   const [hintsVisible, setHintsVisible] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
   const programmaticFocusRef = useRef(false);
 
-  // Localhost captcha bypass (only if explicitly allowed)
+  // Localhost captcha bypass (isteğe bağlı)
   useEffect(() => {
     const disableLocal = process.env.NEXT_PUBLIC_RECAPTCHA_DISABLE_LOCAL === "1";
-    if (
-      disableLocal &&
-      (location.hostname === "localhost" || location.hostname === "127.0.0.1")
-    ) {
+    if (disableLocal && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
       setCaptchaEnabled(false);
     }
   }, []);
@@ -260,7 +252,7 @@ export default function MerchantRegisterPage() {
     setServerError("");
 
     if (name === "email" && captchaEnabled && captcha) {
-      // e-posta değiştiyse v3 token yeniden alınmalı
+      // e-posta değiştiyse v2 token tekrar alınmalı
       setCaptcha("");
       setCaptchaResetKey((k) => k + 1);
     }
@@ -287,31 +279,21 @@ export default function MerchantRegisterPage() {
       errs.companyName = t("invalidCompany");
 
     if (!form.name) errs.name = t("req_name");
-    else if (
-      form.name.length < 3 ||
-      form.name.length > 40 ||
-      !reName.test(form.name.trim())
-    )
+    else if (form.name.length < 3 || form.name.length > 40 || !reName.test(form.name.trim()))
       errs.name = t("invalidName");
 
     if (!form.email) errs.email = t("req_email");
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
-      errs.email = t("invalidEmail");
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = t("invalidEmail");
 
     if (!form.phone) errs.phone = t("req_phone");
     else if (!/^\d{10,15}$/.test(form.phone)) errs.phone = t("invalidPhone");
 
     if (!form.password) errs.password = t("req_password");
-    else if (
-      form.password.length < 8 ||
-      !/\d/.test(form.password) ||
-      !/[a-zA-Z]/.test(form.password)
-    )
+    else if (form.password.length < 8 || !/\d/.test(form.password) || !/[a-zA-Z]/.test(form.password))
       errs.password = t("invalidPassword");
 
     if (!form.password2) errs.password2 = t("req_password2");
-    else if (form.password2 !== form.password)
-      errs.password2 = t("passwordMismatch");
+    else if (form.password2 !== form.password) errs.password2 = t("passwordMismatch");
 
     if (!terms) errs.terms = t("req_terms");
     if (captchaEnabled && !captcha) errs.captcha = t("req_captcha");
@@ -331,8 +313,6 @@ export default function MerchantRegisterPage() {
   function mapServerError(json) {
     const code = String(json?.error || json?.error_code || "").toLowerCase();
     if (!code) return json?.message || t("failed");
-
-    // normalize
     if (code.includes("captcha")) return t("e_captcha");
     if (code.includes("too_many") || code.includes("rate")) return t("e_ratelimit");
     if (code.includes("already_active")) return t("e_already_active");
@@ -358,6 +338,20 @@ export default function MerchantRegisterPage() {
     setSuccess(false);
     firstInvalidRef.current = null;
 
+    // --- CAPTCHA FALLBACK (affiliate kaydındakiyle aynı mantık) ---
+    if (captchaEnabled && !captcha) {
+      try {
+        const gre = window.grecaptcha;
+        const fromGre = gre?.getResponse ? gre.getResponse() : "";
+        const fromGlobal = window.__caboCaptchaToken || "";
+        const fromDom =
+          document.querySelector(".recaptcha-center")?.getAttribute("data-token") || "";
+        const tok = fromGre || fromGlobal || fromDom || "";
+        if (tok) setCaptcha(tok);
+      } catch {}
+    }
+    // ----------------------------------------------------------------
+
     const errs = validate();
     if (Object.keys(errs).length) {
       programmaticFocusRef.current = true;
@@ -382,8 +376,8 @@ export default function MerchantRegisterPage() {
         password: form.password,
         phoneNumber: fullPhone,
         termsAccepted: true,
+        captcha, // artık garanti dolu
       };
-      if (captchaEnabled && captcha) body.captcha = captcha;
 
       const res = await apiFetch("/api/register_merchant", {
         method: "POST",
@@ -391,7 +385,6 @@ export default function MerchantRegisterPage() {
         headers: { "accept-language": locale || "en" },
       });
 
-      // explicit 429 handling (apiFetch zaten tek retry yapar)
       if (res.status === 429) {
         const data = await res.json().catch(() => ({}));
         setServerError(mapServerError(data));
@@ -433,13 +426,9 @@ export default function MerchantRegisterPage() {
         {/* LEFT INFO */}
         <div className="max-w-lg w-full mb-8 md:mb-0 flex flex-col items-center text-center mx-auto cabo-mobile-top-space cabo-mobile-bottom-space">
           <div className="mb-6">
-            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">
-              {t("infoTitle")}
-            </h2>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#d1ffd0] mb-4">{t("infoTitle")}</h2>
             <p className="text-gray-300 text-lg mb-4">{t("infoDesc")}</p>
-            <p className="text-[#81d742] font-semibold text-lg mb-6">
-              {t("infoStrong")}
-            </p>
+            <p className="text-[#81d742] font-semibold text-lg mb-6">{t("infoStrong")}</p>
             <ul
               className="text-gray-400 text-base mb-6 list-disc pl-6 text-left space-y-2 mx-auto"
               style={{ maxWidth: 340 }}
@@ -452,10 +441,7 @@ export default function MerchantRegisterPage() {
 
             <div className="text-[#81d742] mt-4 text-base font-semibold">
               {t("howWorksQ")}{" "}
-              <Link
-                href="/merchant/info"
-                className="underline hover:text-[#b3ffb3] transition"
-              >
+              <Link href="/merchant/info" className="underline hover:text-[#b3ffb3] transition">
                 {t("howWorksLink")}
               </Link>
             </div>
@@ -466,18 +452,11 @@ export default function MerchantRegisterPage() {
         <div className="bg-[#1a1a1a] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md flex flex-col items-center border border-[#232323] cabo-mobile-bottom-space">
           <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4">{t("title")}</h3>
 
-          <form
-            onSubmit={onSubmit}
-            className="w-full flex flex-col gap-6"
-            autoComplete="off"
-            noValidate
-          >
+          <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" autoComplete="off" noValidate>
             {/* Company */}
             <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("companyName")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("companyName")) firstInvalidRef.current = el; }}
                 type="text"
                 name="companyName"
                 placeholder={t("company")}
@@ -485,18 +464,14 @@ export default function MerchantRegisterPage() {
                 onChange={onChange}
                 required
                 aria-invalid={!!errors.companyName}
-                className={`${inputBase} ${
-                  errors.companyName ? ringErr : ringOk
-                }`}
+                className={`${inputBase} ${errors.companyName ? ringErr : ringOk}`}
               />
             </div>
 
             {/* Name */}
             <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("name")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
                 type="text"
                 name="name"
                 placeholder={t("fullName")}
@@ -511,9 +486,7 @@ export default function MerchantRegisterPage() {
             {/* Email */}
             <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("email")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
                 type="email"
                 name="email"
                 placeholder={t("email")}
@@ -539,9 +512,7 @@ export default function MerchantRegisterPage() {
               </select>
               <div className="relative flex-1" onFocus={handleFocus}>
                 <input
-                  ref={(el) => {
-                    if (needsRef("phone")) firstInvalidRef.current = el;
-                  }}
+                  ref={(el) => { if (needsRef("phone")) firstInvalidRef.current = el; }}
                   type="tel"
                   name="phone"
                   placeholder={t("phone")}
@@ -558,9 +529,7 @@ export default function MerchantRegisterPage() {
             {/* Password */}
             <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("password")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
                 type="password"
                 name="password"
                 placeholder={t("password")}
@@ -577,9 +546,7 @@ export default function MerchantRegisterPage() {
             {/* Confirm Password */}
             <div className="relative" onFocus={handleFocus}>
               <input
-                ref={(el) => {
-                  if (needsRef("password2")) firstInvalidRef.current = el;
-                }}
+                ref={(el) => { if (needsRef("password2")) firstInvalidRef.current = el; }}
                 type="password"
                 name="password2"
                 placeholder={t("confirmPassword")}
@@ -593,11 +560,8 @@ export default function MerchantRegisterPage() {
               />
             </div>
 
-            {/* Terms (tooltip açık) */}
-            <div
-              className="relative flex items-center gap-2 mb-1"
-              onFocus={handleFocus}
-            >
+            {/* Terms */}
+            <div className="relative flex items-center gap-2 mb-1" onFocus={handleFocus}>
               <input
                 id="terms"
                 type="checkbox"
@@ -607,23 +571,16 @@ export default function MerchantRegisterPage() {
                 aria-invalid={!!errors.terms}
                 className="accent-[#81d742] h-4 w-4"
               />
-              <label
-                htmlFor="terms"
-                className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap"
-              >
+              <label htmlFor="terms" className="text-sm text-gray-400 select-none cursor-pointer flex gap-1 flex-wrap">
                 {t("acceptTerms")}
               </label>
               <FieldHint show={show("terms")} message={t("mustAccept")} />
             </div>
 
-            {/* CAPTCHA (opsiyonel) */}
+            {/* CAPTCHA */}
             {captchaEnabled && (
               <div className="relative" onFocus={handleFocus}>
-                <Captcha
-                  onChange={setCaptcha}
-                  lang={locale}
-                  resetKey={captchaResetKey}
-                />
+                <Captcha onChange={setCaptcha} lang={locale} resetKey={captchaResetKey} />
                 <FieldHint show={show("captcha")} message={t("req_captcha")} />
               </div>
             )}
@@ -657,10 +614,7 @@ export default function MerchantRegisterPage() {
 
           <div className="w-full mt-8 pt-6 border-t border-[#232323] text-center text-sm text-gray-400">
             {t("bottomLoginText")}{" "}
-            <Link
-              href="/merchant/login"
-              className="text-[#81d742] underline hover:text-[#b3ffb3]"
-            >
+            <Link href="/merchant/login" className="text-[#81d742] underline hover:text-[#b3ffb3]">
               {t("bottomLoginLink")}
             </Link>
           </div>
@@ -669,17 +623,10 @@ export default function MerchantRegisterPage() {
 
       <style jsx global>{`
         @media (max-width: 768px) {
-          .cabo-mobile-top-space {
-            margin-top: 1rem;
-          }
-          .cabo-mobile-bottom-space {
-            margin-bottom: 3rem;
-          }
+          .cabo-mobile-top-space { margin-top: 1rem; }
+          .cabo-mobile-bottom-space { margin-bottom: 3rem; }
         }
       `}</style>
     </PublicLayout>
   );
 }
-
-
-
