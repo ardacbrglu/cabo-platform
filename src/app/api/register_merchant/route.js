@@ -2,13 +2,13 @@
  * Merchant registration (manual) — PROD READY
  *
  * Security Docblock (Cabo PROD)
- * - Auth: Public endpoint (login yok). Tüm mutasyonlarda Origin/Referer eşleşmesi + X-Requested-With + X-Request-Id zorunlu.
- * - Ratelimit: IP+UA+scope; 12/dk (config ile değiştirilebilir).
- * - Input: Zod şeması; sanitize + normalize.
- * - CAPTCHA: reCAPTCHA v2 server-side doğrulama (IP/host ile).
- * - DB: Prisma; transaction yok (tek create). Raw SQL yok.
- * - Audit: her önemli dalda audit() çağrısı.
- * - Headers: no-store + güvenlik başlıkları (CSP/HSTS/nosniff/referrer-policy).
+ * - Tek oturum: NextAuth (Credentials+Google); custom JWT/cookie yok.
+ * - Mutasyonlarda: Origin/Referer eşleşmesi + X-Requested-With + X-Request-Id zorunlu.
+ * - Rate limit: IP+UA+scope (varsayılan 12/dk).
+ * - reCAPTCHA v2 server-side doğrulama (host/IP bağlamıyla).
+ * - Giriş doğrulama: Zod + normalize + sanitize (fallback’li).
+ * - DB: Prisma, raw SQL yok.
+ * - Audit: tüm kritik dallar kayıtlanır.
  * - Hata sözleşmesi: { success:false, error, message, request_id, retry_after? }.
  */
 
@@ -25,7 +25,9 @@ import { applyApiSecurityHeaders } from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { verifyRecaptchaFromRequest } from "@/lib/captcha";
 import { audit } from "@/lib/logger";
-import { sanitize } from "@/lib/validation";
+import { sanitize as sanitizeLib } from "@/lib/validation"; // bazı ortamlarda undefined olabiliyor
+
+/* -------------------------- helpers -------------------------- */
 
 function withStd(res) {
   res.headers.set("Cache-Control", "no-store");
@@ -33,7 +35,7 @@ function withStd(res) {
 }
 
 const RL_LIMIT = Number(process.env.MERCHANT_RL_PER_MIN || "12");
-const RL_WINDOW_MS = Number(process.env.MERCHANT_RL_WINDOW_MS || "60000"); // 60s
+const RL_WINDOW_MS = Number(process.env.MERCHANT_RL_WINDOW_MS || "60000");
 const RL_SCOPE = "merchant_register_v2";
 
 const MSG = {
@@ -84,10 +86,20 @@ const RegisterSchema = z
   })
   .strict();
 
-const normalize = (s) => s.replace(/\s+/g, " ").trim();
+const normalize = (s) => String(s || "").replace(/\s+/g, " ").trim();
+
+/** sanitize fallback: sanitizeLib yoksa güvenli whitelist */
+function safeSanitizeText(s) {
+  const v = String(s ?? "");
+  if (sanitizeLib?.text) return sanitizeLib.text(v);
+  // Harf, rakam, boşluk ve bazı temel işaretler whitelisti
+  return v.replace(/[^\p{L}\p{N}\s&_.,'’()\-@:+]/gu, "");
+}
+
+/* --------------------------- handler ------------------------- */
 
 export async function POST(req) {
-  // ---- Preflight gates
+  // ---- Preflight
   let requestId = "unknown";
   try {
     requestId = requireRequestId(req);
@@ -97,17 +109,21 @@ export async function POST(req) {
     return withStd(
       NextResponse.json(
         { success: false, error: "bad_request", message: "bad_request", request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
   const M = tFromReq(req);
 
   // ---- Rate limit
-  {
+  try {
     const rlKey = makeRateLimitKey(req, { scope: RL_SCOPE });
-    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: RL_LIMIT, windowMs: RL_WINDOW_MS });
+    const { ok, resetMs } = await checkRateLimit({
+      key: rlKey,
+      limit: RL_LIMIT,
+      windowMs: RL_WINDOW_MS,
+    });
     if (!ok) {
       const retrySec = Math.max(1, Math.ceil((resetMs || RL_WINDOW_MS) / 1000));
       audit({ evt: "merchant.register.ratelimit", requestId, retrySec });
@@ -120,13 +136,15 @@ export async function POST(req) {
             request_id: requestId,
             retry_after: retrySec,
           },
-          { status: 429, headers: { "Retry-After": String(retrySec) } },
-        ),
+          { status: 429, headers: { "Retry-After": String(retrySec) } }
+        )
       );
     }
+  } catch {
+    // rate-limitte problem olursa akışı durdurma
   }
 
-  // ---- Body parse
+  // ---- Body
   let raw;
   try {
     raw = await req.json();
@@ -134,8 +152,8 @@ export async function POST(req) {
     return withStd(
       NextResponse.json(
         { success: false, error: "invalid_request", message: M.required, request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
@@ -146,20 +164,20 @@ export async function POST(req) {
     return withStd(
       NextResponse.json(
         { success: false, error: "captcha_failed", message: M.captcha, request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
-  // ---- Normalize + validate + sanitize
+  // ---- Normalize + validate + sanitize (fallback’li)
   const data = {
-    name: sanitize.text(normalize(String(raw?.name ?? ""))),
-    companyName: sanitize.text(normalize(String(raw?.companyName ?? ""))),
-    email: String(raw?.email ?? "").trim().toLowerCase(),
-    password: String(raw?.password ?? ""),
-    phoneNumber: String(raw?.phoneNumber ?? "").trim(),
+    name: safeSanitizeText(normalize(raw?.name)),
+    companyName: safeSanitizeText(normalize(raw?.companyName)),
+    email: String(raw?.email || "").trim().toLowerCase(),
+    password: String(raw?.password || ""),
+    phoneNumber: String(raw?.phoneNumber || "").trim(),
     termsAccepted: !!raw?.termsAccepted,
-    captcha: String(raw?.captcha ?? ""),
+    captcha: String(raw?.captcha || ""),
   };
 
   const parsed = RegisterSchema.safeParse(data);
@@ -184,68 +202,68 @@ export async function POST(req) {
     return withStd(
       NextResponse.json(
         { success: false, error: "invalid_payload", message: fieldMsg, request_id: requestId },
-        { status: 400 },
-      ),
+        { status: 400 }
+      )
     );
   }
 
   const { name, companyName, email, password, phoneNumber } = parsed.data;
 
   // ---- Uniqueness
-  const exists = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  const exists = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true },
+  });
   if (exists) {
     audit({ evt: "merchant.register.conflict", requestId, email });
     return withStd(
       NextResponse.json(
         { success: false, error: "conflict", message: M.uniq, request_id: requestId },
-        { status: 409 },
-      ),
+        { status: 409 }
+      )
     );
   }
 
-  // ---- Create merchant (pending) — unknown-field güvenli
-  const passwordHash = await bcrypt.hash(password, 10);
-  const baseData = {
-    name,
-    companyName,
-    email,
-    passwordHash,
-    role: "merchant",
-    status: "pending",
-    termsAccepted: true,
-    languagePreference: (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en",
-  };
-
-  // Önce telefonla dene; alan yoksa ikinci denemede telefonsuz oluştur.
+  // ---- Create merchant (pending)
   try {
+    const passwordHash = await bcrypt.hash(password, 10);
     await prisma.user.create({
       data: {
-        ...baseData,
-        phoneNumber, // bazı DB snapshotlarında bu alan olmayabilir
+        name,
+        realUserFullname: name,
+        companyName,
+        email,
+        passwordHash,
+        phoneNumber,               // prisma modelinde opsiyonel
+        role: "merchant",
+        status: "pending",
+        termsAccepted: true,
+        languagePreference: (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr")
+          ? "tr"
+          : "en",
+        // currencyCode default TRY, createdAt default now()
       },
     });
-  } catch (e) {
-    // Tekrar dene (telefon alanını düşür)
-    try {
-      await prisma.user.create({ data: { ...baseData } });
-    } catch (e2) {
-      audit({
-        evt: "merchant.register.db_error",
-        requestId,
-        code: e2?.code || "DB_ERR",
-        meta: String(e2?.message || "").slice(0, 200),
-      });
-      return withStd(
-        NextResponse.json(
-          { success: false, error: "server_error", message: M.fail, request_id: requestId },
-          { status: 500 },
-        ),
-      );
-    }
-  }
 
-  audit({ evt: "merchant.register.ok", requestId, email });
-  return withStd(
-    NextResponse.json({ success: true, message: M.success, request_id: requestId }, { status: 200 }),
-  );
+    audit({ evt: "merchant.register.ok", requestId, email });
+    return withStd(
+      NextResponse.json(
+        { success: true, message: M.success, request_id: requestId },
+        { status: 200 }
+      )
+    );
+  } catch (e) {
+    audit({
+      evt: "merchant.register.db_error",
+      requestId,
+      code: e?.code || "DB_ERR",
+      meta: String(e?.message || "").slice(0, 220),
+    });
+    return withStd(
+      NextResponse.json(
+        { success: false, error: "server_error", message: M.fail, request_id: requestId },
+        { status: 500 }
+      )
+    );
+  }
 }
