@@ -39,10 +39,12 @@ const dicts = {
     req_terms: "You must accept the Terms.",
     req_captcha: "Please complete the captcha.",
     invalidCompany: "Company name must be 2–150 valid characters.",
-    invalidName: "Full name must be 3–40 characters (letters/numbers/space/_).",
+    invalidName:
+      "Full name must be 3–40 characters (letters/numbers/space/_). Turkish letters are allowed.",
     invalidPhone: "Invalid phone number.",
     invalidEmail: "Invalid email address.",
-    invalidPassword: "Password must be at least 8 characters and include both letters and numbers.",
+    invalidPassword:
+      "Password must be at least 8 characters and include both letters and numbers.",
     passwordMismatch: "Passwords do not match.",
     bottomLoginText: "Already have an account?",
     bottomLoginLink: "Log in",
@@ -75,11 +77,14 @@ const dicts = {
     req_password2: "Lütfen şifreyi tekrar girin.",
     req_terms: "Şartları kabul etmelisiniz.",
     req_captcha: "Lütfen robot olmadığınızı doğrulayın.",
-    invalidCompany: "Şirket adı 2–150 geçerli karakter olmalı.",
-    invalidName: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
+    invalidCompany:
+      "Şirket adı 2–150 geçerli karakter olmalı.",
+    invalidName:
+      "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_). Türkçe harfler desteklenir.",
     invalidPhone: "Geçersiz telefon numarası.",
     invalidEmail: "Geçersiz e-posta.",
-    invalidPassword: "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
+    invalidPassword:
+      "Şifre en az 8 karakter olmalı ve hem harf hem rakam içermeli.",
     passwordMismatch: "Şifreler eşleşmiyor.",
     bottomLoginText: "Zaten hesabın var mı?",
     bottomLoginLink: "Giriş yap",
@@ -118,13 +123,13 @@ export default function MerchantRegisterPage() {
   const [success, setSuccess] = useState("");
 
   const [submitted, setSubmitted] = useState(false);
+  const [serverFieldErrors, setServerFieldErrors] = useState({});
   const firstInvalidRef = useRef(null);
 
   useEffect(() => {
-    // email değişince v2 token’ı sıfırla
-    // (v2 token e-mail bağlamına göre alınmadı ama güvenli tarafta kalalım)
     setServerError("");
-  }, [form.email]);
+    setServerFieldErrors({});
+  }, [form.email, form.name, form.companyName, form.phone, form.password, form.password2]);
 
   if (!ready) return null;
 
@@ -163,6 +168,12 @@ export default function MerchantRegisterPage() {
 
     if (!terms) errs.terms = t("req_terms");
     if (!captcha) errs.captcha = t("req_captcha");
+
+    // Sunucudan dönen alan bazlı hataları da yansıt
+    for (const [k, v] of Object.entries(serverFieldErrors || {})) {
+      if (v && !errs[k]) errs[k] = String(v);
+    }
+
     return errs;
   };
 
@@ -171,14 +182,20 @@ export default function MerchantRegisterPage() {
 
   function mapServerError(json) {
     const code = String(json?.error || json?.error_code || "").toLowerCase();
-    if (!code) return json?.message || t("e_server");
+    // invalid_payload ise spesifik mesajı kullan ve alanı işaretle
+    if (code.includes("invalid_payload")) {
+      if (json?.field) {
+        setServerFieldErrors((s) => ({ ...s, [json.field]: json?.message || "" }));
+      }
+      return json?.message || t("e_required");
+    }
     if (code.includes("captcha")) return t("e_captcha");
     if (code.includes("too_many") || code.includes("rate")) return t("e_ratelimit");
     if (code.includes("already_active")) return t("e_already_active");
     if (code.includes("pending")) return t("e_pending");
     if (code.includes("uniq") || code.includes("exists") || code.includes("conflict")) return t("e_uniq");
     if (code.includes("email")) return t("e_email");
-    if (code.includes("required") || code.includes("invalid_payload")) return t("e_required");
+    if (code.includes("required")) return t("e_required");
     return json?.message || t("e_server");
   }
 
@@ -194,6 +211,7 @@ export default function MerchantRegisterPage() {
     setSubmitted(true);
     setServerError("");
     setSuccess("");
+    setServerFieldErrors({});
     firstInvalidRef.current = null;
 
     // --- CAPTCHA FALLBACK (affiliate register ile aynı) ---
@@ -235,20 +253,25 @@ export default function MerchantRegisterPage() {
         },
       });
 
-      if (res.status === 429) {
-        const data = await res.json().catch(() => ({}));
-        setServerError(mapServerError(data));
-        setCaptcha("");
-        setCaptchaResetKey((k) => k + 1);
-        setLoading(false);
-        return;
-      }
-
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
-        setServerError(mapServerError(data));
+        const msg = mapServerError(data);
+        setServerError(msg);
         setCaptcha("");
         setCaptchaResetKey((k) => k + 1);
+
+        // Alan bazlı hata geldiyse o input'a odaklan
+        if (data?.field) {
+          const idMap = {
+            companyName: "company",
+            name: "fullName",
+            email: "email",
+            phoneNumber: "phone",
+            password: "password",
+            captcha: "captcha",
+          };
+          requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
+        }
       } else {
         setSuccess(t("success"));
         setTimeout(() => window.location.assign("/merchant/login"), 1600);
