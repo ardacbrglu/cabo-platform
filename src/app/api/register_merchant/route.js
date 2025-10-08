@@ -9,7 +9,7 @@
  * - Giriş doğrulama: Zod + normalize + sanitize (fallback’li).
  * - DB: Prisma, raw SQL yok.
  * - Audit: tüm kritik dallar kayıtlanır.
- * - Hata sözleşmesi: { success:false, error, message, request_id, retry_after? }.
+ * - Hata sözleşmesi: { success:false, error, message, request_id, retry_after?, field? }.
  */
 
 export const runtime = "nodejs";
@@ -25,7 +25,7 @@ import { applyApiSecurityHeaders } from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { verifyRecaptcha } from "@/lib/captcha";
 import { audit } from "@/lib/logger";
-// ÖNEMLİ: sanitize için namespace import + kesin fallback
+// sanitize için namespace import + güvenli fallback
 import * as validation from "@/lib/validation";
 
 /* -------------------------- helpers -------------------------- */
@@ -44,8 +44,8 @@ const MSG = {
     ratelimit: "Too many requests. Please wait and try again.",
     required: "Please fill in all fields.",
     email: "Invalid email address.",
-    name: "Name must be 3–40 chars (letters/numbers/space/_).",
-    company: "Company name must be 2–150 chars and valid characters only.",
+    name: "Full name must be 3–40 chars (letters/numbers/space/_). Turkish letters are allowed.",
+    company: "Company name must be 2–150 chars; letters, numbers and basic punctuation only.",
     password: "Password must be at least 8 chars and contain both letters and numbers.",
     phone: "Invalid phone number.",
     terms: "You must accept the Terms and Privacy Policy.",
@@ -58,11 +58,11 @@ const MSG = {
     ratelimit: "Çok fazla istek. Lütfen biraz bekleyip tekrar deneyin.",
     required: "Lütfen tüm alanları doldurun.",
     email: "Geçersiz e-posta adresi.",
-    name: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_).",
-    company: "Şirket adı 2–150 karakter olmalı ve yalnızca geçerli karakterler içermeli.",
+    name: "Ad Soyad 3–40 karakter olmalı (harf/rakam/boşluk/_). Türkçe harfler desteklenir.",
+    company: "Şirket adı 2–150 karakter olmalı; harf, rakam ve temel noktalama işaretleri kullanılabilir.",
     password: "Şifre en az 8 karakter ve hem harf hem rakam içermelidir.",
     phone: "Geçersiz telefon numarası.",
-    terms: "Kullanım ve gizlilik şartlarını kabul etmelisiniz.",
+    terms: "Kullanım ve Gizlilik şartlarını kabul etmelisiniz.",
     captcha: "Doğrulama başarısız. Lütfen tekrar deneyin.",
     uniq: "Bu e-posta ile bir hesap zaten var.",
     success: "Satıcı kaydı başarılı. Hesabınız onay bekliyor.",
@@ -75,24 +75,34 @@ const tFromReq = (req) =>
     ? MSG.tr
     : MSG.en;
 
+// Unicode güvenli normalize (NFKC) + görünmez karakter temizliği
+const normalizeU = (s) =>
+  String(s ?? "")
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width
+    .replace(/\s+/g, " ")
+    .trim();
+
 const RegisterSchema = z
   .object({
+    // Türkçe dahil tüm harfler: \p{L}; rakam: \p{N}; boşluk ve _ serbest
     name: z.string().min(3).max(40).regex(/^[\p{L}\p{N}_ ]+$/u),
-    companyName: z.string().min(2).max(150).regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
+    companyName: z
+      .string()
+      .min(2)
+      .max(150)
+      .regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
     email: z.string().email(),
     password: z.string().min(8).refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
-    // TR: +905321234567 gibi. 10–15 rakam; opsiyonel +.
     phoneNumber: z.string().regex(/^\+?\d{10,15}$/),
     termsAccepted: z.literal(true),
     captcha: z.string().min(1),
   })
   .strict();
 
-const normalize = (s) => String(s || "").replace(/\s+/g, " ").trim();
-
 /** Güvenli sanitize: validation.sanitize?.text varsa onu kullanır, yoksa whitelist. */
 function sanitizeTextSafe(s) {
-  const v = String(s ?? "");
+  const v = normalizeU(s);
   const fn = validation?.sanitize?.text;
   if (typeof fn === "function") {
     try {
@@ -101,7 +111,7 @@ function sanitizeTextSafe(s) {
       /* fallthrough */
     }
   }
-  // Harf, rakam, boşluk ve bazı temel işaretler whitelisti
+  // Harf, rakam, boşluk ve bazı temel işaretler whitelisti (Unicode)
   return v.replace(/[^\p{L}\p{N}\s&_.,'’()\-@:+]/gu, "");
 }
 
@@ -169,32 +179,10 @@ export async function POST(req) {
     );
   }
 
-  // ---- CAPTCHA (detaylı; audit’e code düşer)
-  const host =
-    req.headers.get("x-forwarded-host") ||
-    req.headers.get("host") ||
-    "";
-  let cap = { ok: false, code: "TOKEN_MISSING" };
-  try {
-    cap = await verifyRecaptcha(String(raw?.captcha || ""), { host });
-  } catch {
-    cap = { ok: false, code: "VERIFY_EXCEPTION" };
-  }
-  if (!cap.ok) {
-    audit({ evt: "merchant.register.captcha_fail", requestId, code: cap.code });
-    return withStd(
-      NextResponse.json(
-        { success: false, error: "captcha_failed", message: M.captcha, request_id: requestId },
-        { status: 400 }
-      ),
-      req
-    );
-  }
-
-  // ---- Normalize + validate + sanitize (fallback’li)
+  // ---- Normalize + validate + sanitize (CAPTCHA'DAN ÖNCE!)
   const data = {
-    name: sanitizeTextSafe(normalize(raw?.name)),
-    companyName: sanitizeTextSafe(normalize(raw?.companyName)),
+    name: sanitizeTextSafe(raw?.name),
+    companyName: sanitizeTextSafe(raw?.companyName),
     email: String(raw?.email || "").trim().toLowerCase(),
     password: String(raw?.password || ""),
     phoneNumber: String(raw?.phoneNumber || "").trim(),
@@ -223,7 +211,32 @@ export async function POST(req) {
     audit({ evt: "merchant.register.invalid", field, requestId });
     return withStd(
       NextResponse.json(
-        { success: false, error: "invalid_payload", message: fieldMsg, request_id: requestId },
+        {
+          success: false,
+          error: "invalid_payload",
+          field,
+          message: fieldMsg,
+          request_id: requestId,
+        },
+        { status: 400 }
+      ),
+      req
+    );
+  }
+
+  // ---- CAPTCHA (artık sadece form sahası geçerliyse çalışır)
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+  let cap = { ok: false, code: "TOKEN_MISSING" };
+  try {
+    cap = await verifyRecaptcha(data.captcha, { host });
+  } catch {
+    cap = { ok: false, code: "VERIFY_EXCEPTION" };
+  }
+  if (!cap.ok) {
+    audit({ evt: "merchant.register.captcha_fail", requestId, code: cap.code });
+    return withStd(
+      NextResponse.json(
+        { success: false, error: "captcha_failed", message: M.captcha, request_id: requestId },
         { status: 400 }
       ),
       req
@@ -262,7 +275,9 @@ export async function POST(req) {
         role: "merchant",
         status: "pending",
         termsAccepted: true,
-        languagePreference: (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr")
+        languagePreference: (req.headers.get("accept-language") || "")
+          .toLowerCase()
+          .startsWith("tr")
           ? "tr"
           : "en",
         // currencyCode default TRY, createdAt default now()
