@@ -9,6 +9,10 @@
  *   Row2: Wallet(8, min-h bigger) + Right column (top Welcome, bottom Recent)
  * - Wallet ring: SVG, merkez tam, Cabo mint
  * - “Net ödenmiş” istatistiği: sum(PayoutRequest.netPayable WHERE status='paid')
+ * - UI fix pack:
+ *   1) “Net ödenmiş tutar” label mobilde nowrap
+ *   2) Canlı İşlem satırları hizalı grid + ikonlar (sale/cart, click/pointer)
+ *   3) Cüzdan alt metni: activeRequestLimitReachedButton
  */
 
 import React, { useEffect, useState } from "react";
@@ -25,6 +29,7 @@ import {
   Lock,
   Activity,
   ChevronRight,
+  MousePointerClick,
 } from "lucide-react";
 
 const CABO = "#d1ffd0";
@@ -54,7 +59,8 @@ const Stat = ({ value, label, icon, className = "" }) => (
   >
     <span className="text-white">{icon}</span>
     <span className="text-[15px] font-extrabold font-mono text-white leading-none">{value}</span>
-    <span className="text-[11px] font-mono text-gray-400">{label}</span>
+    {/* label mobilde tek satır */}
+    <span className="text-[11px] font-mono text-gray-400 whitespace-nowrap">{label}</span>
   </div>
 );
 
@@ -83,7 +89,12 @@ function WalletRing({ value, max }) {
   );
 }
 
-/* Polling */
+/* yardımcılar */
+const fmtClock = (t) =>
+  new Date(t).toLocaleTimeString("tr-TR", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const fmtTL = (v) => `₺${Number(v || 0).toFixed(2)}`;
+
+/* Polling (apiFetch wrapper'ı Response döndürüyor) */
 function useDashboardData(enabled) {
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -109,6 +120,28 @@ function useDashboardData(enabled) {
     return () => { alive = false; clearTimeout(t); ctrl.abort(); document.removeEventListener("visibilitychange", onVis); };
   }, [enabled]);
   return data;
+}
+
+/* Canlı satır (hizalı grid + ikon) */
+function LiveRow({ time, product, type, rightText, tail, tone }) {
+  const isSale = type === "sale";
+  const isClick = type === "click";
+  const rowBg = tone === "light" ? "bg-[#232523]" : "bg-[#191b19]";
+  return (
+    <div className={`grid grid-cols-[84px_1fr_120px_72px] md:grid-cols-[100px_1fr_140px_80px] items-center ${rowBg} px-3 py-2 rounded font-mono text-[11px]`}>
+      <span className="font-bold text-[#81d742]">{time}</span>
+      <span className="text-[#d1ffd0] truncate">{product}</span>
+      <span className="flex items-center gap-2">
+        {isSale ? (
+          <ShoppingCart className="w-4 h-4 text-neutral-300" />
+        ) : isClick ? (
+          <MousePointerClick className="w-4 h-4 text-neutral-300" />
+        ) : null}
+        <span className={isSale ? "text-[#81d742] font-bold" : "text-blue-400"}>{rightText}</span>
+      </span>
+      <span className="text-right text-gray-400">{tail}</span>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -178,7 +211,7 @@ export default function DashboardPage() {
             <div className="col-span-1 md:col-span-4 order-3">
               <Stat
                 value={`₺${Number(netPaid).toFixed(2)}`}
-                label={t("netPaidTotal")} // <-- yeni anahtar
+                label={t("netPaidTotal")}
                 icon={<BarChart2 size={18} />}
               />
             </div>
@@ -186,38 +219,26 @@ export default function DashboardPage() {
             {/* Row1 – Live + Leaderboard (desktop yan yana; mobil sırası: 4 ve 6) */}
             <div className="col-span-3 md:col-span-8 order-4 md:order-4">
               <Card title={t("liveStats")} icon={<Activity size={16} className="text-white" />}>
-                <div className="px-4 py-3">
+                <div className="px-4 py-3 space-y-2">
                   {stats?.lastConversion ? (
-                    <div className="flex items-center justify-between rounded bg-[#191b19] px-3 py-2 font-mono text-[11px]">
-                      <span className="font-bold text-[#81d742]">
-                        {new Date(stats.lastConversion.time).toLocaleTimeString("tr-TR", {
-                          hour12: false,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })}
-                      </span>
-                      <span className="text-[#d1ffd0]">{stats.lastConversion.productName}</span>
-                      <span className="font-bold text-[#81d742]">
-                        ₺{Number(stats.lastConversion.commission || 0).toFixed(2)}
-                      </span>
-                      <span className="text-gray-400">x{stats.lastConversion.quantity || 1}</span>
-                    </div>
+                    <LiveRow
+                      type="sale"
+                      time={fmtClock(stats.lastConversion.time)}
+                      product={stats.lastConversion.productName}
+                      rightText={fmtTL(stats.lastConversion.commission)}
+                      tail={`x${stats.lastConversion.quantity || 1}`}
+                      tone="dark"
+                    />
                   ) : null}
                   {stats?.lastClick ? (
-                    <div className="flex items-center justify-between rounded bg-[#232523] px-3 py-2 font-mono text-[11px] mt-2">
-                      <span className="font-bold text-[#81d742]">
-                        {new Date(stats.lastClick.time).toLocaleTimeString("tr-TR", {
-                          hour12: false,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })}
-                      </span>
-                      <span className="text-[#d1ffd0]">{stats.lastClick.productName}</span>
-                      <span className="text-blue-400">Click</span>
-                      <span className="text-gray-400">{stats.lastClick.extra || "-"}</span>
-                    </div>
+                    <LiveRow
+                      type="click"
+                      time={fmtClock(stats.lastClick.time)}
+                      product={stats.lastClick.productName}
+                      rightText="Click"
+                      tail={stats.lastClick.extra || "-"}
+                      tone="light"
+                    />
                   ) : null}
                   {!stats?.lastConversion && !stats?.lastClick && (
                     <div className="text-gray-400 text-[11px] font-mono">{t("noRecentActivity")}</div>
@@ -304,7 +325,7 @@ export default function DashboardPage() {
 
                   {activeRequestCount > 0 && (
                     <div className="mt-2 text-[10.5px] font-mono text-yellow-300">
-                      {t("pendingPayoutExists")}
+                      {t("activeRequestLimitReachedButton") || "Zaten bekleyen bir ödeme talebiniz var"}
                     </div>
                   )}
                 </div>
