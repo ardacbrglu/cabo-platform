@@ -23,15 +23,16 @@ import { z } from "zod";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
-import { verifyRecaptchaFromRequest } from "@/lib/captcha";
+import { verifyRecaptcha } from "@/lib/captcha";
 import { audit } from "@/lib/logger";
-import { sanitize as sanitizeLib } from "@/lib/validation"; // bazı ortamlarda undefined olabiliyor
+// ÖNEMLİ: sanitize için namespace import + kesin fallback
+import * as validation from "@/lib/validation";
 
 /* -------------------------- helpers -------------------------- */
 
-function withStd(res) {
+function withStd(res, req) {
   res.headers.set("Cache-Control", "no-store");
-  return applyApiSecurityHeaders(res);
+  return applyApiSecurityHeaders(res, req);
 }
 
 const RL_LIMIT = Number(process.env.MERCHANT_RL_PER_MIN || "12");
@@ -80,6 +81,7 @@ const RegisterSchema = z
     companyName: z.string().min(2).max(150).regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
     email: z.string().email(),
     password: z.string().min(8).refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
+    // TR: +905321234567 gibi. 10–15 rakam; opsiyonel +.
     phoneNumber: z.string().regex(/^\+?\d{10,15}$/),
     termsAccepted: z.literal(true),
     captcha: z.string().min(1),
@@ -88,10 +90,17 @@ const RegisterSchema = z
 
 const normalize = (s) => String(s || "").replace(/\s+/g, " ").trim();
 
-/** sanitize fallback: sanitizeLib yoksa güvenli whitelist */
-function safeSanitizeText(s) {
+/** Güvenli sanitize: validation.sanitize?.text varsa onu kullanır, yoksa whitelist. */
+function sanitizeTextSafe(s) {
   const v = String(s ?? "");
-  if (sanitizeLib?.text) return sanitizeLib.text(v);
+  const fn = validation?.sanitize?.text;
+  if (typeof fn === "function") {
+    try {
+      return fn(v);
+    } catch {
+      /* fallthrough */
+    }
+  }
   // Harf, rakam, boşluk ve bazı temel işaretler whitelisti
   return v.replace(/[^\p{L}\p{N}\s&_.,'’()\-@:+]/gu, "");
 }
@@ -110,7 +119,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "bad_request", message: "bad_request", request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -137,11 +147,12 @@ export async function POST(req) {
             retry_after: retrySec,
           },
           { status: 429, headers: { "Retry-After": String(retrySec) } }
-        )
+        ),
+        req
       );
     }
   } catch {
-    // rate-limitte problem olursa akışı durdurma
+    // rate-limit problemi akışı durdurmasın (fail-open)
   }
 
   // ---- Body
@@ -153,26 +164,37 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "invalid_request", message: M.required, request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
-  // ---- CAPTCHA
-  const capOk = await verifyRecaptchaFromRequest(req, raw?.captcha || "");
-  if (!capOk) {
-    audit({ evt: "merchant.register.captcha_fail", requestId });
+  // ---- CAPTCHA (detaylı; audit’e code düşer)
+  const host =
+    req.headers.get("x-forwarded-host") ||
+    req.headers.get("host") ||
+    "";
+  let cap = { ok: false, code: "TOKEN_MISSING" };
+  try {
+    cap = await verifyRecaptcha(String(raw?.captcha || ""), { host });
+  } catch {
+    cap = { ok: false, code: "VERIFY_EXCEPTION" };
+  }
+  if (!cap.ok) {
+    audit({ evt: "merchant.register.captcha_fail", requestId, code: cap.code });
     return withStd(
       NextResponse.json(
         { success: false, error: "captcha_failed", message: M.captcha, request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
   // ---- Normalize + validate + sanitize (fallback’li)
   const data = {
-    name: safeSanitizeText(normalize(raw?.name)),
-    companyName: safeSanitizeText(normalize(raw?.companyName)),
+    name: sanitizeTextSafe(normalize(raw?.name)),
+    companyName: sanitizeTextSafe(normalize(raw?.companyName)),
     email: String(raw?.email || "").trim().toLowerCase(),
     password: String(raw?.password || ""),
     phoneNumber: String(raw?.phoneNumber || "").trim(),
@@ -203,7 +225,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "invalid_payload", message: fieldMsg, request_id: requestId },
         { status: 400 }
-      )
+      ),
+      req
     );
   }
 
@@ -220,7 +243,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "conflict", message: M.uniq, request_id: requestId },
         { status: 409 }
-      )
+      ),
+      req
     );
   }
 
@@ -234,7 +258,7 @@ export async function POST(req) {
         companyName,
         email,
         passwordHash,
-        phoneNumber,               // prisma modelinde opsiyonel
+        phoneNumber, // prisma modelinde opsiyonel
         role: "merchant",
         status: "pending",
         termsAccepted: true,
@@ -250,7 +274,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: true, message: M.success, request_id: requestId },
         { status: 200 }
-      )
+      ),
+      req
     );
   } catch (e) {
     audit({
@@ -263,7 +288,8 @@ export async function POST(req) {
       NextResponse.json(
         { success: false, error: "server_error", message: M.fail, request_id: requestId },
         { status: 500 }
-      )
+      ),
+      req
     );
   }
 }
