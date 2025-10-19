@@ -449,7 +449,9 @@
   "time": "Zaman",
   "referrer": "referrer",
   "userAgent": "userAgent",
-  "noChanges":  "Değişiklik yapılmadı."
+  "noChanges":  "Değişiklik yapılmadı.",
+  "performance.quantity": "Adet",
+  "company": "Şirket"
 }
 
 

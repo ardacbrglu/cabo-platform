@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -84,13 +85,11 @@ function fmtLocalDate(d) {
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-function fmtLocalDateTime(d) {
-  const y = d.getFullYear();
-  const m = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
+function fmtLocalTimeSec(d) {
   const hh = `${d.getHours()}`.padStart(2, "0");
   const mm = `${d.getMinutes()}`.padStart(2, "0");
-  return `${y}-${m}-${day} ${hh}:${mm}`;
+  const ss = `${d.getSeconds()}`.padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 /* -------------------- validation -------------------- */
@@ -139,7 +138,7 @@ export async function GET(req) {
   if (!parsed.success) return jsonError(400, "invalid_query", requestId);
   const q = parsed.data;
 
-  // Tarih aralığı (default: son 365 gün — grafiğin boş kalmaması için)
+  // Tarih aralığı (default: son 365 gün)
   let startDate = q.startDate ? parseYYYYMMDD(q.startDate) : null;
   let endDate = q.endDate ? endOfDayUTC(q.endDate) : null;
   if (!startDate || !endDate) {
@@ -171,8 +170,7 @@ export async function GET(req) {
   const clickPage = q.clickPage ?? 1;
   const clickPageSize = q.clickPageSize ?? 5;
 
-  // WHERE (şemaya birebir)
-  // Click: userId Click tablosunda yok; AffiliateLink üzerinden
+  // WHERE
   const whereClick = {
     clickedAt: { gte: startDate, lte: endDate },
     affiliateLink: {
@@ -181,7 +179,6 @@ export async function GET(req) {
     },
   };
 
-  // Sales: AffiliateUserSale (userId, convertedAt)
   const whereSalesAll = {
     userId,
     convertedAt: { gte: startDate, lte: endDate },
@@ -190,7 +187,7 @@ export async function GET(req) {
   const whereSalesConfirmed = { ...whereSalesAll, status: "confirmed" };
 
   try {
-    /* ---------- PRODUCTS (kullanıcının linkleri) ---------- */
+    /* ---------- PRODUCTS ---------- */
     const links = await prisma.affiliateLink.findMany({
       where: { userId },
       select: {
@@ -213,8 +210,8 @@ export async function GET(req) {
     /* ---------- PARALLEL QUERIES ---------- */
     const [
       clicksCount,
-      salesCountAll,
-      salesCountConfirmed,
+      salesQtyAllAgg,
+      salesQtyConfAgg,
 
       sumSalesAll, // _sum.commissionAffiliate (tüm statüler)
       sumConfirmedParts, // _sum.commissionAffiliate + _sum.commissionPlatform (net için)
@@ -222,12 +219,21 @@ export async function GET(req) {
       clicksPageRows,
       salesPageRows,
 
+      salesRowsCountConfirmed, // pager sayacı
       clicksForDaily,
       salesConfirmedForDaily,
     ] = await prisma.$transaction([
       prisma.click.count({ where: whereClick }),
-      prisma.affiliateUserSale.count({ where: whereSalesAll }),
-      prisma.affiliateUserSale.count({ where: whereSalesConfirmed }),
+
+      // adet = quantity toplamı
+      prisma.affiliateUserSale.aggregate({
+        _sum: { quantity: true },
+        where: whereSalesAll,
+      }),
+      prisma.affiliateUserSale.aggregate({
+        _sum: { quantity: true },
+        where: whereSalesConfirmed,
+      }),
 
       prisma.affiliateUserSale.aggregate({
         _sum: { commissionAffiliate: true },
@@ -244,8 +250,19 @@ export async function GET(req) {
           clickId: true,
           clickedAt: true,
           userAgent: true,
-          referrer: true,
-          affiliateLink: { select: { productId: true } },
+          affiliateLink: {
+            select: {
+              productId: true,
+              product: {
+                select: {
+                  productId: true,
+                  name: true,
+                  imageUrl: true,
+                  merchant: { select: { companyName: true } },
+                },
+              },
+            },
+          },
         },
         orderBy: { clickedAt: "desc" },
         skip: (clickPage - 1) * clickPageSize,
@@ -264,52 +281,69 @@ export async function GET(req) {
           status: true,
           commissionAffiliate: true,
           commissionPlatform: true,
-          merchantProduct: { select: { productId: true, name: true, imageUrl: true } },
+          payoutItem: { select: { status: true } },
+          merchantProduct: {
+            select: {
+              productId: true,
+              name: true,
+              imageUrl: true,
+              merchant: { select: { companyName: true } },
+            },
+          },
         },
         orderBy: { convertedAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
 
-      prisma.click.findMany({
-        where: whereClick,
-        select: { clickedAt: true },
-      }),
+      prisma.affiliateUserSale.count({ where: whereSalesConfirmed }),
+
+      prisma.click.findMany({ where: whereClick, select: { clickedAt: true } }),
       prisma.affiliateUserSale.findMany({
         where: whereSalesConfirmed,
-        select: { convertedAt: true, commissionAffiliate: true, commissionPlatform: true },
+        select: { convertedAt: true, commissionAffiliate: true, commissionPlatform: true, quantity: true },
       }),
     ]);
 
     /* ---------- MAP: clicks ---------- */
-    const clickRows = clicksPageRows.map((c) => ({
-      clickId: c.clickId,
-      time: fmtLocalDateTime(new Date(c.clickedAt)),
-      productId: c.affiliateLink?.productId ?? null,
-      referrer: c.referrer ?? null,
-      userAgent: c.userAgent ?? null,
-    }));
+    const clickRows = clicksPageRows.map((c) => {
+      const dt = new Date(c.clickedAt);
+      const p = c.affiliateLink?.product || {};
+      return {
+        clickId: c.clickId,
+        date: fmtLocalDate(dt),
+        time: fmtLocalTimeSec(dt),
+        productId: p?.productId ?? c.affiliateLink?.productId ?? null,
+        productName: p?.name || (p?.productId ? `#${p.productId}` : "-"),
+        productImage: p?.imageUrl ?? null,
+        company: p?.merchant?.companyName ?? "-",
+        userAgent: c.userAgent ?? null,
+      };
+    });
 
-    /* ---------- MAP: sales (net = aff - platform) ---------- */
+    /* ---------- MAP: sales ---------- */
     const salesRows = salesPageRows.map((s) => {
       const p = s.merchantProduct || {};
-      const pid = p.productId ?? s.productId ?? null;
+      const dt = new Date(s.convertedAt);
       const commission = toNumber(s.commissionAffiliate, 0);
       const platformFee = toNumber(s.commissionPlatform, 0);
       const net = commission - platformFee;
       return {
         saleId: s.saleId,
         orderId: s.orderId ?? null,
-        date: fmtLocalDate(new Date(s.convertedAt)),
-        productId: pid,
-        productName: p?.name || `#${pid}`,
+        date: fmtLocalDate(dt),
+        time: fmtLocalTimeSec(dt),
+        productId: p?.productId ?? s.productId ?? null,
+        productName: p?.name || `#${p?.productId ?? s.productId ?? ""}`,
         productImage: p?.imageUrl ?? null,
+        company: p?.merchant?.companyName ?? "-",
         amount: toNumber(s.amount, 0),
         commission,
         platformFee,
         net,
         quantity: toNumber(s.quantity, 1),
         status: s.status || "confirmed",
+        payoutStatus: s?.payoutItem?.status ?? "unpaid",
       };
     });
 
@@ -319,13 +353,16 @@ export async function GET(req) {
     const confPlat = toNumber(sumConfirmedParts?._sum?.commissionPlatform, 0);
     const netConfirmed = confAff - confPlat;
 
+    const salesQtyAll = toNumber(salesQtyAllAgg?._sum?.quantity, 0);
+    const salesQtyConf = toNumber(salesQtyConfAgg?._sum?.quantity, 0);
+
     const totals = {
       clicks: clicksCount,
-      sales: salesCountAll,
-      confirmedSales: salesCountConfirmed,
+      sales: salesQtyAll,
+      confirmedSales: salesQtyConf,
       earnings: earningsAll,
       netEarnings: netConfirmed,
-      cr: clicksCount > 0 ? Number(((salesCountConfirmed / clicksCount) * 100).toFixed(2)) : 0,
+      cr: clicksCount > 0 ? Number(((salesQtyConf / clicksCount) * 100).toFixed(2)) : 0,
     };
 
     /* ---------- DAILY (grafik) ---------- */
@@ -350,7 +387,7 @@ export async function GET(req) {
       const key = fmtYYYYMMDD_UTC(new Date(s.convertedAt));
       const row = dayIndex.get(key);
       if (row) {
-        row.confirmed += 1;
+        row.confirmed += toNumber(s.quantity, 1);
         row.net += toNumber(s.commissionAffiliate, 0) - toNumber(s.commissionPlatform, 0);
       }
     }
@@ -362,7 +399,10 @@ export async function GET(req) {
         products,
         totals,
         daily,
-        confirmedSales: { total: salesCountConfirmed, rows: salesRows },
+        confirmedSales: {
+          total: salesRowsCountConfirmed,
+          rows: salesRows,
+        },
         clicks: { total: clicksCount, rows: clickRows },
         cache: "no-store",
         range: { startDate: fmtYYYYMMDD_UTC(startDate), endDate: fmtYYYYMMDD_UTC(endDate) },
