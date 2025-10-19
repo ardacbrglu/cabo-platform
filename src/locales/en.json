@@ -294,6 +294,8 @@
   "api.performance.invalidEndDate": "Invalid endDate",
   "api.performance.invalidProductIds": "Invalid productIds",
   "api.performance.serverError": "Performance fetch error",
+  "performance.quantity": "Quantity",
+  "company": "Company",
 
   "nav.manageProducts": "Manage Products",
   "nav.payments": "Payments",
