@@ -2,7 +2,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Product Marketplace – aktif ürünleri getir (login zorunlu)
+ * Product Marketplace — Aktif ürünler
+ * - Kullanıcının o ürüne ait görünür linki varsa `shareUrl` üretir:
+ *   shareUrl = product.merchantUrl + ?token=...&lid=...
+ * Güvenlik:
+ *  - requireOrigin + requireAjax + requireRequestId
+ *  - NextAuth session + RBAC + status kapıları
+ *  - Rate limit (60/dk)
+ *  - No-store + güvenli başlıklar
  */
 
 import { NextResponse } from "next/server";
@@ -21,8 +28,11 @@ function json(data, init = {}) {
   return applyApiSecurityHeaders(res);
 }
 
+function addParam(u, k, v) {
+  if (!u.searchParams.has(k)) u.searchParams.set(k, String(v));
+}
+
 export async function GET(req) {
-  // Harden preflight
   let requestId = "unknown";
   try {
     requireAjax(req);
@@ -32,20 +42,14 @@ export async function GET(req) {
     return json({ error: "bad_request" }, { status: 400 });
   }
 
-  // Auth (session + RBAC)
   const session = await getServerSession(authOptions);
   const user = session?.user;
-  if (!user?.id) {
-    return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
-  }
-  if (user.status !== "active") {
-    return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
-  }
-  if (user.role !== "affiliate" && user.role !== "admin") {
+  if (!user?.id) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
+  if (user.status !== "active") return json({ error: "forbidden_status", request_id: requestId }, { status: 403 });
+  if (user.role !== "affiliate" && user.role !== "admin")
     return json({ error: "forbidden_role", request_id: requestId }, { status: 403 });
-  }
 
-  // Rate limit: GET 60/dk
+  // Rate limit
   const rlKey = makeRateLimitKey(req, { scope: "products_get", userId: user.id });
   const { ok, resetMs } = await checkRateLimit({
     key: rlKey,
@@ -83,30 +87,54 @@ export async function GET(req) {
     const linksRaw = productIds.length
       ? await prisma.affiliateLink.findMany({
           where: { userId: user.id, productId: { in: productIds } },
-          select: { productId: true, token: true, isVisible: true, expiresAt: true },
+          select: { productId: true, token: true, isVisible: true, expiresAt: true, linkId: true },
         })
       : [];
 
-    const products = productsRaw.map((p) => ({
-      productId: p.productId,
-      name: p.name,
-      description: p.description,
-      imageUrl: p.imageUrl,
-      merchantUrl: p.merchantUrl,
-      commissionRate: p.commissionRate != null ? Number(p.commissionRate) : 0,
-      price: p.price != null ? Number(p.price) : null,
-      totalClicks: p.totalClicks ?? 0,
-      totalPurchases: p.totalPurchases ?? 0,
-      createdAt: p.createdAt?.toISOString?.() || null,
-      isActive: true,
-      maxSalesLimit: p.maxSalesLimit ?? null,
-    }));
+    const linkMap = new Map(
+      linksRaw.map((l) => [
+        l.productId,
+        { token: l.token, linkId: l.linkId, isVisible: !!l.isVisible, expiresAt: l.expiresAt },
+      ])
+    );
+
+    const products = productsRaw.map((p) => {
+      let shareUrl = null;
+      const info = linkMap.get(p.productId);
+      if (info?.isVisible) {
+        try {
+          const u = new URL(p.merchantUrl);
+          addParam(u, "token", info.token);
+          addParam(u, "lid", info.linkId);
+          shareUrl = u.toString();
+        } catch {
+          shareUrl = null;
+        }
+      }
+
+      return {
+        productId: p.productId,
+        name: p.name,
+        description: p.description,
+        imageUrl: p.imageUrl,
+        merchantUrl: p.merchantUrl,
+        commissionRate: p.commissionRate != null ? Number(p.commissionRate) : 0,
+        price: p.price != null ? Number(p.price) : null,
+        totalClicks: p.totalClicks ?? 0,
+        totalPurchases: p.totalPurchases ?? 0,
+        createdAt: p.createdAt?.toISOString?.() || null,
+        isActive: true,
+        maxSalesLimit: p.maxSalesLimit ?? null,
+        shareUrl, // ← Kullanıcı bu ürünü eklediyse kopyalayacağı link
+      };
+    });
 
     const userLinks = linksRaw.map((l) => ({
       productId: l.productId,
       token: l.token,
       isVisible: !!l.isVisible,
       expiresAt: l.expiresAt?.toISOString?.() || null,
+      linkId: l.linkId,
     }));
 
     const visibleLinkIds = userLinks.filter((l) => l.isVisible).map((l) => l.productId);
