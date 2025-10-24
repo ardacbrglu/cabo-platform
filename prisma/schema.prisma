@@ -171,6 +171,7 @@ model Click {
   userAgent     String?       @db.Text
   referrer      String?       @db.Text
   clickedAt     DateTime      @default(now()) @db.DateTime(0)
+  verifiedFrom  String?       @db.VarChar(64)
   affiliateLink AffiliateLink @relation(fields: [linkId], references: [linkId], map: "clicks_ibfk_1")
 
   @@index([linkId])
@@ -402,7 +403,7 @@ model WebhookRequestLog {
 
   @@index([merchantId])
   @@index([affiliateId])
-  @@index([orderId], name: "idx_webhookRequestLogs_orderId")
+  @@index([orderId], map: "idx_webhookRequestLogs_orderId")
   @@map("webhookRequestLogs")
 }
 

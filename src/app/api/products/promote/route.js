@@ -2,10 +2,19 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Bir ürünü “My Links”e ekle (token oluştur / görünür yap)
- * Notlar:
- * - token artık unique değil → findFirst kullanıyoruz
- * - aynı kullanıcı + aynı merchant için tek token reuse
+ * Product Promote — "Get my link"
+ * - Kullanıcının seçtiği ürüne ait affiliate link kaydını görünür hale getirir veya oluşturur.
+ * - Token artık global-unique değil (merchant-reuse); benzersizlik linkId iledir.
+ * - Dönüşte:
+ *    - token
+ *    - linkId
+ *    - expiresAt
+ *    - shareUrl  => product.merchantUrl + ?token=...&lid=...
+ * Güvenlik:
+ *  - requireOrigin + requireAjax + requireRequestId
+ *  - NextAuth session + RBAC + status kapıları
+ *  - Rate limit (10/dk)
+ *  - No-store + güvenli başlıklar
  */
 
 import { NextResponse } from "next/server";
@@ -30,15 +39,18 @@ const PromoteSchema = z.object({
   productId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
 });
 
-// VARCHAR(64) sınırı içinde rahat: 16 byte hex = 32 char
+// 16-byte hex = 32 char, VARCHAR(64) sınırı içinde rahat.
 function newToken() {
   return crypto.randomBytes(16).toString("hex");
 }
-
 const TOKEN_TTL_DAYS = 14;
 
+function addParam(u, k, v) {
+  if (!u.searchParams.has(k)) u.searchParams.set(k, String(v));
+}
+
 export async function POST(req) {
-  // Harden preflight
+  // Preflight sertleştirme
   try {
     requireOrigin(req);
     requireAjax(req);
@@ -53,12 +65,12 @@ export async function POST(req) {
     return json({ error: "bad_request" }, { status: 400 });
   }
 
-  // CSRF header var mı?
+  // Basit CSRF header’ı (UI zaten gönderiyor)
   if (!req.headers.get("x-csrf-token")) {
     return json({ error: "missing_csrf", request_id: requestId }, { status: 400 });
   }
 
-  // Auth (session + RBAC)
+  // Auth + RBAC
   const session = await getServerSession(authOptions);
   const user = session?.user;
   if (!user?.id) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
@@ -66,13 +78,9 @@ export async function POST(req) {
   if (user.role !== "affiliate" && user.role !== "admin")
     return json({ error: "forbidden_role", request_id: requestId }, { status: 403 });
 
-  // Rate limit: mutation 10/dk
+  // Rate limit
   const rlKey = makeRateLimitKey(req, { scope: "products_promote", userId: user.id });
-  const { ok, resetMs } = await checkRateLimit({
-    key: rlKey,
-    limit: 10,
-    windowMs: 60_000,
-  });
+  const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: 10, windowMs: 60_000 });
   if (!ok) {
     return json(
       { error: "rate_limited", request_id: requestId, retry_after: Math.ceil((resetMs || 0) / 1000) },
@@ -80,7 +88,7 @@ export async function POST(req) {
     );
   }
 
-  // Parse + validate
+  // Body
   let body = null;
   try {
     body = await req.json();
@@ -94,10 +102,10 @@ export async function POST(req) {
   const productId = Number(parsed.data.productId);
 
   try {
-    // Ürün aktif + admin onaylı mı? reuse için merchantId da al
+    // Ürün aktif ve admin onaylı mı?
     const product = await prisma.merchantProduct.findFirst({
       where: { productId, isActive: true, activatedByAdmin: true },
-      select: { productId: true, merchantId: true },
+      select: { productId: true, merchantId: true, merchantUrl: true },
     });
     if (!product) {
       audit({ evt: "products.promote.not_found", who: user.id, requestId, productId });
@@ -107,7 +115,7 @@ export async function POST(req) {
     const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
     const result = await prisma.$transaction(async (tx) => {
-      // Bu kullanıcı bu ürünü daha önce eklediyse görünür/yenile
+      // Kullanıcı bu üründe daha önce link oluşturmuş mu?
       const existing = await tx.affiliateLink.findFirst({
         where: { userId: user.id, productId },
         select: { linkId: true, token: true, isVisible: true, expiresAt: true },
@@ -120,25 +128,25 @@ export async function POST(req) {
             data: { isVisible: true, expiresAt },
           });
         }
-        return { token: existing.token, created: false, expiresAt: existing.expiresAt || expiresAt };
+        return {
+          token: existing.token,
+          linkId: existing.linkId,
+          created: false,
+          expiresAt: existing.expiresAt || expiresAt,
+        };
       }
 
-      // 1) Aynı kullanıcı + aynı merchant için daha önce üretilmiş token varsa reuse et
+      // Aynı kullanıcı + aynı merchant’ta eski token varsa reuse
       const reuse = await tx.affiliateLink.findFirst({
-        where: {
-          userId: user.id,
-          product: { merchantId: product.merchantId },
-        },
+        where: { userId: user.id, product: { merchantId: product.merchantId } },
         select: { token: true },
         orderBy: { createdAt: "asc" },
       });
 
       let token = reuse?.token;
-
-      // 2) Hiç yoksa yeni token üret; global çakışmayı soft kontrol et
       if (!token) {
         token = newToken();
-        // token unique değil → findFirst ile soft check
+        // token global-unique değil ama çakışmayı yine de soft kontrol et
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const dup = await tx.affiliateLink.findFirst({ where: { token } });
@@ -147,18 +155,24 @@ export async function POST(req) {
         }
       }
 
-      await tx.affiliateLink.create({
-        data: {
-          userId: user.id,
-          productId,
-          token,
-          isVisible: true,
-          expiresAt,
-        },
+      const created = await tx.affiliateLink.create({
+        data: { userId: user.id, productId, token, isVisible: true, expiresAt },
+        select: { linkId: true, token: true },
       });
 
-      return { token, created: !reuse, expiresAt };
+      return { token: created.token, linkId: created.linkId, created: !reuse, expiresAt };
     });
+
+    // Paylaşılacak link → merchantUrl + token + lid
+    let shareUrl = product.merchantUrl;
+    try {
+      const u = new URL(product.merchantUrl);
+      addParam(u, "token", result.token);
+      addParam(u, "lid", result.linkId);
+      shareUrl = u.toString();
+    } catch {
+      // merchantUrl bozuksa yine de token/linkId dönüyoruz
+    }
 
     audit({
       evt: "products.promote.ok",
@@ -172,8 +186,10 @@ export async function POST(req) {
       {
         ok: true,
         token: result.token,
+        linkId: result.linkId,
         created: result.created,
         expiresAt: result.expiresAt?.toISOString?.() || null,
+        shareUrl, // ← PAYLAŞIM LİNKİ (Cabo/ref DEĞİL)
         request_id: requestId,
       },
       { status: 200 }
