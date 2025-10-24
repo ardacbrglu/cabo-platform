@@ -2,9 +2,9 @@
 
 /**
  * Affiliate “My Links” — PROD READY
- * - Kopyalanan URL: {BASE_URL}/ref/{token}?lid={linkId}
- * - BASE_URL: process.env.NEXT_PUBLIC_BASE_URL (varsa) → window.location.origin (yoksa)
- * - Desktop’ta kartlarda hover hareketi (product sayfası ile tutarlı).
+ * - Kopyalanan URL: merchantUrl?token=...&lid=...
+ * - Backend (/api/mylinks) her link için shareUrl veriyor; UI doğrudan onu kopyalar.
+ * - Fallback: merchant_url yoksa en sonda /ref/{token}?lid=... kullanılır.
  */
 
 import { useEffect, useState } from "react";
@@ -108,9 +108,28 @@ export default function MyLinksPage() {
 
   const baseUrl = getBaseUrl();
 
+  // merchantUrl üstüne token+lid eklemek için küçük yardımcı
+  function buildShareFromProduct(link) {
+    const m = link?.product?.merchant_url || link?.product?.merchantUrl;
+    if (!m) return null;
+    try {
+      const u = new URL(m);
+      if (!u.searchParams.has("token")) u.searchParams.set("token", link.token);
+      if (!u.searchParams.has("lid"))   u.searchParams.set("lid", String(link.linkId));
+      return u.toString();
+    } catch { return null; }
+  }
+  function fallbackRef(base, link) {
+    if (!base) return null;
+    return `${base}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
+  }
+
   const copyLink = (link) => {
-    const full = `${baseUrl}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
-    navigator?.clipboard?.writeText?.(full).catch(() => {});
+    const full =
+      link.shareUrl ||
+      buildShareFromProduct(link) ||
+      fallbackRef(baseUrl, link);
+    if (full) navigator?.clipboard?.writeText?.(full).catch(() => {});
     setCopiedKey(link.linkId);
     setTimeout(() => setCopiedKey(null), 1600);
   };
@@ -188,7 +207,10 @@ export default function MyLinksPage() {
               const earnPerSale = (((p.price || 0) * (p.commissionRate || 0)) / 100).toFixed(2);
               const removingThis = !!removing[link.linkId];
 
-              const shareUrl = `${baseUrl}/ref/${encodeURIComponent(link.token)}?lid=${link.linkId}`;
+              const shareUrl =
+                link.shareUrl ||
+                (link.product ? buildShareFromProduct(link) : null) ||
+                fallbackRef(baseUrl, link);
 
               return (
                 <article
