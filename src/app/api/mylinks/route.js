@@ -146,11 +146,25 @@ export async function GET(req) {
             }
           : null;
 
+        // 🔗 Paylaşım linki: product.merchantUrl + ?token=...&lid=...
+        let shareUrl = null;
+        try {
+          if (productWithAliases?.merchant_url) {
+            const u = new URL(productWithAliases.merchant_url);
+            if (!u.searchParams.has("token")) u.searchParams.set("token", link.token);
+            if (!u.searchParams.has("lid"))   u.searchParams.set("lid", String(link.linkId));
+            shareUrl = u.toString();
+          }
+        } catch {
+          shareUrl = null;
+        }
+
         const c = clicksMap[link.linkId] || 0;
         const s = salesMap[link.linkId] || { qty: 0, earn: 0 };
 
         return {
           ...link,
+          shareUrl, // 👈 EKLENDİ
           product: productWithAliases,
           user_click_count: c,
           user_sales_count: s.qty,
