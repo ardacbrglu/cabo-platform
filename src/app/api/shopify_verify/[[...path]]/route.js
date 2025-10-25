@@ -2,6 +2,14 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Cabo — Shopify Verify API (CORS + App Proxy + S2S HMAC)
+ * Prod-safe rev:
+ *  - CORS her durumda set edilir (hata dahil)
+ *  - DB hataları yutulur (click/dedup/increment "best-effort"), verify akışı 200 döner
+ *  - Audit ile hatalar izlenir
+ */
+
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
@@ -10,17 +18,17 @@ import { applyApiSecurityHeaders } from "@/lib/headers";
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { audit } from "@/lib/logger";
 
-// -------------------- utils --------------------
+// ---- Tunables ----
 const CLICK_DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 dk
 const S2S_FRESH_MS = 5 * 60 * 1000;          // 5 dk
 const PROXY_FRESH_MS = 10 * 60 * 1000;       // 10 dk
 
-function json(data, init = {}) {
+// ---- helpers ----
+function j(data, init = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
   return applyApiSecurityHeaders(res);
 }
-
 function corsify(res, origin) {
   if (!origin) return res;
   res.headers.set("Access-Control-Allow-Origin", origin);
@@ -30,7 +38,6 @@ function corsify(res, origin) {
   res.headers.set("Access-Control-Allow-Headers", "content-type,x-shopify-shop-domain");
   return res;
 }
-
 function getClientIp(req) {
   const xf = req.headers.get("x-forwarded-for");
   if (xf) return xf.split(",")[0].trim();
@@ -51,7 +58,6 @@ function timingSafeHmacVerify(secret, base, sigHex) {
     return false;
   }
 }
-
 /** Shopify App Proxy query imzası */
 function verifyAppProxySignature(fullUrl) {
   const APP_SECRET =
@@ -64,7 +70,6 @@ function verifyAppProxySignature(fullUrl) {
   const signature = sp.get("signature");
   if (!APP_SECRET || !signature) return { ok: false, reason: "missing_secret_or_signature" };
 
-  // signature hariç tüm paramları alfabetik sırayla birleştir
   sp.delete("signature");
   const base = Array.from(sp.entries())
     .sort(([a], [b]) => a.localeCompare(b))
@@ -82,7 +87,7 @@ function verifyAppProxySignature(fullUrl) {
   return { ok: true };
 }
 
-// -------------------- validation schemas --------------------
+// ---- validation ----
 const S2SBodySchema = z.object({
   shopDomain: z.string().min(6).max(200),
   productUrl: z.string().url().max(2048),
@@ -99,17 +104,26 @@ const ProxyBodySchema = z.object({
   lid: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
 }).passthrough();
 
-// -------------------- core work --------------------
+// ---- core ----
 async function performVerificationAndClick({ shopDomain, productUrl, token, lid, req }) {
-  const settings = await prisma.caboSettings.findFirst({
-    where: { shopDomain },
-    select: { shopDomain: true },
-  });
-  if (!settings) {
+  // 1) Merchant kayıtlı mı?
+  let settingsOk = false;
+  try {
+    const settings = await prisma.caboSettings.findFirst({
+      where: { shopDomain },
+      select: { shopDomain: true },
+    });
+    settingsOk = !!settings;
+  } catch (e) {
+    audit?.({ evt: "verify.settings_query_error", shopDomain, err: String(e?.message || e).slice(0, 300) });
+  }
+  if (!settingsOk) {
     audit?.({ evt: "verify.settings_missing", shopDomain });
-    return json({ error: "merchant_not_registered" }, { status: 403 });
+    // Yine de 403 ile döndürelim (burada CORS set edilecek üst seviyede)
+    return j({ error: "merchant_not_registered" }, { status: 403 });
   }
 
+  // 2) Link bul
   const now = new Date();
   const whereCommon = {
     token,
@@ -119,88 +133,127 @@ async function performVerificationAndClick({ shopDomain, productUrl, token, lid,
   };
 
   let link = null;
-  if (lid != null) {
-    link = await prisma.affiliateLink.findFirst({
-      where: { ...whereCommon, linkId: Number(lid) },
-      select: {
-        linkId: true,
-        productId: true,
-        product: { select: { merchantUrl: true, isActive: true } },
-      },
-    });
-  }
-  if (!link) {
-    link = await prisma.affiliateLink.findFirst({
-      where: whereCommon,
-      select: {
-        linkId: true,
-        productId: true,
-        product: { select: { merchantUrl: true, isActive: true } },
-      },
-      orderBy: { linkId: "desc" },
-    });
-  }
-  if (!link || !link.product?.isActive) {
-    audit?.({ evt: "verify.link_not_found", shopDomain, token, lid });
-    return json({ error: "not_found" }, { status: 404 });
+  try {
+    if (lid != null) {
+      link = await prisma.affiliateLink.findFirst({
+        where: { ...whereCommon, linkId: Number(lid) },
+        select: {
+          linkId: true,
+          productId: true,
+          product: { select: { merchantUrl: true, isActive: true } },
+        },
+      });
+    }
+    if (!link) {
+      link = await prisma.affiliateLink.findFirst({
+        where: whereCommon,
+        select: {
+          linkId: true,
+          productId: true,
+          product: { select: { merchantUrl: true, isActive: true } },
+        },
+        orderBy: { linkId: "desc" },
+      });
+    }
+  } catch (e) {
+    audit?.({ evt: "verify.link_query_error", shopDomain, token, lid, err: String(e?.message || e).slice(0, 300) });
   }
 
-  // host check
+  if (!link || !link.product?.isActive) {
+    audit?.({ evt: "verify.link_not_found", shopDomain, token, lid });
+    return j({ error: "not_found" }, { status: 404 });
+  }
+
+  // 3) Host kontrolü
   let targetHost = "";
-  try { targetHost = new URL(link.product.merchantUrl).host.toLowerCase(); } catch {
-    return json({ error: "bad_product_url" }, { status: 400 });
-  }
   let incomingHost = "";
-  try { incomingHost = new URL(productUrl).host.toLowerCase(); } catch {
-    return json({ error: "bad_product_url" }, { status: 400 });
+  try { targetHost = new URL(link.product.merchantUrl).host.toLowerCase(); } catch { /* no-op */ }
+  try { incomingHost = new URL(productUrl).host.toLowerCase(); } catch { /* no-op */ }
+
+  if (!targetHost || !incomingHost) {
+    return j({ error: "bad_product_url" }, { status: 400 });
   }
+
   const sameShop =
     incomingHost === targetHost ||
     incomingHost === shopDomain ||
     targetHost.endsWith(".myshopify.com") ||
     incomingHost.endsWith(".myshopify.com");
+
   if (!sameShop) {
     audit?.({ evt: "verify.host_mismatch", shopDomain, incomingHost, targetHost });
-    return json({ error: "host_mismatch" }, { status: 403 });
+    return j({ error: "host_mismatch" }, { status: 403 });
   }
 
+  // 4) Click kayıt (best-effort; hata doğrulamayı bozmaz)
   const ip = getClientIp(req);
   const ua = safeHeader(req.headers.get("user-agent"), 512) || "unknown";
   const ref = safeHeader(req.headers.get("referer") || req.headers.get("referrer"), 2048);
 
-  const cutoff = new Date(Date.now() - CLICK_DEDUP_WINDOW_MS);
-  const exists = await prisma.click.findFirst({
-    where: {
-      linkId: link.linkId,
-      ipAddress: ip,
-      userAgent: ua,
-      clickedAt: { gte: cutoff },
-    },
-    select: { clickId: true },
-  });
-
-  if (!exists) {
-    await prisma.$transaction([
-      prisma.click.create({
-        data: {
+  try {
+    // Dedup da best-effort
+    let exists = null;
+    try {
+      const cutoff = new Date(Date.now() - CLICK_DEDUP_WINDOW_MS);
+      exists = await prisma.click.findFirst({
+        where: {
           linkId: link.linkId,
           ipAddress: ip,
           userAgent: ua,
-          referrer: ref || null,
-          verifiedFrom: `shopify:${shopDomain}`,
-          clickedAt: new Date(),
+          clickedAt: { gte: cutoff },
         },
-      }),
-      prisma.merchantProduct.update({
-        where: { productId: link.productId },
-        data: { totalClicks: { increment: 1 } },
-      }),
-    ]);
-  } else {
-    audit?.({ evt: "verify.dedup_skip", linkId: link.linkId, ip });
+        select: { clickId: true },
+      });
+    } catch (e) {
+      audit?.({ evt: "verify.dedup_error", linkId: link.linkId, err: String(e?.message || e).slice(0, 300) });
+    }
+
+    if (!exists) {
+      try {
+        await prisma.click.create({
+          data: {
+            linkId: link.linkId,
+            // Aşağıdaki alanlar DB’de yoksa Prisma/DB hata fırlatabilir; sorun değil, catch’te yutuyoruz.
+            ipAddress: ip,
+            userAgent: ua,
+            referrer: ref || null,
+            verifiedFrom: `shopify:${shopDomain}`,
+            clickedAt: new Date(),
+          },
+        });
+      } catch (e) {
+        // Minimal create fallback (yalnızca zorunlu alanlarla deneyelim)
+        audit?.({ evt: "verify.click_create_error", linkId: link.linkId, err: String(e?.message || e).slice(0, 300) });
+        try {
+          await prisma.click.create({
+            data: {
+              linkId: link.linkId,
+            },
+          });
+        } catch (e2) {
+          audit?.({ evt: "verify.click_create_minimal_error", linkId: link.linkId, err: String(e2?.message || e2).slice(0, 300) });
+        }
+      }
+
+      // Product totalClicks ++ (best-effort)
+      try {
+        await prisma.merchantProduct.update({
+          where: { productId: link.productId },
+          data: { totalClicks: { increment: 1 } },
+        });
+      } catch (e) {
+        audit?.({ evt: "verify.product_click_inc_error", productId: link.productId, err: String(e?.message || e).slice(0, 300) });
+      }
+    } else {
+      audit?.({ evt: "verify.dedup_skip", linkId: link.linkId, ip });
+    }
+  } catch (e) {
+    audit?.({ evt: "verify.db_top_error", err: String(e?.message || e).slice(0, 300) });
+    // yut
   }
 
-  return json({
+  // 5) Başarılı yanıt (browser cookie + cart attribute için)
+  return j({
     ok: true,
     linkId: link.linkId,
     productId: link.productId,
@@ -209,45 +262,48 @@ async function performVerificationAndClick({ shopDomain, productUrl, token, lid,
   });
 }
 
-// -------------------- handlers --------------------
+// ---- handlers ----
 
-// 1) CORS tarayıcı doğrulaması (/api/shopify_verify/verify?shop=...)
+// 1) CORS verify (browser → /api/shopify_verify/verify?shop=...)
 async function handleCorsVerify(req) {
   const origin = req.headers.get("origin") || "";
-  const shopHeader = (req.headers.get("x-shopify-shop-domain") || "").toLowerCase().trim();
-  const shopParam = (new URL(req.url)).searchParams.get("shop")?.toLowerCase().trim() || "";
-
-  // Origin <-> header ve param uyumu
-  if (!origin || !shopHeader) {
-    return corsify(json({ error: "missing_origin_or_shop" }, { status: 400 }), origin);
-  }
-  let originHost = "";
-  try { originHost = new URL(origin).host.toLowerCase(); } catch {}
-  if (originHost !== shopHeader || (shopParam && shopParam !== shopHeader)) {
-    return corsify(json({ error: "shop_mismatch" }, { status: 400 }), origin);
-  }
-
-  // payload
-  let body = {};
   try {
-    body = await req.json();
-  } catch {
-    return corsify(json({ error: "invalid_json" }, { status: 400 }), origin);
-  }
-  const parsed = ProxyBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return corsify(json({ error: "invalid_params" }, { status: 400 }), origin);
-  }
+    const shopHeader = (req.headers.get("x-shopify-shop-domain") || "").toLowerCase().trim();
+    const shopParam = (new URL(req.url)).searchParams.get("shop")?.toLowerCase().trim() || "";
 
-  // iş
-  const res = await performVerificationAndClick({
-    shopDomain: shopHeader,
-    productUrl: parsed.data.productUrl,
-    token: parsed.data.token,
-    lid: parsed.data.lid != null ? Number(parsed.data.lid) : null,
-    req,
-  });
-  return corsify(res, origin);
+    if (!origin || !shopHeader) {
+      return corsify(j({ error: "missing_origin_or_shop" }, { status: 400 }), origin);
+    }
+    let originHost = "";
+    try { originHost = new URL(origin).host.toLowerCase(); } catch {}
+    if (originHost !== shopHeader || (shopParam && shopParam !== shopHeader)) {
+      return corsify(j({ error: "shop_mismatch" }, { status: 400 }), origin);
+    }
+
+    let body = {};
+    try { body = await req.json(); }
+    catch { return corsify(j({ error: "invalid_json" }, { status: 400 }), origin); }
+
+    const parsed = ProxyBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return corsify(j({ error: "invalid_params" }, { status: 400 }), origin);
+    }
+
+    const res = await performVerificationAndClick({
+      shopDomain: shopHeader,
+      productUrl: parsed.data.productUrl,
+      token: parsed.data.token,
+      lid: parsed.data.lid != null ? Number(parsed.data.lid) : null,
+      req,
+    });
+
+    // performVerificationAndClick j() ile dönüyor; burada sadece CORS ekliyoruz
+    return corsify(res, origin);
+  } catch (e) {
+    audit?.({ evt: "verify.cors_handler_crash", err: String(e?.message || e).slice(0, 300) });
+    // Hata olsa bile CORS ver
+    return corsify(j({ error: "server_error" }, { status: 200 }), origin);
+  }
 }
 
 // 2) App Proxy (/apps/cabo/verify?...signature=...)
@@ -255,11 +311,11 @@ async function handleProxy(req) {
   const url = new URL(req.url);
 
   if (url.searchParams.get("ping") === "1") {
-    return json({ ok: true, ping: "pong", path: url.pathname });
+    return j({ ok: true, ping: "pong", path: url.pathname });
   }
 
   const sig = verifyAppProxySignature(req.url);
-  if (!sig.ok) return json({ error: sig.reason }, { status: 401 });
+  if (!sig.ok) return j({ error: sig.reason }, { status: 401 });
 
   const shopDomain =
     (req.headers.get("x-shopify-shop-domain") || "").toLowerCase() ||
@@ -283,7 +339,7 @@ async function handleProxy(req) {
 
   const parsed = ProxyBodySchema.safeParse(input);
   if (!parsed.success || !shopDomain) {
-    return json({ error: "invalid_params" }, { status: 400 });
+    return j({ error: "invalid_params" }, { status: 400 });
   }
 
   return performVerificationAndClick({
@@ -300,42 +356,48 @@ async function handleS2S(req) {
   const rlKey = makeRateLimitKey(req, { scope: "shopify_verify_s2s" });
   const rl = await checkRateLimit({ key: rlKey, limit: 180, windowMs: 60_000 });
   if (!rl.ok) {
-    return json({ error: "rate_limited", retry_after: Math.ceil((rl.resetMs || 0) / 1000) }, { status: 429 });
+    return j({ error: "rate_limited", retry_after: Math.ceil((rl.resetMs || 0) / 1000) }, { status: 429 });
   }
 
   let body;
-  try { body = await req.json(); } catch { return json({ error: "invalid_json" }, { status: 400 }); }
+  try { body = await req.json(); } catch { return j({ error: "invalid_json" }, { status: 400 }); }
 
   const parsed = S2SBodySchema.safeParse(body);
-  if (!parsed.success) return json({ error: "invalid_params" }, { status: 400 });
+  if (!parsed.success) return j({ error: "invalid_params" }, { status: 400 });
 
   const { shopDomain: rawShop, productUrl, token, lid, keyId, ts, sig } = parsed.data;
   const shopDomain = rawShop.toLowerCase();
 
   const tsNum = typeof ts === "string" && /^\d+$/.test(ts) ? Number(ts) : Number(ts);
-  if (!Number.isFinite(tsNum)) return json({ error: "bad_timestamp" }, { status: 400 });
+  if (!Number.isFinite(tsNum)) return j({ error: "bad_timestamp" }, { status: 400 });
   if (Math.abs(Date.now() - tsNum) > S2S_FRESH_MS) {
-    return json({ error: "stale_request" }, { status: 400 });
+    return j({ error: "stale_request" }, { status: 400 });
   }
 
-  const settings = await prisma.caboSettings.findFirst({
-    where: { shopDomain },
-    select: { keyId: true, hmacSecret: true },
-  });
+  // Merchant HMAC anahtarları
+  let settings;
+  try {
+    settings = await prisma.caboSettings.findFirst({
+      where: { shopDomain },
+      select: { keyId: true, hmacSecret: true },
+    });
+  } catch (e) {
+    audit?.({ evt: "verify.s2s_settings_error", shopDomain, err: String(e?.message || e).slice(0, 300) });
+  }
   if (!settings?.hmacSecret || !settings?.keyId) {
     audit?.({ evt: "verify.settings_missing", shopDomain });
-    return json({ error: "merchant_not_registered" }, { status: 403 });
+    return j({ error: "merchant_not_registered" }, { status: 403 });
   }
   if (settings.keyId !== keyId) {
     audit?.({ evt: "verify.key_mismatch", shopDomain, given: keyId });
-    return json({ error: "key_mismatch" }, { status: 403 });
+    return j({ error: "key_mismatch" }, { status: 403 });
   }
 
   const canonical = `keyId=${keyId}&shopDomain=${shopDomain}&productUrl=${productUrl}&token=${token}&lid=${lid ?? ""}&ts=${tsNum}`;
   const ok = timingSafeHmacVerify(settings.hmacSecret, canonical, sig);
   if (!ok) {
     audit?.({ evt: "verify.bad_sig", shopDomain });
-    return json({ error: "bad_signature" }, { status: 401 });
+    return j({ error: "bad_signature" }, { status: 401 });
   }
 
   return performVerificationAndClick({
@@ -347,9 +409,8 @@ async function handleS2S(req) {
   });
 }
 
-// -------------------- router --------------------
+// ---- router ----
 export async function OPTIONS(req) {
-  // Preflight sadece CORS verify için anlamlı
   const url = new URL(req.url);
   if (url.pathname.endsWith("/verify")) {
     const origin = req.headers.get("origin") || "";
@@ -362,7 +423,7 @@ export async function OPTIONS(req) {
 export async function GET(req) {
   const u = new URL(req.url);
   if (u.searchParams.has("signature")) return handleProxy(req);
-  return json({ ok: true, route: "root" });
+  return j({ ok: true, route: "root" });
 }
 
 export async function POST(req) {
