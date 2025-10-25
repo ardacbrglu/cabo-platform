@@ -18,7 +18,7 @@ import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
 import { audit } from "@/lib/logger";
 
 // ---- Tunables ----
-const CLICK_DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 dk
+const CLICK_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 30 dk
 const S2S_FRESH_MS = 5 * 60 * 1000;          // 5 dk
 const PROXY_FRESH_MS = 10 * 60 * 1000;       // 10 dk
 
