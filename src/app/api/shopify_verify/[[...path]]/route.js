@@ -57,7 +57,7 @@ function timingSafeHmacVerify(secret, base, sigHex) {
     return false;
   }
 }
-/** Shopify App Proxy query imzası */
+/** Shopify App Proxy query imzasıi */
 function verifyAppProxySignature(fullUrl) {
   const APP_SECRET =
     process.env.SHOPIFY_API_SECRET ||
