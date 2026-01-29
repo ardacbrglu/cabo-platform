@@ -7,6 +7,7 @@
  * - Env: REDIS_URL (redis://:pass@host:port veya rediss://…)
  * - Redis yoksa ya da bağlanamazsa memory fallback devreye girer (build ve arıza anında servis kesilmesin).
  * - Error event yakalanır; “Unhandled error event” log spam’i engellenir.
+ * - logApiEvent: güvenli, best-effort audit/event kaydı (logger varsa kullanır; yoksa no-op/console).
  */
 
 import Redis from "ioredis";
@@ -141,6 +142,52 @@ export function makeRateLimitKey(req, { scope = "default", userId } = {}) {
 export function rateLimitHeaders(resetMs) {
   const secs = Math.ceil(Math.max(resetMs || 0, 0) / 1000);
   return { "Retry-After": String(secs) };
+}
+
+/**
+ * logApiEvent(payload)
+ * Best-effort event/audit kaydı. Build'i ve runtime'ı asla kırmaz.
+ *
+ * Kullanım örneği:
+ * await logApiEvent({ endpoint:"currencies", event:"error", error:"..." , requestId, ip, ua, userId })
+ */
+export async function logApiEvent(payload = {}) {
+  try {
+    // logger varsa audit'e yaz (dynamic import: olası cycle / bundling riskini azaltır)
+    const mod = await import("./logger");
+    const audit = mod?.audit;
+    if (typeof audit === "function") {
+      audit({
+        evt: "api.event",
+        endpoint: payload.endpoint,
+        event: payload.event,
+        requestId: payload.requestId,
+        userId: payload.userId,
+        ip: payload.ip,
+        ua: payload.ua,
+        result: payload.result,
+        error: payload.error,
+        meta: payload.meta,
+      });
+      return;
+    }
+  } catch {
+    // logger import edilemese bile devam
+  }
+
+  // logger yoksa sessizce console.debug (prod log spam istemiyorsan debug)
+  try {
+    // eslint-disable-next-line no-console
+    console.debug?.("[api.event]", {
+      endpoint: payload.endpoint,
+      event: payload.event,
+      requestId: payload.requestId,
+      userId: payload.userId,
+      result: payload.result,
+    });
+  } catch {
+    // no-op
+  }
 }
 
 /* Opsiyonel yardımcı: testlerde temizlik */
