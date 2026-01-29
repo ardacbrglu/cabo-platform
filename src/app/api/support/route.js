@@ -24,12 +24,32 @@ function withStd(res) {
   return applyApiSecurityHeaders(res);
 }
 
+function escapeHtml(str) {
+  return str.replace(/[&<>"'`]/g, (ch) => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      case "`":
+        return "&#96;";
+      default:
+        return ch;
+    }
+  });
+}
+
 function sanitizePlaintext(s) {
-  return String(s || "")
-    .replace(/<[^>]*>/g, "")
+  const str = String(s || "")
     .replace(/[\u0000-\u001F\u007F]/g, "")
-    .replace(/</g, "&lt;")
     .trim();
+  return escapeHtml(str);
 }
 
 export async function POST(req) {
