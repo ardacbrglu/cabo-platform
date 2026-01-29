@@ -48,6 +48,7 @@ function escapeHtml(str) {
 function sanitizePlaintext(s) {
   const str = String(s || "")
     .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/</g, "&lt;")
     .trim();
   return escapeHtml(str);
 }
