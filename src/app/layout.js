@@ -7,6 +7,12 @@ import Providers from "./providers";
  * - Minimal head; theme-color fixed
  * - Locale from cookie only
  * - Body has no scrolling role (the scroller is <html>)
+ *
+ * Security Docblock (Cabo PROD)
+ * - Server-side cookie read only (next/headers).
+ * - Next.js 16+ uyumluluğu: cookies() async olabilir; await ile okunur.
+ * - Cookie locale sadece allowlist (en|tr); aksi durumda "en" fallback.
+ * - XSS/HTML injection yok: locale sadece lang attribute ve meta içine girer.
  */
 
 export const metadata = {
@@ -14,8 +20,9 @@ export const metadata = {
   description: "Affiliate platform for monetization",
 };
 
-export default function RootLayout({ children }) {
-  const cookieLocale = cookies().get("locale")?.value;
+export default async function RootLayout({ children }) {
+  const store = await cookies();
+  const cookieLocale = store.get("locale")?.value;
   const initialLang = ["en", "tr"].includes(cookieLocale) ? cookieLocale : "en";
 
   return (
@@ -26,11 +33,7 @@ export default function RootLayout({ children }) {
         <meta name="google" content="notranslate" />
         <meta httpEquiv="Content-Language" content={initialLang} />
       </head>
-      <body
-        className="bg-[#0B0B0B] text-white"
-        suppressHydrationWarning
-        translate="no"
-      >
+      <body className="bg-[#0B0B0B] text-white" suppressHydrationWarning translate="no">
         <Providers>{children}</Providers>
       </body>
     </html>

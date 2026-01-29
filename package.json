@@ -12,8 +12,8 @@
     "prisma:migrate": "prisma migrate deploy"
   },
   "engines": {
-  "node": ">=20.9.0",
-  "npm": ">=9"
+    "node": ">=20.9.0",
+    "npm": ">=9"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
@@ -48,6 +48,7 @@
     "@types/estree": "^1.0.8",
     "@types/json-schema": "^7.0.15",
     "autoprefixer": "^10.4.16",
+    "cross-env": "^10.1.0",
     "eslint": "^9.39.2",
     "eslint-config-next": "16.1.6",
     "postcss": "^8.4.38",

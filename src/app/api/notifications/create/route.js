@@ -17,19 +17,23 @@ import { cookies } from "next/headers";
 
 const VALID_TYPES = ["info", "support_reply", "important"];
 
-function readCsrfCookieValue() {
-  const store = cookies();
+/* ---------- CSRF (NextAuth) ---------- */
+async function readCsrfCookieValue() {
+  const store = await cookies();
   const raw =
     store.get("__Host-next-auth.csrf-token")?.value ||
     store.get("next-auth.csrf-token")?.value ||
     "";
   return String(raw).split("|")[0] || "";
 }
-function validateCsrfOrDeny(req) {
+
+async function validateCsrfOrDeny(req) {
   const method = req?.method?.toUpperCase?.() || "GET";
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+
   const headerToken = req.headers.get("X-CSRF-Token") || req.headers.get("x-csrf-token") || "";
-  const cookieToken = readCsrfCookieValue();
+  const cookieToken = await readCsrfCookieValue();
+
   if (!headerToken || !cookieToken || headerToken !== cookieToken) {
     return NextResponse.json({ error: "Invalid CSRF token" }, { status: 403 });
   }
@@ -38,7 +42,7 @@ function validateCsrfOrDeny(req) {
 
 export async function POST(req) {
   try {
-    const csrfErr = validateCsrfOrDeny(req);
+    const csrfErr = await validateCsrfOrDeny(req);
     if (csrfErr) return csrfErr;
 
     const session = await getServerSession(authOptions);
@@ -62,9 +66,7 @@ export async function POST(req) {
     const all = Boolean(body?.all);
 
     const targetUserIdRaw = body?.userId ?? null;
-    const targetUserId = Number.isFinite(Number(targetUserIdRaw))
-      ? Number(targetUserIdRaw)
-      : null;
+    const targetUserId = Number.isFinite(Number(targetUserIdRaw)) ? Number(targetUserIdRaw) : null;
 
     if (message.length < 2) {
       return NextResponse.json({ error: "Message required" }, { status: 400 });
