@@ -63,7 +63,7 @@ function validateCsrfOrTrustSameSite(req) {
 
 function sanitizeName(input) {
   if (typeof input !== "string") return "";
-  const noTags = input.replace(/<[^>]*>/g, "");
+  const noTags = input.replace(/[<>]/g, "");
   return noTags.trim().slice(0, 80);
 }
 
