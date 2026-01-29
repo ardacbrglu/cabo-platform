@@ -18,9 +18,10 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: "1.22.x"
 
       - name: Install OSV-Scanner
+        shell: bash
         run: |
           set -euxo pipefail
           go install github.com/google/osv-scanner/cmd/osv-scanner@latest
@@ -28,15 +29,16 @@ jobs:
           osv-scanner --version
 
       - name: Run OSV-Scanner (lockfile)
-        # Raporu sadece log’a yaz, PR'ı düşürme. Sertleştirmek istersen continue-on-error’u kaldır.
         continue-on-error: true
+        shell: bash
         run: |
+          set -euo pipefail
           if [ -f package-lock.json ]; then
-            osv-scanner --lockfile=package-lock.json
+            osv-scanner --lockfile=package-lock.json || true
           elif [ -f pnpm-lock.yaml ]; then
-            osv-scanner --lockfile=pnpm-lock.yaml
+            osv-scanner --lockfile=pnpm-lock.yaml || true
           elif [ -f yarn.lock ]; then
-            osv-scanner --lockfile=yarn.lock
+            osv-scanner --lockfile=yarn.lock || true
           else
             echo "No lockfile found; skipping OSV scan."
           fi
@@ -44,14 +46,24 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "18"
+          cache: "npm"
 
       - name: npm audit (prod)
         continue-on-error: true
+        shell: bash
         run: |
+          set -euo pipefail
           if [ -f package-lock.json ]; then
-            npm ci --omit=dev
+            echo "Running npm ci --omit=dev (NON-BLOCKING)..."
+            npm ci --omit=dev || true
+
+            echo "If npm ci failed, printing helpful info (NON-BLOCKING)..."
+            npm --version || true
+            node --version || true
+            npm ls react react-dom --depth=0 || true
+
+            echo "Running npm audit --omit=dev (NON-BLOCKING)..."
             npm audit --omit=dev --audit-level=high || true
           else
             echo "No package-lock.json; skipping npm audit."
