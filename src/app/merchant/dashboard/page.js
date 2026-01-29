@@ -41,14 +41,25 @@ const MerchantLayout = dynamic(() => import("@/components/merchant/MerchantLayou
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 
 // Ensure that only safe image URLs are used in DOM attributes.
-// Allows only absolute HTTPS URLs; otherwise returns null so callers can fall back to a safe default.
+// Allows only absolute HTTPS URLs from the same origin; otherwise returns null
+// so callers can fall back to a safe default.
 function sanitizeImageUrl(url) {
   if (!url || typeof url !== "string") return null;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === "https:") {
-      return url;
+    if (parsed.protocol !== "https:") {
+      return null;
     }
+
+    // In a browser environment, enforce same-origin to avoid loading arbitrary external content.
+    if (typeof window !== "undefined") {
+      const currentOrigin = window.location.origin;
+      if (parsed.origin !== currentOrigin) {
+        return null;
+      }
+    }
+
+    return parsed.toString();
   } catch {
     // Invalid URL; fall through to null.
   }
