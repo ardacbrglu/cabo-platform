@@ -42,7 +42,10 @@ function FlagTR({ className = "w-4 h-3" }) {
       <rect width="18" height="12" fill="#E30A17" />
       <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
       <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
-      <polygon fill="#fff" points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22" />
+      <polygon
+        fill="#fff"
+        points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
+      />
     </svg>
   );
 }
@@ -50,44 +53,89 @@ function FlagUS({ className = "w-4 h-3" }) {
   return (
     <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
       <rect width="19" height="12" fill="#B22234" />
-      {[1, 3, 5, 7, 9, 11].map((y) => <rect key={y} x={0} y={y} width="19" height="1" fill="#fff" />)}
+      {[1, 3, 5, 7, 9, 11].map((y) => (
+        <rect key={y} x={0} y={y} width="19" height="1" fill="#fff" />
+      ))}
       <rect x="0" y="0" width="8" height="7" fill="#3C3B6E" />
-      {[1.2, 3.6, 2.4, 4.8].map((x, i) => <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />)}
+      {[1.2, 3.6, 2.4, 4.8].map((x, i) => (
+        <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />
+      ))}
     </svg>
   );
 }
 const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
 
-// SPA path watcher — idempotent global history patch
+// SPA path watcher — safer: no sync setState inside patched history flow
 function usePathnameSafe() {
   const [path, setPath] = useState("/");
 
   useEffect(() => {
-    const update = () => { try { setPath(window.location.pathname || "/"); } catch {} };
-    update();
+    let rafId = 0;
+
+    const readPath = () => {
+      try {
+        return window.location.pathname || "/";
+      } catch {
+        return "/";
+      }
+    };
+
+    const updateAsync = () => {
+      const nextPath = readPath();
+      // schedule state update out of the current event stack
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        setPath((prev) => (prev === nextPath ? prev : nextPath));
+      });
+    };
+
+    // initial
+    updateAsync();
 
     try {
       if (!window.__CABO_HIST_PATCHED__) {
-        const fire = () => { try { window.dispatchEvent(new Event("cabo:locationchange")); } catch {} };
+        const fire = () => {
+          try {
+            // dispatch after current call stack
+            queueMicrotask(() => {
+              try {
+                window.dispatchEvent(new Event("cabo:locationchange"));
+              } catch {}
+            });
+          } catch {
+            try {
+              setTimeout(() => {
+                try {
+                  window.dispatchEvent(new Event("cabo:locationchange"));
+                } catch {}
+              }, 0);
+            } catch {}
+          }
+        };
+
         const wrap = (type) => {
           const orig = history[type];
+          if (typeof orig !== "function") return;
           history[type] = function (...args) {
             const ret = orig.apply(this, args);
             fire();
             return ret;
           };
         };
+
         wrap("pushState");
         wrap("replaceState");
         window.__CABO_HIST_PATCHED__ = true;
       }
     } catch {}
 
-    window.addEventListener("popstate", update);
-    window.addEventListener("cabo:locationchange", update);
+    window.addEventListener("popstate", updateAsync);
+    window.addEventListener("cabo:locationchange", updateAsync);
+
     return () => {
-      window.removeEventListener("popstate", update);
-      window.removeEventListener("cabo:locationchange", update);
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener("popstate", updateAsync);
+      window.removeEventListener("cabo:locationchange", updateAsync);
     };
   }, []);
 
@@ -151,7 +199,9 @@ export default function PublicLayout({ children }) {
     const prevOverflow = root.style.overflowY;
     if (mobileOpen) root.style.overflowY = "hidden";
     else root.style.overflowY = prevOverflow || "";
-    return () => { root.style.overflowY = prevOverflow || ""; };
+    return () => {
+      root.style.overflowY = prevOverflow || "";
+    };
   }, [isMobile, mobileOpen]);
 
   if (!ready) return null;
@@ -235,7 +285,9 @@ export default function PublicLayout({ children }) {
                               setLangOpen(false);
                             }}
                             className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-                              active ? "bg-[#141414] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#151515]"
+                              active
+                                ? "bg-[#141414] text-[#81d742] font-semibold"
+                                : "text-gray-200 hover:bg-[#151515]"
                             }`}
                             role="menuitem"
                             aria-current={active ? "true" : "false"}
@@ -268,21 +320,22 @@ export default function PublicLayout({ children }) {
       {/* MOBILE PANEL — Top-layer Portal (her şeyin üstünde) */}
       {isMobile && mobileOpen && (
         <Portal>
-          {/* Fullscreen click-catcher (şeffaf overlay) */}
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Mobile menu"
-            onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+            onClick={() => {
+              setMobileOpen(false);
+              setMobileLangOpen(false);
+            }}
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 2147483646, // MAX priority (overlay/recaptcha vs)
+              zIndex: 2147483646,
               pointerEvents: "auto",
               background: "transparent",
             }}
           >
-            {/* Panel: header'ın hemen altında, overlay tıklaması panel içinde durdurulur */}
             <div
               ref={panelRef}
               className="edge-band text-sm allow-inner-scroll"
@@ -307,7 +360,10 @@ export default function PublicLayout({ children }) {
                   key={l.href}
                   href={l.href}
                   prefetch={false}
-                  onClick={() => { setMobileOpen(false); setMobileLangOpen(false); }}
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setMobileLangOpen(false);
+                  }}
                   className={`block py-2 transition ${
                     isActive(l.href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
                   }`}
@@ -317,7 +373,6 @@ export default function PublicLayout({ children }) {
                 </Link>
               ))}
 
-              {/* Dil seçimi */}
               <div className="mt-2 pt-2">
                 <button
                   type="button"
@@ -345,7 +400,9 @@ export default function PublicLayout({ children }) {
                           type="button"
                           onClick={() => setLangPersist(l.code)}
                           className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
-                            active ? "bg-[#1a1a1a] text-[#81d742] font-semibold" : "text-gray-200 hover:bg-[#1a1a1a]"
+                            active
+                              ? "bg-[#1a1a1a] text-[#81d742] font-semibold"
+                              : "text-gray-200 hover:bg-[#1a1a1a]"
                           }`}
                           role="menuitem"
                           aria-current={active ? "true" : "false"}
