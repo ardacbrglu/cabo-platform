@@ -1,5 +1,15 @@
-// /lib/validation.js
-// Server-only input validation & sanitization helpers (prod-ready)
+/**
+ * File: src/lib/validation.js
+ * Purpose: Server-only input validation & sanitization helpers (prod-ready)
+ *
+ * Security Docblock (Cabo PROD):
+ * - server-only: Client bundle'a girmez.
+ * - sanitize-html ile HTML tag/attr tamamen strip edilir (text-only).
+ * - Zero-width/BiDi/BOM/kontrol karakterleri temizlenir, NFKC normalize edilir.
+ * - Endpoint'ler için Zod schema'lar export edilir.
+ * - Backwards-compat: sanitize namespace export edilir (sanitize.text / sanitize.html).
+ */
+
 import "server-only";
 import { z } from "zod";
 import sanitizeHtmlLib from "sanitize-html";
@@ -19,6 +29,16 @@ export function sanitizeText(input) {
 }
 
 export const sanitizeHtml = sanitizeText;
+
+/**
+ * Backwards compatible namespace:
+ * - validation.sanitize.text(...)
+ * - validation.sanitize.html(...)
+ */
+export const sanitize = {
+  text: sanitizeText,
+  html: sanitizeHtml,
+};
 
 /** TR IBAN normalize: görünmezleri at, A-Z0-9'a indir, TR ise 26 haneye kes */
 export function normalizeIban(v) {
