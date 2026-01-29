@@ -40,6 +40,21 @@ const MerchantLayout = dynamic(() => import("@/components/merchant/MerchantLayou
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 
+// Ensure that only safe image URLs are used in DOM attributes.
+// Allows only absolute HTTPS URLs; otherwise returns null so callers can fall back to a safe default.
+function sanitizeImageUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:") {
+      return url;
+    }
+  } catch {
+    // Invalid URL; fall through to null.
+  }
+  return null;
+}
+
 /* ------- helpers ------- */
 function handleImgError(e) {
   e.target.onerror = null;
@@ -909,7 +924,11 @@ export default function MerchantDashboardPage() {
                       placeholder={tx.productImage}
                     />
                     <img
-                      src={isAcceptedImageUrl(edit.image_url) ? edit.image_url : editOriginal.image_url || PLACEHOLDER}
+                      src={
+                        sanitizeImageUrl(edit.image_url) ||
+                        sanitizeImageUrl(editOriginal.image_url) ||
+                        PLACEHOLDER
+                      }
                       onError={handleImgError}
                       alt="preview"
                       className="rounded-lg w-full h-32 object-cover border border-[#202720]"
