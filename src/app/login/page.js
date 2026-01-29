@@ -69,7 +69,16 @@ export default function LoginPage() {
     try {
       const url = new URL(window.location.href);
       const f = url.searchParams.get("from");
-      if (f && f.startsWith("/") && !f.startsWith("//")) callbackUrlRef.current = f;
+      // Only allow redirects to a controlled set of internal paths
+      const allowedRedirects = ["/dashboard", "/profile", "/settings"];
+      if (
+        f &&
+        f.startsWith("/") &&
+        !f.startsWith("//") &&
+        allowedRedirects.includes(f)
+      ) {
+        callbackUrlRef.current = f;
+      }
       if (url.searchParams.get("activated") === "1") {
         setJustActivated(true);
         url.searchParams.delete("activated");

@@ -28,6 +28,7 @@ function sanitizePlaintext(s) {
   return String(s || "")
     .replace(/<[^>]*>/g, "")
     .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/</g, "&lt;")
     .trim();
 }
 
