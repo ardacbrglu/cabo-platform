@@ -37,7 +37,7 @@ const dicts = {
     invalidName: "3–32 chars; letters, numbers, _.",
     weakPassword: "At least 8 chars; include letters and numbers.",
     server: "Server error. Please try again.",
-    success: "Registration successful! Redirecting to login…"
+    success: "Registration successful! Check your email to activate your account (also check Spam)."
   },
   tr: {
     title: "Cabo hesabını oluştur",
@@ -62,7 +62,7 @@ const dicts = {
     invalidName: "3–32 karakter; harf, rakam, _.",
     weakPassword: "En az 8 karakter; harf ve rakam içermeli.",
     server: "Sunucu hatası. Lütfen tekrar deneyin.",
-    success: "Kayıt başarılı! Girişe yönlendiriliyor…",
+    success: "Kayıt başarılı! Aktivasyon için e-postanı kontrol et. (Spam/Junk’a da bak)",
   },
 };
 
