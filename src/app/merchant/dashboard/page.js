@@ -43,28 +43,16 @@ const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 // Ensure that only safe image URLs are used in DOM attributes.
 // Allows only absolute HTTPS URLs; otherwise returns null so callers can fall back to a safe default.
 function sanitizeImageUrl(url) {
-  if (!url || typeof url !== "string") {
-    return null;
-  }
-
+  if (!url || typeof url !== "string") return null;
   try {
     const parsed = new URL(url);
-
-    // Only allow HTTPS image URLs. This rejects javascript:, data:, and other potentially dangerous schemes.
-    if (parsed.protocol !== "https:") {
-      return null;
+    if (parsed.protocol === "https:") {
+      return url;
     }
-
-    // Optionally, you could further restrict to specific trusted hosts here.
-    // Example:
-    // const allowedHosts = new Set(["images.example.com"]);
-    // if (!allowedHosts.has(parsed.hostname)) return null;
-
-    return parsed.toString();
   } catch {
-    // Invalid URL; treat as unsafe.
-    return null;
+    // Invalid URL; fall through to null.
   }
+  return null;
 }
 
 /* ------- helpers ------- */
