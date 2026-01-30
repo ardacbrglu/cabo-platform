@@ -1,41 +1,25 @@
 // src/app/terms/page.js
+"use client";
+
 import PublicLayout from "@/components/PublicLayout";
 import Link from "next/link";
-import { headers } from "next/headers";
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
-export const metadata = {
-  title: "Terms of Service | Cabo",
-  description:
-    "Affiliate platform terms of service. Şartlar ve Koşullar (TR/EN).",
-};
+import { useMemo } from "react";
+import { useLocale } from "@/context/LocaleContext";
 
 const BRAND = "Cabo";
-const COMPANY = "[Şirket Adı – Ticaret Unvanı]";           // TODO
-const COMPANY_ADDR = "[Şirket Adresi, İl/İlçe, Türkiye]";  // TODO
-const COMPANY_EMAIL = "legal@yourcompany.com";             // TODO
-const GOVERNING_CITY = "İstanbul";                         // mahkeme yetkisi
-
-function pickLang(searchParams) {
-  const qp = String(searchParams?.lang || "").toLowerCase();
-  if (qp.startsWith("tr") || qp === "tr") return "tr";
-  const h = headers();
-  const al = (h.get("accept-language") || "").toLowerCase();
-  return al.startsWith("tr") ? "tr" : "en";
-}
+const COMPANY = "[Şirket Adı – Ticaret Unvanı]"; // TODO
+const COMPANY_ADDR = "[Şirket Adresi, İl/İlçe, Türkiye]"; // TODO
+const COMPANY_EMAIL = "legal@yourcompany.com"; // TODO
+const GOVERNING_CITY = "İstanbul";
 
 const DICT = {
   en: {
     lastUpdated: "Last updated",
     title: "Terms of Service",
     intro1: `${BRAND} is an affiliate platform that lets you promote products and earn commissions from participating merchants.`,
-    intro2:
-      `By creating an account or using the Services, you agree to these Terms.`,
+    intro2: `By creating an account or using the Services, you agree to these Terms.`,
     defsTitle: "Definitions",
-    defs:
-      `“Platform/Services” means the ${BRAND} website and related APIs; “Affiliate” means a user promoting merchant products; “Merchant” means the product owner; “Link” means your unique referral URL; “We/Us” means ${COMPANY}.`,
+    defs: `“Platform/Services” means the ${BRAND} website and related APIs; “Affiliate” means a user promoting merchant products; “Merchant” means the product owner; “Link” means your unique referral URL; “We/Us” means ${COMPANY}.`,
     eligibilityTitle: "Eligibility & Account",
     eligibilityList: [
       "You must be 18+ and have legal capacity under Turkish law.",
@@ -67,11 +51,9 @@ const DICT = {
       "Any attempt to manipulate attribution or reporting.",
     ],
     ipTitle: "Intellectual Property",
-    ipText:
-      `The ${BRAND} Platform, logo and UI are our property. You receive a limited, revocable, non-exclusive license to use the Services. Merchant marks remain their respective owners’ property.`,
+    ipText: `The ${BRAND} Platform, logo and UI are our property. You receive a limited, revocable, non-exclusive license to use the Services. Merchant marks remain their respective owners’ property.`,
     privacyTitle: "Privacy",
-    privacyText:
-      `Your data is processed as described in our Privacy Policy. See `,
+    privacyText: `Your data is processed as described in our Privacy Policy. See `,
     merchantsTitle: "Merchants & Links",
     merchantsText:
       "Merchants are independent from us. We are not a party to sales contracts between you and merchants or merchants and buyers.",
@@ -90,27 +72,22 @@ const DICT = {
     indemnText:
       "You agree to indemnify us against claims arising from your illegal use, breach of these Terms, or violation of third-party rights.",
     lawTitle: "Governing Law & Venue",
-    lawText:
-      `These Terms are governed by Turkish law. ${GOVERNING_CITY} courts and enforcement offices have exclusive jurisdiction.`,
+    lawText: `These Terms are governed by Turkish law. ${GOVERNING_CITY} courts and enforcement offices have exclusive jurisdiction.`,
     changesTitle: "Changes",
     changesText:
       "We may update these Terms. Material changes will be announced on the Platform. Continued use means acceptance.",
     contactTitle: "Contact",
-    contactText:
-      `Data controller / operator: ${COMPANY}, ${COMPANY_ADDR}. Legal & compliance: ${COMPANY_EMAIL}.`,
+    contactText: `Data controller / operator: ${COMPANY}, ${COMPANY_ADDR}. Legal & compliance: ${COMPANY_EMAIL}.`,
     back: "Back",
     toPrivacy: "Read Privacy Policy",
   },
   tr: {
     lastUpdated: "Son güncelleme",
     title: "Şartlar ve Koşullar",
-    intro1:
-      `${BRAND}, satıcıların ürünlerini tanıtıp satışlardan komisyon kazanmanı sağlayan bir iş ortaklığı (affiliate) platformudur.`,
-    intro2:
-      "Hesap oluşturarak veya Hizmetleri kullanarak bu Şartları kabul etmiş olursun.",
+    intro1: `${BRAND}, satıcıların ürünlerini tanıtıp satışlardan komisyon kazanmanı sağlayan bir iş ortaklığı (affiliate) platformudur.`,
+    intro2: "Hesap oluşturarak veya Hizmetleri kullanarak bu Şartları kabul etmiş olursun.",
     defsTitle: "Tanımlar",
-    defs:
-      `“Platform/Hizmetler” ${BRAND} internet sitesi ve ilgili arayüzlerdir; “Affiliate” ürünü tanıtan kullanıcıyı; “Satıcı” ürün sahibini; “Link” sana özel yönlendirme adresini; “Biz” ${COMPANY}’yi ifade eder.`,
+    defs: `“Platform/Hizmetler” ${BRAND} internet sitesi ve ilgili arayüzlerdir; “Affiliate” ürünü tanıtan kullanıcıyı; “Satıcı” ürün sahibini; “Link” sana özel yönlendirme adresini; “Biz” ${COMPANY}’yi ifade eder.`,
     eligibilityTitle: "Uygunluk ve Hesap",
     eligibilityList: [
       "18+ olmalı ve Türk hukuku uyarınca fiil ehliyetine sahip olmalısın.",
@@ -145,8 +122,7 @@ const DICT = {
     ipText:
       `${BRAND} Platformu, logo ve arayüz bize aittir. Hizmetler için sınırlı, geri alınabilir, münhasır olmayan bir kullanım hakkı verilir. Satıcı işaretleri ilgili sahiplerine aittir.`,
     privacyTitle: "Gizlilik",
-    privacyText:
-      "Kişisel verilerin Gizlilik Politikamızda açıklandığı şekilde işlenir. Bkz. ",
+    privacyText: "Kişisel verilerin Gizlilik Politikamızda açıklandığı şekilde işlenir. Bkz. ",
     merchantsTitle: "Satıcılar ve Linkler",
     merchantsText:
       "Satıcılar bizden bağımsız üçüncü kişilerdir. Satın alma sözleşmelerinin tarafı değiliz.",
@@ -165,124 +141,142 @@ const DICT = {
     indemnText:
       "Bu Şartların ihlalinden, hukuka aykırı kullanımından veya üçüncü kişi haklarının ihlalinden doğan taleplere karşı bizi tazmin etmeyi kabul edersin.",
     lawTitle: "Uygulanacak Hukuk ve Yetkili Mahkeme",
-    lawText:
-      `Bu Şartlar Türk hukukuna tabidir. ${GOVERNING_CITY} mahkemeleri ve icra daireleri yetkilidir.`,
+    lawText: `Bu Şartlar Türk hukukuna tabidir. ${GOVERNING_CITY} mahkemeleri ve icra daireleri yetkilidir.`,
     changesTitle: "Değişiklikler",
     changesText:
       "Şartlar güncellenebilir. Önemli değişiklikler Platformda duyurulur. Kullanıma devam edilmesi kabul anlamına gelir.",
     contactTitle: "İletişim",
-    contactText:
-      `Veri sorumlusu/işleten: ${COMPANY}, ${COMPANY_ADDR}. Hukuk & uyum: ${COMPANY_EMAIL}.`,
+    contactText: `Veri sorumlusu/işleten: ${COMPANY}, ${COMPANY_ADDR}. Hukuk & uyum: ${COMPANY_EMAIL}.`,
     back: "Geri",
     toPrivacy: "Gizlilik Politikası’nı oku",
   },
 };
 
-export default function TermsPage({ searchParams }) {
-  const lang = pickLang(searchParams);
-  const t = (k) => (DICT[lang] || DICT.en)[k] || k;
-  const L = (DICT[lang] || DICT.en);
+export default function TermsPage() {
+  const { locale } = useLocale();
+
+  const lang = useMemo(() => {
+    const s = String(locale || "").toLowerCase();
+    return s.startsWith("tr") ? "tr" : "en";
+  }, [locale]);
+
+  const L = DICT[lang] || DICT.en;
+  const t = (k) => L[k] ?? k;
 
   return (
     <PublicLayout>
-      <main className="max-w-3xl mx-auto px-4 py-10 text-gray-300">
-        <div className="mb-6">
-          <h1 className="text-3xl font-extrabold text-[#d1ffd0]">
-            {t("title")}
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            {t("lastUpdated")}: 24 Aug 2025 ·{" "}
-            <Link
-              href={`/privacy?lang=${lang}`}
-              className="text-[#81d742] underline"
-            >
-              {t("toPrivacy")}
-            </Link>
-          </p>
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 text-gray-200">
+        {/* Header Card */}
+        <div className="rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_14px_50px_rgba(0,0,0,0.55)] p-6 md:p-7">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl md:text-[34px] font-extrabold text-[#d1ffd0] tracking-tight">
+              {t("title")}
+            </h1>
+
+            <div className="text-sm text-gray-400">
+              {t("lastUpdated")}: <span className="text-gray-300">24 Aug 2025</span>
+              <span className="mx-2">·</span>
+              <Link
+                href="/privacy"
+                prefetch={false}
+                className="text-[#81d742] underline decoration-[#2f5f2f] underline-offset-4 hover:opacity-90 transition"
+              >
+                {t("toPrivacy")}
+              </Link>
+            </div>
+
+            <div className="mt-4 space-y-3 leading-relaxed text-gray-300">
+              <p>{t("intro1")}</p>
+              <p>{t("intro2")}</p>
+            </div>
+          </div>
         </div>
 
-        <Section title="">
-          <p>{t("intro1")}</p>
-          <p className="mt-3">{t("intro2")}</p>
-        </Section>
+        {/* Content Sections */}
+        <div className="mt-6 space-y-6">
+          <Section title={t("defsTitle")}>
+            <p>{t("defs")}</p>
+          </Section>
 
-        <Section title={t("defsTitle")}>
-          <p>{t("defs")}</p>
-        </Section>
+          <Section title={t("eligibilityTitle")}>
+            <Ul items={L.eligibilityList} />
+          </Section>
 
-        <Section title={t("eligibilityTitle")}>
-          <Ul items={L.eligibilityList} />
-        </Section>
+          <Section title={t("programTitle")}>
+            <Ul items={L.programList} />
+          </Section>
 
-        <Section title={t("programTitle")}>
-          <Ul items={L.programList} />
-        </Section>
+          <Section title={t("commissionTitle")}>
+            <Ul items={L.commissionList} />
+          </Section>
 
-        <Section title={t("commissionTitle")}>
-          <Ul items={L.commissionList} />
-        </Section>
+          <Section title={t("taxTitle")}>
+            <p>{t("taxText")}</p>
+          </Section>
 
-        <Section title={t("taxTitle")}>
-          <p>{t("taxText")}</p>
-        </Section>
+          <Section title={t("prohibitedTitle")}>
+            <Ul items={L.prohibitedList} />
+          </Section>
 
-        <Section title={t("prohibitedTitle")}>
-          <Ul items={L.prohibitedList} />
-        </Section>
+          <Section title={t("ipTitle")}>
+            <p>{t("ipText")}</p>
+          </Section>
 
-        <Section title={t("ipTitle")}>
-          <p>{t("ipText")}</p>
-        </Section>
+          <Section title={t("privacyTitle")}>
+            <p>
+              {t("privacyText")}
+              <Link
+                href="/privacy"
+                prefetch={false}
+                className="text-[#81d742] underline decoration-[#2f5f2f] underline-offset-4 hover:opacity-90 transition"
+              >
+                Privacy
+              </Link>
+              .
+            </p>
+          </Section>
 
-        <Section title={t("privacyTitle")}>
-          <p>
-            {t("privacyText")}
+          <Section title={t("merchantsTitle")}>
+            <p>{t("merchantsText")}</p>
+          </Section>
+
+          <Section title={t("termTitle")}>
+            <Ul items={L.termList} />
+          </Section>
+
+          <Section title={t("disclaimTitle")}>
+            <p>{t("disclaimText")}</p>
+          </Section>
+
+          <Section title={t("liabilityTitle")}>
+            <p>{t("liabilityText")}</p>
+          </Section>
+
+          <Section title={t("indemnTitle")}>
+            <p>{t("indemnText")}</p>
+          </Section>
+
+          <Section title={t("lawTitle")}>
+            <p>{t("lawText")}</p>
+          </Section>
+
+          <Section title={t("changesTitle")}>
+            <p>{t("changesText")}</p>
+          </Section>
+
+          <Section title={t("contactTitle")}>
+            <p>{t("contactText")}</p>
+          </Section>
+
+          <div className="pt-4">
             <Link
-              href={`/privacy?lang=${lang}`}
-              className="text-[#81d742] underline"
+              href="/"
+              prefetch={false}
+              className="text-[#81d742] underline decoration-[#2f5f2f] underline-offset-4 hover:opacity-90 transition"
             >
-              Privacy
+              ← {t("back")}
             </Link>
-            .
-          </p>
-        </Section>
-
-        <Section title={t("merchantsTitle")}>
-          <p>{t("merchantsText")}</p>
-        </Section>
-
-        <Section title={t("termTitle")}>
-          <Ul items={L.termList} />
-        </Section>
-
-        <Section title={t("disclaimTitle")}>
-          <p>{t("disclaimText")}</p>
-        </Section>
-
-        <Section title={t("liabilityTitle")}>
-          <p>{t("liabilityText")}</p>
-        </Section>
-
-        <Section title={t("indemnTitle")}>
-          <p>{t("indemnText")}</p>
-        </Section>
-
-        <Section title={t("lawTitle")}>
-          <p>{t("lawText")}</p>
-        </Section>
-
-        <Section title={t("changesTitle")}>
-          <p>{t("changesText")}</p>
-        </Section>
-
-        <Section title={t("contactTitle")}>
-          <p>{t("contactText")}</p>
-        </Section>
-
-        <div className="mt-10">
-          <Link href="/" className="text-[#81d742] underline">
-            ← {t("back")}
-          </Link>
+          </div>
         </div>
       </main>
     </PublicLayout>
@@ -291,17 +285,16 @@ export default function TermsPage({ searchParams }) {
 
 function Section({ title, children }) {
   return (
-    <section className="mt-8">
-      {title ? (
-        <h2 className="text-xl font-bold text-[#d1ffd0] mb-2">{title}</h2>
-      ) : null}
-      <div className="space-y-3 leading-relaxed">{children}</div>
+    <section className="rounded-2xl border border-[#232323] bg-[#0f0f0f] p-6 md:p-7">
+      <h2 className="text-xl font-bold text-[#d1ffd0] mb-3">{title}</h2>
+      <div className="space-y-3 leading-relaxed text-gray-300">{children}</div>
     </section>
   );
 }
+
 function Ul({ items = [] }) {
   return (
-    <ul className="list-disc pl-6 space-y-2">
+    <ul className="list-disc pl-6 space-y-2 text-gray-300">
       {items.map((x, i) => (
         <li key={i}>{x}</li>
       ))}

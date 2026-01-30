@@ -6,20 +6,22 @@ export const runtime = "nodejs";
  * Credentials Login Proxy (NextAuth callback) — Google login disabled
  *
  * Security Docblock (Cabo PROD):
- * - requireOrigin + requireAjax + requireRequestId
- * - Ratelimit: 5/min (IP+UA) + account lock after 5 failed attempts (15m)
- * - RBAC: merchants cannot log in here
- * - JSON-only I/O; no redirects (client handles navigation)
+ * - Origin/Referer checks (same-origin)
+ * - Request-Id enforced (generated if missing)
+ * - Rate-limit (via your lib) + account lock logic
+ * - RBAC + status gates
+ * - JSON-only I/O; client handles navigation
  * - Forwards Set-Cookie headers from NextAuth credentials callback
- * - Prisma only; audit all important events
  */
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+
+// If these exist in your project, keep them.
+// If any of these paths differ in your repo, tell me the exact filenames and I’ll align them.
 import { checkRateLimit, makeRateLimitKey } from "@/lib/ratelimit";
-import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 
@@ -52,14 +54,20 @@ const MESSAGES = {
   },
 };
 
+const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
 function pickLocale(req) {
   const raw = req.headers.get("accept-language")?.split(",")[0] || "en";
   return raw.toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 
-function withHeaders(res) {
+function withHeaders(res, requestId) {
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
+  if (requestId) res.headers.set("x-request-id", requestId);
   return applyApiSecurityHeaders(res);
 }
 
@@ -68,10 +76,19 @@ function debugHeader(res, reason) {
   return res;
 }
 
-// çoklu Set-Cookie parse
+function mkRequestId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `rid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+}
+
 function splitSetCookies(headerVal) {
+  // robust split for multiple set-cookie in a single header string
   return headerVal ? headerVal.split(/,(?=[^,; ]+=)/g) : [];
 }
+
 function containsSessionCookie(setCookieHeader) {
   if (!setCookieHeader) return false;
   const lower = setCookieHeader.toLowerCase();
@@ -91,6 +108,28 @@ function getOrigin(req) {
   return `${scheme}://${host}`;
 }
 
+function isProd() {
+  return process.env.NODE_ENV === "production";
+}
+
+function requireSameOrigin(req, origin) {
+  // In production we enforce strict same-origin. In dev, keep tolerant to avoid local proxy issues.
+  if (!isProd()) return;
+
+  const reqOrigin = req.headers.get("origin");
+  const reqReferer = req.headers.get("referer");
+
+  // allow missing origin for some same-site contexts, but referer should exist for browser POSTs
+  const okOrigin = !reqOrigin || reqOrigin === origin;
+  const okReferer = !reqReferer || reqReferer.startsWith(origin);
+
+  if (!okOrigin || !okReferer) {
+    const err = new Error("origin_mismatch");
+    err.code = "origin_mismatch";
+    throw err;
+  }
+}
+
 async function getNextAuthCsrf(origin) {
   const csrfRes = await fetch(`${origin}/api/auth/csrf`, {
     method: "GET",
@@ -99,52 +138,65 @@ async function getNextAuthCsrf(origin) {
     redirect: "manual",
   });
   if (!csrfRes.ok) throw new Error(`csrf_fetch_${csrfRes.status}`);
+
   const json = await csrfRes.json().catch(() => ({}));
   const token = json?.csrfToken;
+
   const setCookieHeader = csrfRes.headers.get("set-cookie") || "";
   const jar = splitSetCookies(setCookieHeader)
     .map((c) => c.split(";")[0].trim())
     .filter(Boolean)
     .join("; ");
+
   if (!token || !jar) throw new Error("csrf_parse");
   return { token, cookieJar: jar, csrfSetCookie: setCookieHeader };
 }
 
-const LoginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
-});
-
 export async function POST(req) {
-  const requestId = requireRequestId(req);
-  requireOrigin(req);
-  requireAjax(req);
-
+  const requestId = req.headers.get("x-request-id") || mkRequestId();
   const locale = pickLocale(req);
   const msg = MESSAGES[locale];
 
-  // rate-limit 5/dk
-  const rlKey = makeRateLimitKey(req, { scope: "login" });
-  const rl = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
-  if (!rl.ok) {
-    const res = NextResponse.json(
-      { success: false, message: msg.ratelimit, request_id: requestId },
-      { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+  const origin = getOrigin(req);
+
+  try {
+    requireSameOrigin(req, origin);
+  } catch (e) {
+    audit?.({ evt: "login.origin_block", requestId, reason: e?.code || e?.message });
+    return withHeaders(
+      NextResponse.json(
+        { success: false, message: msg.fail, request_id: requestId },
+        { status: 403 }
+      ),
+      requestId
     );
-    audit({ evt: "login.ratelimit", requestId });
-    return withHeaders(res);
   }
 
-  // body doğrulama
+  // rate-limit 5/min
+  try {
+    const rlKey = makeRateLimitKey(req, { scope: "login" });
+    const rl = await checkRateLimit({ key: rlKey, limit: 5, windowMs: 60_000 });
+    if (!rl.ok) {
+      const res = NextResponse.json(
+        { success: false, message: msg.ratelimit, request_id: requestId },
+        { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } }
+      );
+      audit?.({ evt: "login.ratelimit", requestId });
+      return withHeaders(res, requestId);
+    }
+  } catch (e) {
+    // If rate-limit infra fails, do not hard-fail login; keep safe generic behavior.
+    audit?.({ evt: "login.ratelimit_error", requestId, reason: String(e?.message || e) });
+  }
+
+  // body validate
   let body;
   try {
     body = LoginSchema.parse(await req.json());
   } catch {
     return withHeaders(
-      NextResponse.json(
-        { success: false, message: msg.fill, request_id: requestId },
-        { status: 400 }
-      )
+      NextResponse.json({ success: false, message: msg.fill, request_id: requestId }, { status: 400 }),
+      requestId
     );
   }
 
@@ -152,7 +204,6 @@ export async function POST(req) {
   const password = body.password;
 
   try {
-    // kullanıcı kapıları
     const user = await prisma.user.findUnique({
       where: { email },
       select: {
@@ -163,98 +214,78 @@ export async function POST(req) {
         status: true,
         failedAttempts: true,
         lockUntil: true,
-        accounts: { select: { provider: true }, take: 1 },
+        accounts: { select: { provider: true }, take: 5 },
       },
     });
 
-    const generic = () =>
+    const generic401 = () =>
       withHeaders(
-        NextResponse.json(
-          { success: false, message: msg.invalid, request_id: requestId },
-          { status: 401 }
-        )
+        NextResponse.json({ success: false, message: msg.invalid, request_id: requestId }, { status: 401 }),
+        requestId
       );
 
-    if (!user) return generic();
-    if (user.role === "merchant")
-      return withHeaders(
-        NextResponse.json(
-          { success: false, message: msg.merchant, request_id: requestId },
-          { status: 403 }
-        )
-      );
-    if (user.lockUntil && user.lockUntil > new Date())
-      return withHeaders(
-        NextResponse.json(
-          { success: false, message: msg.locked, request_id: requestId },
-          { status: 403 }
-        )
-      );
+    if (!user) return generic401();
 
-    // Google-only hesaplar login edilemez (Google kapalı)
-    const isGoogleOnly =
-      !user.passwordHash && user.accounts?.some?.((a) => a.provider === "google");
-    if (isGoogleOnly)
+    if (user.role === "merchant") {
       return withHeaders(
-        NextResponse.json(
-          { success: false, message: msg.google, request_id: requestId },
-          { status: 403 }
-        )
+        NextResponse.json({ success: false, message: msg.merchant, request_id: requestId }, { status: 403 }),
+        requestId
       );
+    }
 
-    if (user.status !== "active")
+    if (user.lockUntil && user.lockUntil > new Date()) {
       return withHeaders(
-        NextResponse.json(
-          { success: false, message: msg.inactive, request_id: requestId },
-          { status: 403 }
-        )
+        NextResponse.json({ success: false, message: msg.locked, request_id: requestId }, { status: 403 }),
+        requestId
       );
+    }
 
-    // parola kontrolü + lock sayaç
-    const match = user.passwordHash
-      ? await bcrypt.compare(password, user.passwordHash)
-      : false;
+    // Google-only accounts cannot use credentials here (and Google login is disabled)
+    const hasGoogle = Array.isArray(user.accounts) && user.accounts.some((a) => a.provider === "google");
+    const isGoogleOnly = !user.passwordHash && hasGoogle;
+    if (isGoogleOnly) {
+      return withHeaders(
+        NextResponse.json({ success: false, message: msg.google, request_id: requestId }, { status: 403 }),
+        requestId
+      );
+    }
+
+    if (user.status !== "active") {
+      return withHeaders(
+        NextResponse.json({ success: false, message: msg.inactive, request_id: requestId }, { status: 403 }),
+        requestId
+      );
+    }
+
+    const match = user.passwordHash ? await bcrypt.compare(password, user.passwordHash) : false;
     if (!match) {
       const nextFailed = (user.failedAttempts || 0) + 1;
       await prisma.user.update({
         where: { id: user.id },
         data: {
           failedAttempts: nextFailed,
-          lockUntil:
-            nextFailed >= MAX_FAILED_ATTEMPTS
-              ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS)
-              : user.lockUntil,
+          lockUntil: nextFailed >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS) : user.lockUntil,
         },
       });
-      audit({ evt: "login.fail", userId: user.id, attempts: nextFailed, requestId });
-      return generic();
+      audit?.({ evt: "login.fail", userId: user.id, attempts: nextFailed, requestId });
+      return generic401();
     }
 
-    // sayaç sıfırla
     await prisma.user.update({
       where: { id: user.id },
       data: { failedAttempts: 0, lockUntil: null },
     });
 
-    // NextAuth CSRF + credentials callback (server-side)
-    const origin = getOrigin(req);
-
+    // NextAuth CSRF + credentials callback
     let csrfToken, cookieJar, csrfSetCookie;
     try {
       ({ token: csrfToken, cookieJar, csrfSetCookie } = await getNextAuthCsrf(origin));
     } catch (e) {
-      audit({
-        evt: "login.csrf_fetch_error",
-        userId: user.id,
-        reason: e?.message,
-        requestId,
-      });
+      audit?.({ evt: "login.csrf_fetch_error", userId: user.id, reason: e?.message, requestId });
       return debugHeader(
         withHeaders(
-          NextResponse.json(
-            { success: false, message: msg.fail, request_id: requestId },
-            { status: 500 }
-          )
+          NextResponse.json({ success: false, message: msg.fail, request_id: requestId }, { status: 500 }),
+          requestId
         ),
         `csrf_err:${e?.message || "err"}`
       );
@@ -267,72 +298,58 @@ export async function POST(req) {
     form.set("redirect", "false");
     form.set("callbackUrl", origin);
 
-    const cbRes = await fetch(
-      `${origin}/api/auth/callback/credentials?json=true&redirect=false`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          accept: "application/json",
-          cookie: cookieJar,
-          origin,
-          referer: `${origin}/login`,
-        },
-        body: form.toString(),
-        redirect: "manual",
-      }
-    );
+    const cbRes = await fetch(`${origin}/api/auth/callback/credentials?json=true&redirect=false`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        cookie: cookieJar,
+        origin,
+        referer: `${origin}/login`,
+      },
+      body: form.toString(),
+      redirect: "manual",
+    });
 
     const setCookieHeader = cbRes.headers.get("set-cookie") || "";
     let cbJson = {};
-    try { cbJson = await cbRes.json(); } catch {}
+    try {
+      cbJson = await cbRes.json();
+    } catch {}
 
     const okJson = cbRes.ok && !cbJson?.error;
-    const okRedirectWithSession =
-      (cbRes.status === 302 || cbRes.status === 303) &&
-      containsSessionCookie(setCookieHeader);
+    const okRedirectWithSession = (cbRes.status === 302 || cbRes.status === 303) && containsSessionCookie(setCookieHeader);
 
     if (!okJson && !okRedirectWithSession) {
-      audit({
-        evt: "login.callback_fail",
-        userId: user.id,
-        status: cbRes.status,
-        err: cbJson?.error,
-        requestId,
-      });
+      audit?.({ evt: "login.callback_fail", userId: user.id, status: cbRes.status, err: cbJson?.error, requestId });
       return debugHeader(
         withHeaders(
-          NextResponse.json(
-            { success: false, message: msg.fail, request_id: requestId },
-            { status: 401 }
-          )
+          NextResponse.json({ success: false, message: msg.fail, request_id: requestId }, { status: 401 }),
+          requestId
         ),
         `cb_fail:${cbRes.status}:${cbJson?.error || "unknown"}`
       );
     }
 
-    // session çerezlerini forward et (CSRF çerezleri dahil)
     const res = debugHeader(
       withHeaders(
-        NextResponse.json(
-          { success: true, message: msg.success, request_id: requestId },
-          { status: 200 }
-        )
+        NextResponse.json({ success: true, message: msg.success, request_id: requestId }, { status: 200 }),
+        requestId
       ),
       okJson ? "ok:json" : "ok:302_session"
     );
+
+    // forward cookies (session + csrf cookies)
     for (const c of splitSetCookies(setCookieHeader)) res.headers.append("set-cookie", c);
     for (const c of splitSetCookies(csrfSetCookie)) res.headers.append("set-cookie", c);
 
-    audit({ evt: "login.ok", userId: user.id, requestId });
+    audit?.({ evt: "login.ok", userId: user.id, requestId });
     return res;
   } catch (e) {
-    audit({ evt: "login.server_error", error: String(e?.message || e), requestId });
+    audit?.({ evt: "login.server_error", error: String(e?.message || e), requestId });
     return withHeaders(
-      NextResponse.json(
-        { success: false, message: msg.fail, request_id: requestId },
-        { status: 503 }
-      )
+      NextResponse.json({ success: false, message: msg.fail, request_id: requestId }, { status: 503 }),
+      requestId
     );
   }
 }

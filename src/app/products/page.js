@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * Product Marketplace (Affiliate) — PROD
- * - Masaüstünde sabit 3 sütun; tablet 2, mobil 1 sütun. Satırlar 3'lü bloklar halinde stack'lenir.
- * - Kartlar ortalanır; aralıklar sabit (gap-x-7 gap-y-9).
- * - Chip'ler ve metrikler taşmaz; yeşil "satış başı komisyon" kutusu clamp'lı.
+ * Product Marketplace (Affiliate) — PROD (Aligned Cards Fix)
+ * - 1 / 2 / 3 columns responsive grid
+ * - Card parallelism: title/desc clamp + fixed min-heights + actions pinned to bottom (mt-auto)
+ * - "Added" button style improved (premium soft green)
+ * - Small perf tweaks: useMemo filtering, useEffect (no layout effect), stable computed strings
  */
 
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Layout from "@/components/Layout";
 import {
   BadgePercent,
@@ -37,8 +38,8 @@ const money = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-const perSale = (p) =>
-  Math.max(0, (Number(p.price || 0) * Number(p.commissionRate || 0)) / 100);
+
+const perSale = (p) => Math.max(0, (Number(p.price || 0) * Number(p.commissionRate || 0)) / 100);
 
 function handleImgError(e) {
   e.currentTarget.onerror = null;
@@ -47,28 +48,35 @@ function handleImgError(e) {
 
 export default function ProductsPage() {
   const { t } = useTranslation();
+  const { setUser } = useUser();
+
   const [products, setProducts] = useState([]);
   const [userLinks, setUserLinks] = useState([]);
   const [visibleLinkIds, setVisibleLinkIds] = useState(new Set());
+
   const [loading, setLoading] = useState(true);
   const [cardLoading, setCardLoading] = useState({});
   const [cardMessages, setCardMessages] = useState({});
   const [searchTerm, setSearchTerm] = useState("");
-  const { setUser } = useUser();
 
-  useLayoutEffect(() => {
+  // Hydration-safe local cache → user context
+  useEffect(() => {
     if (typeof window === "undefined") return;
-    const name = localStorage.getItem("cabo_username");
-    const email = localStorage.getItem("cabo_email");
-    const id = localStorage.getItem("cabo_userId");
-    if (name || email || id) {
-      setUser((u) => ({
-        ...(u || {}),
-        name: u?.name || name || u?.name,
-        email: u?.email || email || u?.email,
-        id: u?.id || (id ? Number(id) : u?.id),
-        role: u?.role || "affiliate",
-      }));
+    try {
+      const name = localStorage.getItem("cabo_username");
+      const email = localStorage.getItem("cabo_email");
+      const id = localStorage.getItem("cabo_userId");
+      if (name || email || id) {
+        setUser((u) => ({
+          ...(u || {}),
+          name: u?.name || name || u?.name,
+          email: u?.email || email || u?.email,
+          id: u?.id || (id ? Number(id) : u?.id),
+          role: u?.role || "affiliate",
+        }));
+      }
+    } catch {
+      // ignore
     }
   }, [setUser]);
 
@@ -88,6 +96,7 @@ export default function ProductsPage() {
           },
           cache: "no-store",
         });
+
         const j = await res.json();
         if (!alive) return;
 
@@ -114,34 +123,36 @@ export default function ProductsPage() {
       }
     })();
 
+    // Refresh /api/me (best-effort)
     apiFetch("/api/me")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!alive || !data?.userId) return;
         setUser((u) => ({ ...(u || {}), ...data, role: "affiliate" }));
-        if (typeof window !== "undefined") {
-          if (data.username) localStorage.setItem("cabo_username", data.username);
-          if (data.email) localStorage.setItem("cabo_email", data.email);
-          if (data.userId) localStorage.setItem("cabo_userId", String(data.userId));
+        try {
+          if (typeof window !== "undefined") {
+            if (data.username) localStorage.setItem("cabo_username", data.username);
+            if (data.email) localStorage.setItem("cabo_email", data.email);
+            if (data.userId) localStorage.setItem("cabo_userId", String(data.userId));
+          }
+        } catch {
+          // ignore
         }
       })
       .catch(() => {});
+
     return () => {
       alive = false;
     };
   }, [setUser, t]);
 
   const hasVisible = (pid) => visibleLinkIds.has(pid);
+
   const statusOf = (p) =>
-    !p.isActive
-      ? "inactive"
-      : p.maxSalesLimit != null && p.totalPurchases >= p.maxSalesLimit
-      ? "quota"
-      : "active";
+    !p.isActive ? "inactive" : p.maxSalesLimit != null && p.totalPurchases >= p.maxSalesLimit ? "quota" : "active";
+
   const quotaLeft = (p) =>
-    p.maxSalesLimit == null
-      ? Infinity
-      : Math.max(0, Number(p.maxSalesLimit) - Number(p.totalPurchases || 0));
+    p.maxSalesLimit == null ? Infinity : Math.max(0, Number(p.maxSalesLimit) - Number(p.totalPurchases || 0));
 
   function flash(productId, text, kind = "success") {
     setCardMessages((s) => ({ ...s, [productId]: { kind, text } }));
@@ -181,19 +192,21 @@ export default function ProductsPage() {
     }
   }
 
-  const filtered = products.filter((p) => {
-    if (!searchTerm.trim()) return true;
-    const text = `${p.name || ""} ${p.description || ""}`.toLowerCase();
-    return text.includes(searchTerm.trim().toLowerCase());
-  });
+  const normalizedQuery = useMemo(() => searchTerm.trim().toLowerCase(), [searchTerm]);
+
+  const filtered = useMemo(() => {
+    if (!normalizedQuery) return products;
+    return products.filter((p) => {
+      const text = `${p.name || ""} ${p.description || ""}`.toLowerCase();
+      return text.includes(normalizedQuery);
+    });
+  }, [products, normalizedQuery]);
 
   return (
     <Layout>
       {/* Header + Search */}
       <div className="flex flex-col items-center mt-10 mb-6 px-3">
-        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">
-          {t("productMarketplace")}
-        </h1>
+        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">{t("productMarketplace")}</h1>
         <p className="mt-3 text-base md:text-lg text-gray-200 font-mono opacity-90 text-center max-w-2xl">
           {t("productSubtitle")}
         </p>
@@ -208,6 +221,8 @@ export default function ProductsPage() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               autoComplete="off"
+              inputMode="search"
+              aria-label="Search products"
             />
             <Search size={20} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#aaa]" />
             {!!searchTerm && (
@@ -216,6 +231,7 @@ export default function ProductsPage() {
                 onClick={() => setSearchTerm("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-white text-xs px-2 py-1 rounded hover:opacity-90"
                 style={{ background: SURFACE_GREY, border: `1px solid ${SURFACE_GREY_BORDER}` }}
+                aria-label="Clear search"
               >
                 ✕
               </button>
@@ -224,7 +240,7 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Cards grid — tam 3 sütun, ortalı */}
+      {/* Cards grid */}
       <div className={`w-full mx-auto px-3 md:px-8 pb-14 ${loading ? "opacity-60" : "opacity-100"} max-w-[1360px]`}>
         {cardMessages.global?.text && (
           <div
@@ -248,7 +264,7 @@ export default function ProductsPage() {
                   style={{
                     background: CARD_BG,
                     border: `1px solid ${CARD_BORDER}`,
-                    height: 420,
+                    height: 520,
                     width: "100%",
                   }}
                 />
@@ -263,7 +279,7 @@ export default function ProductsPage() {
                 return (
                   <article
                     key={p.productId}
-                    className="relative rounded-2xl shadow-lg transition-transform duration-200 ease-out will-change-transform w-full"
+                    className="relative rounded-2xl shadow-lg transition-transform duration-200 ease-out will-change-transform w-full flex flex-col"
                     style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}` }}
                     onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px)")}
                     onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
@@ -282,7 +298,7 @@ export default function ProductsPage() {
                       </div>
                     </div>
 
-                    {/* Görsel + başlık + açıklama */}
+                    {/* Visual + title + desc (fixed heights for alignment) */}
                     <div className="px-6 pt-4 flex flex-col items-center text-center">
                       <div
                         className="rounded-xl overflow-hidden"
@@ -295,29 +311,43 @@ export default function ProductsPage() {
                       >
                         <img
                           src={p.imageUrl || PLACEHOLDER}
-                          alt={p.name}
+                          alt={p.name || "product"}
                           className="object-cover w-full h-full transition-transform duration-300"
                           onError={handleImgError}
                           loading="lazy"
                           decoding="async"
+                          referrerPolicy="no-referrer"
                         />
                       </div>
 
+                      {/* Title: 2 lines clamp + fixed minHeight to keep actions aligned */}
                       <h2
-                        className="mt-4 text-[1.45rem] md:text-[1.55rem] font-extrabold text-white leading-tight break-words"
-                        style={{ wordBreak: "break-word" }}
+                        className="mt-4 text-[1.45rem] md:text-[1.55rem] font-extrabold text-white leading-tight w-full"
+                        style={{
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          wordBreak: "break-word",
+                          minHeight: "3.6em", // ~2 lines
+                        }}
+                        title={p.name || ""}
                       >
                         {p.name}
                       </h2>
+
+                      {/* Desc: 2 lines clamp + fixed minHeight */}
                       <p
-                        className="mt-2 text-gray-300 text-[14px] md:text-[15px] leading-6"
+                        className="mt-2 text-gray-300 text-[14px] md:text-[15px] leading-6 w-full"
                         style={{
                           display: "-webkit-box",
                           WebkitLineClamp: 2,
                           WebkitBoxOrient: "vertical",
                           overflow: "hidden",
                           maxWidth: "46ch",
+                          minHeight: "3.0em", // ~2 lines
                         }}
+                        title={p.description || ""}
                       >
                         {p.description || ""}
                       </p>
@@ -385,17 +415,13 @@ export default function ProductsPage() {
                           color: cardMessages[p.productId].kind === "error" ? "#ffd9a8" : ACCENT,
                         }}
                       >
-                        {cardMessages[p.productId].kind === "error" ? (
-                          <AlertTriangle size={16} />
-                        ) : (
-                          <CheckCircle2 size={16} />
-                        )}
+                        {cardMessages[p.productId].kind === "error" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
                         <span className="break-words">{cardMessages[p.productId].text}</span>
                       </div>
                     )}
 
-                    {/* Actions */}
-                    <div className="px-6 pb-5 pt-3">
+                    {/* Actions pinned to bottom */}
+                    <div className="px-6 pb-5 pt-4 mt-auto">
                       {disabled ? (
                         <button
                           type="button"
@@ -410,10 +436,11 @@ export default function ProductsPage() {
                           <button
                             type="button"
                             disabled
-                            className="w-full rounded-xl font-mono font-bold py-3 text-gray-200"
+                            className="w-full rounded-xl font-mono font-bold py-3 text-gray-100"
                             style={{
-                              background: "rgba(129,215,66,0.10)",
-                              border: "1px solid #2d5b2d",
+                              background: "linear-gradient(180deg, rgba(129,215,66,0.18), rgba(129,215,66,0.10))",
+                              border: "1px solid rgba(129,215,66,0.28)",
+                              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 10px 22px rgba(0,0,0,0.22)",
                               color: "#eaffea",
                             }}
                           >
@@ -422,7 +449,7 @@ export default function ProductsPage() {
                           <div className="flex items-center justify-center gap-1 mt-2 text-gray-400 text-xs font-mono">
                             <Link2 size={14} />
                             {t("productManage")}{" "}
-                            <a href="/mylinks" className="underline ml-1">
+                            <a href="/mylinks" className="underline ml-1 hover:text-gray-200">
                               {t("productMyLinks")}
                             </a>
                           </div>
@@ -432,8 +459,11 @@ export default function ProductsPage() {
                           type="button"
                           onClick={() => promoteProduct(p.productId)}
                           disabled={!!cardLoading[p.productId]}
-                          className="w-full rounded-xl font-black font-mono py-3 text-[#0e1a0c] shadow-lg hover:shadow-xl transition"
-                          style={{ background: ACCENT, border: "1px solid #6ec43c" }}
+                          className="w-full rounded-xl font-black font-mono py-3 text-[#0e1a0c] shadow-lg hover:shadow-xl transition disabled:opacity-70 disabled:cursor-not-allowed"
+                          style={{
+                            background: "linear-gradient(180deg, rgba(129,215,66,1), rgba(99,190,46,1))",
+                            border: "1px solid rgba(129,215,66,0.55)",
+                          }}
                         >
                           {cardLoading[p.productId] ? t("loading") : t("productGetLink")}
                         </button>
@@ -447,7 +477,6 @@ export default function ProductsPage() {
 
       <style jsx global>{`
         .tabnums { font-variant-numeric: tabular-nums; }
-        @media (max-width: 640px) { .grid { justify-items: stretch; } }
       `}</style>
     </Layout>
   );
@@ -491,12 +520,8 @@ function MetricBox({ icon, label, value, caption, className = "" }) {
         <span className="text-gray-300 text-sm font-medium text-center">{label}</span>
         {icon ? <span className="text-gray-300 shrink-0">{icon}</span> : null}
       </div>
-      <div className="flex items-center justify-center text-white font-bold tabnums mt-2 max-w-full">
-        {value}
-      </div>
-      <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">
-        {caption ? caption : "\u00A0"}
-      </div>
+      <div className="flex items-center justify-center text-white font-bold tabnums mt-2 max-w-full">{value}</div>
+      <div className="text-center text-gray-400 text-[12px] leading-4 min-h-4">{caption ? caption : "\u00A0"}</div>
     </div>
   );
 }

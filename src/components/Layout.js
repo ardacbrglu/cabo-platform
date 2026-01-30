@@ -4,15 +4,29 @@
 /**
  * Private Layout (Affiliate)
  * - Mobil panel genişliği: 100% + box-border (100vw değil) -> iOS yatay kayma fix
+ *
+ * FIX (React/Next):
+ * - usePathnameSafe() kaldırıldı (history patch + setState -> useInsertionEffect warning tetikleyebiliyordu)
+ * - Next App Router resmi hook'u: usePathname() kullanılıyor
  */
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import ProfileDropdown from "./ProfileDropdown";
 import NotificationBadge from "@/components/NotificationBadge";
 import {
-  BarChart2, Link2 as LinkIcon, ShoppingCart, Wallet2,
-  Home as HomeIcon, Menu, Settings, Headset, LogOut, User2, Bell,
+  BarChart2,
+  Link2 as LinkIcon,
+  ShoppingCart,
+  Wallet2,
+  Home as HomeIcon,
+  Menu,
+  Settings,
+  Headset,
+  LogOut,
+  User2,
+  Bell,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useUser } from "@/context/UserContext";
@@ -30,32 +44,8 @@ const DESKTOP_ICON_TEXT_GAP = 5;
 const DESKTOP_LI_GAP = 14;
 const DESKTOP_FONT_PX = 12;
 
-function usePathnameSafe() {
-  const [path, setPath] = useState("");
-  useEffect(() => {
-    const update = () => { try { setPath(window.location.pathname || ""); } catch {} };
-    update();
-    const patch = (type) => {
-      const orig = history[type];
-      return function (...args) {
-        const ret = orig.apply(this, args);
-        try { window.dispatchEvent(new Event("locationchange")); } catch {}
-        return ret;
-      };
-    };
-    try { history.pushState = patch("pushState"); history.replaceState = patch("replaceState"); } catch {}
-    window.addEventListener("popstate", update);
-    window.addEventListener("locationchange", update);
-    return () => {
-      window.removeEventListener("popstate", update);
-      window.removeEventListener("locationchange", update);
-    };
-  }, []);
-  return path;
-}
-
 export default function Layout({ children }) {
-  const pathname = usePathnameSafe();
+  const pathname = usePathname() || "";
   const isMobile = useIsMobile();
   const { user, ready, setUser } = useUser();
   const { t } = useTranslation();
@@ -71,10 +61,20 @@ export default function Layout({ children }) {
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
 
-  useEffect(() => { setMobileOpen(false); setProfileOpen(false); }, [pathname]);
-
+  // Route change -> close panels
   useEffect(() => {
-    const onEsc = (e) => { if (e.key === "Escape") { setMobileOpen(false); setProfileOpen(false); } };
+    setMobileOpen(false);
+    setProfileOpen(false);
+  }, [pathname]);
+
+  // ESC / outside click -> close
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key === "Escape") {
+        setMobileOpen(false);
+        setProfileOpen(false);
+      }
+    };
     const onDown = (e) => {
       if (!mobileOpen) return;
       const tgt = e.target;
@@ -82,7 +82,10 @@ export default function Layout({ children }) {
       const insidePanel = panelRef.current.contains(tgt);
       const insideHeader = headerRef.current.contains(tgt);
       const onButton = buttonRef.current && buttonRef.current.contains(tgt);
-      if (!insidePanel && !insideHeader && !onButton) { setMobileOpen(false); setProfileOpen(false); }
+      if (!insidePanel && !insideHeader && !onButton) {
+        setMobileOpen(false);
+        setProfileOpen(false);
+      }
     };
     document.addEventListener("keydown", onEsc);
     document.addEventListener("mousedown", onDown);
@@ -99,7 +102,7 @@ export default function Layout({ children }) {
   const cachedName = mounted ? (user?.name || "") : "";
   const hasUnread = (unreadCount || 0) > 0;
 
-  const isActive = (path) => pathname === path;
+  const isActive = (path) => (pathname || "") === path;
 
   const navItemClass = (path) =>
     `inline-flex ${isActive(path) ? "text-[#81d742] font-semibold" : "text-gray-200 hover:text-[#81d742]"}`;
@@ -121,12 +124,17 @@ export default function Layout({ children }) {
   function handleLogout() {
     try {
       if (typeof window !== "undefined") {
+        // eski token cookie temizliği (zararsız)
         document.cookie = "cabo_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
         document.cookie = `cabo_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname};`;
         setUser && setUser(null);
         window.location.assign("/api/logout");
       }
-    } catch { window.location.href = "/api/logout"; }
+    } catch {
+      try {
+        window.location.href = "/api/logout";
+      } catch {}
+    }
   }
 
   const mustRedirect =
@@ -149,37 +157,85 @@ export default function Layout({ children }) {
   return (
     <div className="app-shell">
       {/* HEADER */}
-      <header ref={headerRef} className="app-header relative z-[12000]" style={{ overflow: "visible", position: "relative" }}>
+      <header
+        ref={headerRef}
+        className="app-header relative z-[12000]"
+        style={{ overflow: "visible", position: "relative" }}
+      >
         <div className="edge-band h-full flex items-center justify-between">
-          <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">Cabo</Link>
+          <Link href="/dashboard" prefetch={false} className="brand-cabo select-none" aria-label="Cabo">
+            Cabo
+          </Link>
 
           {/* Desktop nav */}
           {!isMobile ? (
             <nav aria-label="Main navigation">
-              <ul className="flex items-center font-medium" style={{ columnGap: DESKTOP_LI_GAP, fontSize: `${DESKTOP_FONT_PX}px` }}>
+              <ul
+                className="flex items-center font-medium"
+                style={{ columnGap: DESKTOP_LI_GAP, fontSize: `${DESKTOP_FONT_PX}px` }}
+              >
                 <li>
-                  <Link prefetch={false} href="/dashboard" className={navItemClass("/dashboard")} style={navItemStyle} aria-current={isActive("/dashboard") ? "page" : undefined}>
-                    <HomeIcon size={DESKTOP_ICON} /><span>{t("home")}</span>
+                  <Link
+                    prefetch={false}
+                    href="/dashboard"
+                    className={navItemClass("/dashboard")}
+                    style={navItemStyle}
+                    aria-current={isActive("/dashboard") ? "page" : undefined}
+                  >
+                    <HomeIcon size={DESKTOP_ICON} />
+                    <span>{t("home")}</span>
                   </Link>
                 </li>
+
                 <li>
-                  <Link prefetch={false} href="/products" className={navItemClass("/products")} style={navItemStyle} aria-current={isActive("/products") ? "page" : undefined}>
-                    <ShoppingCart size={DESKTOP_ICON} /><span>{t("productMarket")}</span>
+                  <Link
+                    prefetch={false}
+                    href="/products"
+                    className={navItemClass("/products")}
+                    style={navItemStyle}
+                    aria-current={isActive("/products") ? "page" : undefined}
+                  >
+                    <ShoppingCart size={DESKTOP_ICON} />
+                    <span>{t("productMarket")}</span>
                   </Link>
                 </li>
+
                 <li>
-                  <Link prefetch={false} href="/mylinks" className={navItemClass("/mylinks")} style={navItemStyle} aria-current={isActive("/mylinks") ? "page" : undefined}>
-                    <LinkIcon size={DESKTOP_ICON} /><span>{t("myLinks")}</span>
+                  <Link
+                    prefetch={false}
+                    href="/mylinks"
+                    className={navItemClass("/mylinks")}
+                    style={navItemStyle}
+                    aria-current={isActive("/mylinks") ? "page" : undefined}
+                  >
+                    <LinkIcon size={DESKTOP_ICON} />
+                    <span>{t("myLinks")}</span>
                   </Link>
                 </li>
+
                 <li>
-                  <Link prefetch={false} href="/performance" className={navItemClass("/performance")} style={navItemStyle} aria-current={isActive("/performance") ? "page" : undefined}>
-                    <BarChart2 size={DESKTOP_ICON} /><span>{t("performance")}</span>
+                  <Link
+                    prefetch={false}
+                    href="/performance"
+                    className={navItemClass("/performance")}
+                    style={navItemStyle}
+                    aria-current={isActive("/performance") ? "page" : undefined}
+                  >
+                    <BarChart2 size={DESKTOP_ICON} />
+                    <span>{t("performance")}</span>
                   </Link>
                 </li>
+
                 <li>
-                  <Link prefetch={false} href="/wallet" className={navItemClass("/wallet")} style={navItemStyle} aria-current={isActive("/wallet") ? "page" : undefined}>
-                    <Wallet2 size={DESKTOP_ICON} /><span>{t("wallet")}</span>
+                  <Link
+                    prefetch={false}
+                    href="/wallet"
+                    className={navItemClass("/wallet")}
+                    style={navItemStyle}
+                    aria-current={isActive("/wallet") ? "page" : undefined}
+                  >
+                    <Wallet2 size={DESKTOP_ICON} />
+                    <span>{t("wallet")}</span>
                   </Link>
                 </li>
 
@@ -199,12 +255,17 @@ export default function Layout({ children }) {
                         columnGap: DESKTOP_ICON_TEXT_GAP,
                       }}
                     >
-                      <div className="rounded-full bg-white/25 relative" style={{ width: DESKTOP_ICON, height: DESKTOP_ICON }}>
+                      <div
+                        className="rounded-full bg-white/25 relative"
+                        style={{ width: DESKTOP_ICON, height: DESKTOP_ICON }}
+                      >
                         <div className="absolute -top-[3px] -right-[3px]">
                           <NotificationBadge show={hasUnread} size={8} />
                         </div>
                       </div>
-                      <span className="max-w-[8rem] truncate">{(user?.name || cachedName || t("profile"))}</span>
+                      <span className="max-w-[8rem] truncate">
+                        {user?.name || cachedName || t("profile")}
+                      </span>
                     </div>
                   )}
                 </li>
@@ -214,7 +275,7 @@ export default function Layout({ children }) {
             // ==== MOBİL: Hamburger (Menu) + ROZET SAĞ-ÜST ====
             <button
               ref={buttonRef}
-              onClick={() => setMobileOpen(v => !v)}
+              onClick={() => setMobileOpen((v) => !v)}
               className="text-white relative"
               type="button"
               aria-label="Toggle menu"
@@ -238,9 +299,11 @@ export default function Layout({ children }) {
             className="pointer-events-auto"
             style={{
               position: "fixed",
-              left: 0, right: 0, top: "calc(var(--header-h))",
-              width: "100%",            // <-- FIX: 100vw değildi
-              boxSizing: "border-box",  // <-- taşma güvenliği
+              left: 0,
+              right: 0,
+              top: "calc(var(--header-h))",
+              width: "100%", // <-- FIX: 100vw değil
+              boxSizing: "border-box",
               zIndex: 2147483647,
               transform: mobileOpen ? "translate3d(0,0,0)" : "translate3d(0,-8px,0)",
               opacity: mobileOpen ? 1 : 0,
@@ -248,7 +311,9 @@ export default function Layout({ children }) {
               pointerEvents: mobileOpen ? "auto" : "none",
               WebkitTapHighlightColor: "transparent",
             }}
-            role="dialog" aria-modal="true" aria-hidden={!mobileOpen}
+            role="dialog"
+            aria-modal="true"
+            aria-hidden={!mobileOpen}
           >
             <div
               className="edge-band text-sm allow-inner-scroll"
@@ -275,9 +340,14 @@ export default function Layout({ children }) {
                   href={href}
                   prefetch={false}
                   onClick={() => setMobileOpen(false)}
-                  className={`block py-2 transition ${isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"}`}
+                  className={`block py-2 transition ${
+                    isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
+                  }`}
                 >
-                  <span className="inline-flex items-center gap-2">{icon}<span>{label}</span></span>
+                  <span className="inline-flex items-center gap-2">
+                    {icon}
+                    <span>{label}</span>
+                  </span>
                 </Link>
               ))}
 
@@ -286,7 +356,7 @@ export default function Layout({ children }) {
                 <button
                   className="w-full flex items-center gap-2 py-2 font-mono font-bold text-[1.02rem] text-[#81d742] transition hover:text-[#a9ff72] focus:outline-none"
                   style={{ minHeight: 40 }}
-                  onClick={() => setProfileOpen(v => !v)}
+                  onClick={() => setProfileOpen((v) => !v)}
                   aria-haspopup="true"
                   aria-expanded={profileOpen}
                   aria-label={t("profile")}
@@ -308,7 +378,10 @@ export default function Layout({ children }) {
                       href="/notifications"
                       prefetch={false}
                       className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                      onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setMobileOpen(false);
+                      }}
                     >
                       <span className="relative inline-flex items-center">
                         <Bell size={16} />
@@ -316,25 +389,39 @@ export default function Layout({ children }) {
                       </span>
                       {t("notifications")}
                     </Link>
+
                     <Link
                       href="/settings"
                       prefetch={false}
                       className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                      onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setMobileOpen(false);
+                      }}
                     >
                       <Settings size={16} /> {t("settings")}
                     </Link>
+
                     <Link
                       href="/support"
                       prefetch={false}
                       className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] hover:bg-[#222e22] transition"
-                      onClick={() => { setProfileOpen(false); setMobileOpen(false); }}
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setMobileOpen(false);
+                      }}
                     >
                       <Headset size={16} /> {t("support")}
                     </Link>
+
                     <div className="border-t border-[#232323]" />
+
                     <button
-                      onClick={() => { setProfileOpen(false); setMobileOpen(false); handleLogout(); }}
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setMobileOpen(false);
+                        handleLogout();
+                      }}
                       className="flex items-center gap-3 px-4 py-2 font-mono font-bold text-red-500 hover:bg-[#232323] hover:text-[#ff6666] transition w-full"
                       style={{ background: "transparent", outline: "none" }}
                       type="button"

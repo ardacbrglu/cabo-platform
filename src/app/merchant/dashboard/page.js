@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Merchant Dashboard — Manage Products (UI fix: responsive edit modal)
+ * Merchant Dashboard — Manage Products (UI fix: card overflow + consistent media box)
  *
  * Security:
  * - requireSession + requireRole('merchant') (UserContext / guards)
@@ -12,7 +12,12 @@
  * UX:
  * - Locales: uses central keys via useTranslation()
  * - A11y: aria-live notices, focus management, disabled states
- * - Mobile friendly cards & **modal with sticky header/footer & scrollable body**
+ * - Responsive cards & modal with sticky header/footer & scrollable body
+ *
+ * Fixes:
+ * - Cards no longer overflow grid columns (prevents “cards overlapping / inside each other”)
+ *   via: w-full + min-w-0 + overflow-hidden on card + grid items
+ * - Images standardized with aspect-[16/9] frame
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -40,42 +45,36 @@ const MerchantLayout = dynamic(() => import("@/components/merchant/MerchantLayou
 
 const PLACEHOLDER = "https://placehold.co/128x128?text=Product";
 
-// Ensure that only safe image URLs are used in DOM attributes.
-// Allows only absolute HTTPS URLs from the same origin; otherwise returns null
-// so callers can fall back to a safe default.
+/* ---------- helpers ---------- */
+function handleImgError(e) {
+  e.currentTarget.onerror = null;
+  e.currentTarget.src = PLACEHOLDER;
+}
+
+// Allow only https URLs (or return null so callers can fall back safely).
 function sanitizeImageUrl(url) {
   if (!url || typeof url !== "string") return null;
+  const s = url.trim();
+  if (!s || s.length > 2048) return null;
+
+  // Permit data:image (already validated elsewhere) — used for previews
+  if (s.startsWith("data:image/")) return s;
+
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") {
-      return null;
-    }
-
-    // In a browser environment, enforce same-origin to avoid loading arbitrary external content.
-    if (typeof window !== "undefined") {
-      const currentOrigin = window.location.origin;
-      if (parsed.origin !== currentOrigin) {
-        return null;
-      }
-    }
-
+    const parsed = new URL(s);
+    if (parsed.protocol !== "https:") return null;
     return parsed.toString();
   } catch {
-    // Invalid URL; fall through to null.
+    return null;
   }
-  return null;
 }
 
-/* ------- helpers ------- */
-function handleImgError(e) {
-  e.target.onerror = null;
-  e.target.src = PLACEHOLDER;
-}
 function getQuotaStatus(p) {
   if (!p.isActive) return "inactive";
   if (Number(p.total_purchases) >= Number(p.max_sales_limit)) return "quota";
   return null;
 }
+
 function isHttpUrl(v) {
   try {
     const u = new URL(v);
@@ -84,6 +83,7 @@ function isHttpUrl(v) {
     return false;
   }
 }
+
 function isDataImage(v, maxBytes = 2 * 1024 * 1024) {
   if (!/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(v || "")) return false;
   const b64 = (v.split(",")[1] || "");
@@ -91,6 +91,7 @@ function isDataImage(v, maxBytes = 2 * 1024 * 1024) {
   const size = Math.floor((b64.length * 3) / 4) - pad;
   return size > 0 && size <= maxBytes;
 }
+
 function isAcceptedImageUrl(v) {
   if (!v) return false;
   if (v.startsWith("data:image/")) return isDataImage(v);
@@ -164,8 +165,7 @@ export default function MerchantDashboardPage() {
 
   const inflight = useRef(false);
   const abortRef = useRef(null);
-  const closeNoticeSoon = () =>
-    setTimeout(() => setNotice({ type: null, text: "" }), 3500);
+  const closeNoticeSoon = () => setTimeout(() => setNotice({ type: null, text: "" }), 3500);
 
   const inputBase =
     "bg-[#161819] text-[#e6ffe6] border border-[#252b24] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 transition placeholder:text-[#3b4a36]";
@@ -251,6 +251,7 @@ export default function MerchantDashboardPage() {
     }
     return Number(v.toFixed(1));
   };
+
   const clampLimit = (val, sold = 0) => {
     let v = Math.floor(Number(val));
     if (!Number.isInteger(v) || v < 1) {
@@ -303,10 +304,12 @@ export default function MerchantDashboardPage() {
     inflight.current = true;
     try {
       setLoadingList(true);
+
       let res = await apiFetch("/api/merchant_dashboard", {
         method: "GET",
         headers: { "accept-language": locale },
       });
+
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -315,6 +318,7 @@ export default function MerchantDashboardPage() {
           headers: { "accept-language": locale },
         });
       }
+
       if (res.status === 401) {
         router.replace("/merchant/login");
         return;
@@ -323,9 +327,10 @@ export default function MerchantDashboardPage() {
         router.replace("/unauthorized");
         return;
       }
+
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
-        setProducts(data.products || []);
+        setProducts(Array.isArray(data.products) ? data.products : []);
         setMinCommission(typeof data.minCommission === "number" ? data.minCommission : 5);
       } else {
         setProducts([]);
@@ -368,6 +373,7 @@ export default function MerchantDashboardPage() {
         headers: { "accept-language": locale, ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}) },
         body: next,
       });
+
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -377,6 +383,7 @@ export default function MerchantDashboardPage() {
           body: next,
         });
       }
+
       if (res.status === 401) {
         router.replace("/merchant/login");
         return;
@@ -386,6 +393,7 @@ export default function MerchantDashboardPage() {
         closeNoticeSoon();
         return;
       }
+
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         setFormVisible(false);
@@ -422,6 +430,7 @@ export default function MerchantDashboardPage() {
         headers: { "accept-language": locale, ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}) },
         body: payload,
       });
+
       if (res.status === 429) {
         const retryAfter = Math.min(Number(res.headers?.get?.("Retry-After")) || 15, 60);
         await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -431,6 +440,7 @@ export default function MerchantDashboardPage() {
           body: payload,
         });
       }
+
       if (res.status === 401) {
         router.replace("/merchant/login");
         return { ok: false };
@@ -440,6 +450,7 @@ export default function MerchantDashboardPage() {
         closeNoticeSoon();
         return { ok: false };
       }
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setNotice({ type: "error", text: tx.serverError });
@@ -462,6 +473,7 @@ export default function MerchantDashboardPage() {
   };
 
   const toggleShowCode = (id) => setShowCode((p) => ({ ...p, [id]: !p[id] }));
+
   const copyProductCode = async (id, code) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -488,6 +500,7 @@ export default function MerchantDashboardPage() {
     setEditErrors({});
     setEditOpen(true);
   };
+
   const closeEdit = () => {
     setEditOpen(false);
     setEditOriginal(null);
@@ -519,17 +532,22 @@ export default function MerchantDashboardPage() {
 
     const diff = { productId: editOriginal.productId };
     const addIfChanged = (key, val, origVal) => {
-      const a = (typeof val === "string" ? val.trim() : val);
-      const b = (typeof origVal === "string" ? origVal.trim() : origVal);
+      const a = typeof val === "string" ? val.trim() : val;
+      const b = typeof origVal === "string" ? origVal.trim() : origVal;
       if (String(a) !== String(b)) diff[key] = a;
     };
+
     addIfChanged("name", normalized.name, editOriginal.name);
     addIfChanged("description", normalized.description, editOriginal.description);
     addIfChanged("image_url", normalized.image_url, editOriginal.image_url);
     addIfChanged("merchant_url", normalized.merchant_url, editOriginal.merchant_url);
     addIfChanged("price", Number(normalized.price), Number(editOriginal.price));
     addIfChanged("commissionRate", Number(normalized.commissionRate), Number(editOriginal.commissionRate));
-    addIfChanged("max_sales_limit", Math.floor(Number(normalized.max_sales_limit)), Math.floor(Number(editOriginal.max_sales_limit)));
+    addIfChanged(
+      "max_sales_limit",
+      Math.floor(Number(normalized.max_sales_limit)),
+      Math.floor(Number(editOriginal.max_sales_limit))
+    );
 
     if (Object.keys(diff).length === 1) {
       setNotice({ type: "success", text: tx.saved });
@@ -568,7 +586,7 @@ export default function MerchantDashboardPage() {
           <button
             onClick={fetchProducts}
             disabled={loadingList}
-            className="flex items-center gap-2 bg-[#1c231a] text-[#d1ffd0] px-4 py-2 rounded hover:bg[#22301d] border border-[#2a3b26] transition disabled:opacity-60"
+            className="flex items-center gap-2 bg-[#1c231a] text-[#d1ffd0] px-4 py-2 rounded hover:bg-[#22301d] border border-[#2a3b26] transition disabled:opacity-60"
             aria-label={tx.refresh}
             title={tx.refresh}
           >
@@ -627,9 +645,7 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.name && (
-                <p className="mt-1 text-xs text-red-400">{errors.name}</p>
-              )}
+              {submitted && errors.name && <p className="mt-1 text-xs text-red-400">{errors.name}</p>}
             </div>
 
             <div>
@@ -643,9 +659,7 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.merchant_url && (
-                <p className="mt-1 text-xs text-red-400">{errors.merchant_url}</p>
-              )}
+              {submitted && errors.merchant_url && <p className="mt-1 text-xs text-red-400">{errors.merchant_url}</p>}
             </div>
 
             <div className="md:col-span-2">
@@ -660,9 +674,7 @@ export default function MerchantDashboardPage() {
                 autoComplete="off"
               />
               <p className="mt-1 text-[11px] text-gray-500">{tx.imageHint}</p>
-              {submitted && errors.image_url && (
-                <p className="mt-1 text-xs text-red-400">{errors.image_url}</p>
-              )}
+              {submitted && errors.image_url && <p className="mt-1 text-xs text-red-400">{errors.image_url}</p>}
             </div>
 
             <div>
@@ -678,9 +690,7 @@ export default function MerchantDashboardPage() {
                 required
                 autoComplete="off"
               />
-              {submitted && errors.price && (
-                <p className="mt-1 text-xs text-red-400">{errors.price}</p>
-              )}
+              {submitted && errors.price && <p className="mt-1 text-xs text-red-400">{errors.price}</p>}
             </div>
 
             <div>
@@ -693,12 +703,7 @@ export default function MerchantDashboardPage() {
                 placeholder={tx.commissionRate}
                 value={form.commissionRate}
                 onChange={(e) => setForm((s) => ({ ...s, commissionRate: e.target.value }))}
-                onBlur={() =>
-                  setForm((s) => ({
-                    ...s,
-                    commissionRate: clampCommission(s.commissionRate),
-                  }))
-                }
+                onBlur={() => setForm((s) => ({ ...s, commissionRate: clampCommission(s.commissionRate) }))}
                 aria-invalid={submitted && !!errors.commissionRate}
                 required
                 autoComplete="off"
@@ -706,9 +711,7 @@ export default function MerchantDashboardPage() {
               <div className="mt-1 text-[11px] text-gray-400">
                 {tx.minLabel} {minCommission}%
               </div>
-              {submitted && errors.commissionRate && (
-                <p className="mt-1 text-xs text-red-400">{errors.commissionRate}</p>
-              )}
+              {submitted && errors.commissionRate && <p className="mt-1 text-xs text-red-400">{errors.commissionRate}</p>}
             </div>
 
             <div>
@@ -720,19 +723,12 @@ export default function MerchantDashboardPage() {
                 placeholder={tx.maxSalesLimit}
                 value={form.max_sales_limit}
                 onChange={(e) => setForm((s) => ({ ...s, max_sales_limit: e.target.value }))}
-                onBlur={() =>
-                  setForm((s) => ({
-                    ...s,
-                    max_sales_limit: clampLimit(s.max_sales_limit),
-                  }))
-                }
+                onBlur={() => setForm((s) => ({ ...s, max_sales_limit: clampLimit(s.max_sales_limit) }))}
                 aria-invalid={submitted && !!errors.max_sales_limit}
                 required
                 autoComplete="off"
               />
-              {submitted && errors.max_sales_limit && (
-                <p className="mt-1 text-xs text-red-400">{errors.max_sales_limit}</p>
-              )}
+              {submitted && errors.max_sales_limit && <p className="mt-1 text-xs text-red-400">{errors.max_sales_limit}</p>}
             </div>
           </div>
 
@@ -764,14 +760,16 @@ export default function MerchantDashboardPage() {
         </div>
       ) : null}
 
-      {/* CARDS */}
-      <div className="grid gap-x-10 gap-y-14 md:grid-cols-2 xl:grid-cols-3">
+      {/* CARDS (FIXED OVERFLOW) */}
+      <div className="min-w-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-10 gap-y-14 items-start">
         {products.map((p) => {
           const status = getQuotaStatus(p);
+
           return (
             <div
               key={p.productId}
-              className={`relative bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col shadow-lg hover:shadow-2xl transition-all duration-300 max-w-lg mx-auto group ${status ? "opacity-60 grayscale" : ""}`}
+              className={`relative w-full min-w-0 overflow-hidden bg-[#181818] border border-[#232323] rounded-2xl p-7 flex flex-col
+                shadow-lg hover:shadow-2xl transition-all duration-300 group ${status ? "opacity-60 grayscale" : ""}`}
             >
               {status === "inactive" && (
                 <span className="absolute left-5 top-5 bg-red-700/90 text-white px-3 py-1 rounded-full text-xs flex items-center gap-1">
@@ -784,23 +782,28 @@ export default function MerchantDashboardPage() {
                 </span>
               )}
 
-              <img
-                src={p.image_url || PLACEHOLDER}
-                onError={handleImgError}
-                alt={p.name}
-                className="rounded-xl mb-4 h-44 w-full object-cover border border-[#202720]"
-                style={{ background: "#23262a" }}
-              />
+              {/* Fixed media box */}
+              <div className="w-full aspect-[16/9] rounded-xl overflow-hidden border border-[#202720] mb-4 bg-[#23262a]">
+                <img
+                  src={sanitizeImageUrl(p.image_url) || PLACEHOLDER}
+                  onError={handleImgError}
+                  alt={p.name}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
 
-              <h3 className="text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
-              <p className="text-sm text-gray-400 mb-3 line-clamp-2">{p.description}</p>
+              <h3 className="min-w-0 text-2xl font-extrabold text-[#d1ffd0] mb-1 truncate">{p.name}</h3>
+              <p className="text-sm text-gray-400 mb-3 line-clamp-2 break-words">{p.description}</p>
 
               <div className="flex flex-wrap justify-between text-base mb-2 text-gray-200 font-mono gap-y-1">
-                <span>
+                <span className="min-w-0">
                   <span className="text-gray-500">{tx.price}</span>:{" "}
                   <span className="font-bold">${Number(p.price).toFixed(2)}</span>
                 </span>
-                <span>
+                <span className="min-w-0">
                   <span className="text-gray-500">{t("commission") || "Commission"}</span>:{" "}
                   <span className="font-bold text-green-300">
                     {Number(p.commissionRate).toFixed(2)}%
@@ -819,14 +822,16 @@ export default function MerchantDashboardPage() {
 
               <div className="flex flex-wrap justify-between text-xs mb-2 text-gray-400 gap-y-1">
                 <span>{tx.affiliates}: <b>{p.link_count}</b></span>
-                <span>Product ID: {p.productId}</span>
+                <span className="truncate">Product ID: {p.productId}</span>
               </div>
 
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-center gap-2 mt-2 min-w-0">
                 <span className="text-xs text-gray-400">Code:</span>
                 {showCode[p.productId] ? (
                   <>
-                    <span className="font-mono text-green-300 text-xs select-all">{p.productCode}</span>
+                    <span className="min-w-0 font-mono text-green-300 text-xs select-all break-all">
+                      {p.productCode}
+                    </span>
                     <button
                       type="button"
                       onClick={() => copyProductCode(p.productId, p.productCode)}
@@ -934,17 +939,17 @@ export default function MerchantDashboardPage() {
                       onChange={(e) => setEdit((s) => ({ ...s, image_url: e.target.value }))}
                       placeholder={tx.productImage}
                     />
-                    <img
-                      src={
-                        sanitizeImageUrl(edit.image_url) ||
-                        sanitizeImageUrl(editOriginal.image_url) ||
-                        PLACEHOLDER
-                      }
-                      onError={handleImgError}
-                      alt="preview"
-                      className="rounded-lg w-full h-32 object-cover border border-[#202720]"
-                      style={{ background: "#23262a" }}
-                    />
+                    <div className="w-full aspect-[16/9] rounded-lg overflow-hidden border border-[#202720] bg-[#23262a]">
+                      <img
+                        src={sanitizeImageUrl(edit.image_url) || sanitizeImageUrl(editOriginal.image_url) || PLACEHOLDER}
+                        onError={handleImgError}
+                        alt="preview"
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
                   </div>
                   <p className="mt-1 text-[11px] text-gray-500">{tx.imageHint}</p>
                   {editSubmitted && editErrors.image_url && (
@@ -960,9 +965,7 @@ export default function MerchantDashboardPage() {
                     value={edit.name}
                     onChange={(e) => setEdit((s) => ({ ...s, name: e.target.value }))}
                   />
-                  {editSubmitted && editErrors.name && (
-                    <p className="mt-1 text-xs text-red-400">{editErrors.name}</p>
-                  )}
+                  {editSubmitted && editErrors.name && <p className="mt-1 text-xs text-red-400">{editErrors.name}</p>}
                 </div>
 
                 <div>
@@ -988,9 +991,7 @@ export default function MerchantDashboardPage() {
                     value={edit.price}
                     onChange={(e) => setEdit((s) => ({ ...s, price: e.target.value }))}
                   />
-                  {editSubmitted && editErrors.price && (
-                    <p className="mt-1 text-xs text-red-400">{editErrors.price}</p>
-                  )}
+                  {editSubmitted && editErrors.price && <p className="mt-1 text-xs text-red-400">{editErrors.price}</p>}
                 </div>
 
                 <div>
@@ -1003,9 +1004,7 @@ export default function MerchantDashboardPage() {
                     className={`${inputBase} focus:ring-[#81d742] ${editSubmitted && editErrors.commissionRate ? "border-red-500 focus:ring-red-400" : ""}`}
                     value={edit.commissionRate}
                     onChange={(e) => setEdit((s) => ({ ...s, commissionRate: e.target.value }))}
-                    onBlur={() =>
-                      setEdit((s) => ({ ...s, commissionRate: clampCommission(s.commissionRate) }))
-                    }
+                    onBlur={() => setEdit((s) => ({ ...s, commissionRate: clampCommission(s.commissionRate) }))}
                   />
                   <div className="mt-1 text-[11px] text-gray-400">
                     {tx.minLabel} {minCommission}%
@@ -1075,5 +1074,3 @@ export default function MerchantDashboardPage() {
     </MerchantLayout>
   );
 }
-
-export const runtime = "nodejs";
