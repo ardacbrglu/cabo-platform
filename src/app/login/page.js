@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * Login — centered, single card
- * - PublicLayout ana <main> kullanılır (ekstra main yok)
- * - Kart: max-w-md, buton full width
- * - İç sarma: z-0 (header overlay her zaman üste gelsin)
+ * Login — Homepage style (single centered card) ✅
+ * - Register sayfasındaki premium stili aynen uygular (glow + gradient headline + kicker)
+ * - Tek kart: ekstra sağ info kutusu yok
+ * - CSRF preload + abort controller + open-redirect whitelist korunur
+ * - Hooks order güvenli (erken return yok; ready gating JSX içinde)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,10 +13,13 @@ import Link from "next/link";
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
 import { apiFetch } from "@/lib/apiFetch";
+import { Loader2, Sparkles, ArrowRight } from "lucide-react";
 
 const translations = {
   en: {
-    title: "User Login",
+    kicker: "Secure login",
+    title: "Welcome back to Cabo",
+    subtitle: "Sign in to manage links, track performance, and payouts.",
     emailPlaceholder: "Email",
     passwordPlaceholder: "Password",
     loginBtn: "Log in",
@@ -33,7 +37,9 @@ const translations = {
     csrfWait: "Preparing a secure session… Please wait a moment.",
   },
   tr: {
-    title: "Kullanıcı Girişi",
+    kicker: "Güvenli giriş",
+    title: "Cabo’ya tekrar hoş geldin",
+    subtitle: "Linklerini yönet, performansı ve ödemeleri takip et.",
     emailPlaceholder: "E-posta",
     passwordPlaceholder: "Şifre",
     loginBtn: "Giriş Yap",
@@ -47,38 +53,53 @@ const translations = {
     googleBtn: "Google ile giriş yap",
     googleSoon: "Google ile giriş — yakında",
     serverError: "Sunucu hatası. Lütfen tekrar deneyin.",
-    activatedBanner: "Hesabınız aktifleştirildi! Şimdi giriş yapabilirsiniz.",
+    activatedBanner: "Hesabın aktifleştirildi! Şimdi giriş yapabilirsin.",
     csrfWait: "Güvenli oturum hazırlanıyor… Lütfen bekleyin.",
   },
 };
 
+const cx = (...a) => a.filter(Boolean).join(" ");
+
+const GradientWord = ({ children }) => (
+  <span className="bg-gradient-to-r from-[#ff7b7b] via-[#ffb36b] to-[#7cf7a6] bg-clip-text text-transparent">
+    {children}
+  </span>
+);
+
+const Kicker = ({ children }) => (
+  <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-mono tracking-wide bg-[#111] border border-[#1e1e1e] text-[#cfcfcf]">
+    <Sparkles className="w-4 h-4 text-[#81d742]" />
+    <span>{children}</span>
+  </div>
+);
+
 export default function LoginPage() {
   const { locale, ready } = useLocale();
 
-  // i18n
-  const { t } = useMemo(() => {
+  const { t, isTR } = useMemo(() => {
     const norm = String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
     const dict = translations[norm] || translations.en;
-    return { t: (k) => (dict && k in dict ? dict[k] : k) };
+    return {
+      isTR: norm === "tr",
+      t: (k) => (dict && k in dict ? dict[k] : k),
+    };
   }, [locale]);
 
-  // redirect target (?from=...) ve activated banner
+  // redirect target (?from=...) + activated banner
   const callbackUrlRef = useRef("/dashboard");
   const [justActivated, setJustActivated] = useState(false);
+
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
       const f = url.searchParams.get("from");
+
       // Only allow redirects to a controlled set of internal paths
       const allowedRedirects = ["/dashboard", "/profile", "/settings"];
-      if (
-        f &&
-        f.startsWith("/") &&
-        !f.startsWith("//") &&
-        allowedRedirects.includes(f)
-      ) {
+      if (f && f.startsWith("/") && !f.startsWith("//") && allowedRedirects.includes(f)) {
         callbackUrlRef.current = f;
       }
+
       if (url.searchParams.get("activated") === "1") {
         setJustActivated(true);
         url.searchParams.delete("activated");
@@ -86,10 +107,6 @@ export default function LoginPage() {
       }
     } catch {}
   }, []);
-
-  // mount flag
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
 
   // form state
   const [email, setEmail] = useState("");
@@ -100,15 +117,20 @@ export default function LoginPage() {
   // CSRF preload
   const [csrfToken, setCsrfToken] = useState("");
   const [csrfReady, setCsrfReady] = useState(false);
+
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
         const r = await fetch("/api/auth/csrf", { credentials: "include", cache: "no-store" });
         const j = await r.json().catch(() => ({}));
-        if (j?.csrfToken) setCsrfToken(j.csrfToken);
+        if (alive && j?.csrfToken) setCsrfToken(j.csrfToken);
       } catch {}
-      setCsrfReady(true);
+      if (alive) setCsrfReady(true);
     })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // hints
@@ -116,11 +138,41 @@ export default function LoginPage() {
   const [hintsVisible, setHintsVisible] = useState(false);
   const firstInvalidRef = useRef(null);
   const programmaticFocusRef = useRef(false);
-  const handleFocus = () => { if (!programmaticFocusRef.current) setHintsVisible(false); };
+  const handleFocus = () => {
+    if (!programmaticFocusRef.current) setHintsVisible(false);
+  };
 
   // inflight cancel
   const abortRef = useRef(null);
-  function cancelInflight() { try { abortRef.current?.abort(); } catch {} abortRef.current = null; }
+  function cancelInflight() {
+    try {
+      abortRef.current?.abort();
+    } catch {}
+    abortRef.current = null;
+  }
+
+  useEffect(() => {
+    return () => cancelInflight();
+  }, []);
+
+  // Optional: suppress noisy “Timeout” unhandled rejections (3rd party scripts)
+  useEffect(() => {
+    const onUnhandled = (event) => {
+      const reason = event?.reason;
+      const msg =
+        typeof reason === "string"
+          ? reason
+          : reason?.message
+          ? String(reason.message)
+          : "";
+      if (msg && msg.toLowerCase().includes("timeout")) {
+        event.preventDefault?.();
+        console.warn("[login] Suppressed unhandled rejection (Timeout):", reason);
+      }
+    };
+    window.addEventListener("unhandledrejection", onUnhandled);
+    return () => window.removeEventListener("unhandledrejection", onUnhandled);
+  }, []);
 
   // validation
   const validate = () => {
@@ -133,11 +185,15 @@ export default function LoginPage() {
   const errors = submitted ? validate() : {};
   const needsRef = (name) => submitted && errors[name] && !firstInvalidRef.current;
 
-  // inputs
-  const inputBase =
-    "bg-white text-black rounded-lg px-4 py-3 border border-[#232323] focus:outline-none focus:ring-2 w-full";
-  const ringOk = "focus:ring-[#81d742]";
-  const ringErr = "focus:ring-red-400 border-red-500";
+  const inputBase = useMemo(() => {
+    return (
+      "w-full rounded-xl px-4 py-3 text-[14px] " +
+      "bg-[#111] text-white placeholder-gray-500 " +
+      "border border-[#242424] " +
+      "focus:outline-none focus:ring-2 focus:ring-[#81d742] focus:border-[#81d742] " +
+      "autofill:shadow-[inset_0_0_0_1000px_#111]"
+    );
+  }, []);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -152,11 +208,18 @@ export default function LoginPage() {
       programmaticFocusRef.current = true;
       requestAnimationFrame(() => {
         firstInvalidRef.current?.focus?.();
-        setTimeout(() => { programmaticFocusRef.current = false; setHintsVisible(true); }, 80);
+        setTimeout(() => {
+          programmaticFocusRef.current = false;
+          setHintsVisible(true);
+        }, 80);
       });
       return;
     }
-    if (!csrfReady) { setError(t("csrfWait")); return; }
+
+    if (!csrfReady) {
+      setError(t("csrfWait"));
+      return;
+    }
 
     cancelInflight();
     const ac = new AbortController();
@@ -175,11 +238,14 @@ export default function LoginPage() {
         noAuthRedirect: true,
         noRetry: true,
       });
+
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         window.location.href = callbackUrlRef.current;
       } else {
-        setError(typeof data?.message === "string" && data.message ? data.message : t("serverError"));
+        setError(
+          typeof data?.message === "string" && data.message ? data.message : t("serverError")
+        );
       }
     } catch (err) {
       if (err?.name !== "AbortError") setError(t("serverError"));
@@ -189,152 +255,181 @@ export default function LoginPage() {
     }
   }
 
-  if (!mounted || !ready) return null;
-
   return (
     <PublicLayout>
-      {/* DİKEY ORTALAMA — ekstra <main> yok; z-0: header overlay daima üste */}
-      <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-8 md:py-12 px-4">
-        <div className="bg-[#1a1a1a] border border-[#232323] rounded-2xl shadow-lg px-8 py-10 w-full max-w-md">
-          <h3 className="text-3xl font-bold text-[#d1ffd0] mb-4 text-center">{t("title")}</h3>
-
-          {justActivated && (
-            <div className="text-green-400 text-base text-center mb-3" role="status" aria-live="polite">
-              {t("activatedBanner")}
-            </div>
-          )}
-          {!csrfReady && (
-            <div className="text-gray-400 text-sm text-center mb-3" role="status" aria-live="polite">
-              {t("csrfWait")}
-            </div>
-          )}
-
-          <form onSubmit={onSubmit} className="w-full flex flex-col gap-6" noValidate>
-            {/* Email */}
-            <div className="relative cabo-input-surface" onFocus={handleFocus}>
-              <label className="sr-only" htmlFor="email">{t("emailPlaceholder")}</label>
-              <input
-                ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
-                id="email"
-                type="email"
-                inputMode="email"
-                placeholder={t("emailPlaceholder")}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
-                autoComplete="username"
-                autoCapitalize="off"
-                spellCheck="false"
-                className={`${inputBase} ${errors.email ? ringErr : ringOk}`}
-                required
-                aria-invalid={!!errors.email}
-              />
-              {submitted && errors.email && hintsVisible && (
-                <p className="mt-2 text-sm text-red-400" aria-live="assertive">
-                  {errors.email}
-                </p>
-              )}
+      {!ready ? null : (
+        <main className="relative w-full">
+          <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-10 px-4">
+            {/* soft glow backdrop */}
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="absolute -inset-24 blur-3xl opacity-25 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
             </div>
 
-            {/* Password */}
-            <div className="relative cabo-input-surface" onFocus={handleFocus}>
-              <label className="sr-only" htmlFor="password">{t("passwordPlaceholder")}</label>
-              <input
-                ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
-                id="password"
-                type="password"
-                placeholder={t("passwordPlaceholder")}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-                autoComplete="current-password"
-                autoCapitalize="off"
-                spellCheck="false"
-                className={`${inputBase} ${errors.password ? ringErr : ringOk}`}
-                required
-                aria-invalid={!!errors.password}
-              />
-              {submitted && errors.password && hintsVisible && (
-                <p className="mt-2 text-sm text-red-400" aria-live="assertive">
-                  {errors.password}
-                </p>
-              )}
-            </div>
+            <div className="relative w-full max-w-md rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_18px_60px_rgba(0,0,0,.55)] px-6 sm:px-8 py-8">
+              <div className="text-center">
+                <Kicker>{t("kicker")}</Kicker>
 
-            <div className="flex items-center justify-between -mt-2">
-              <Link href="/password_reset" prefetch={false} className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition">
-                {t("forgot")}
-              </Link>
-            </div>
+                <h1 className="mt-4 text-3xl font-extrabold text-[#d1ffd0]">
+                  {t("title").includes("Cabo") ? (
+                    <>
+                      {t("title").split("Cabo")[0]}
+                      <GradientWord>Cabo</GradientWord>
+                      {t("title").split("Cabo").slice(1).join("Cabo")}
+                    </>
+                  ) : (
+                    t("title")
+                  )}
+                </h1>
 
-            {error && (
-              <div className="text-red-500 text-base text-center" role="alert" aria-live="assertive">
-                {error}
+                <p className="mt-2 text-[13px] text-gray-400">{t("subtitle")}</p>
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={loading || !csrfReady}
-              className="w-full bg-[#81d742] hover:bg-[#b3ffb3] text-[#0b0b0b] font-bold py-3 rounded-lg transition disabled:opacity-60"
-            >
-              {loading ? t("loggingIn") : t("loginBtn")}
-            </button>
+              {justActivated && (
+                <div className="mt-5 text-green-400 text-sm text-center" role="status" aria-live="polite">
+                  {t("activatedBanner")}
+                </div>
+              )}
+              {!csrfReady && (
+                <div className="mt-3 text-gray-400 text-sm text-center" role="status" aria-live="polite">
+                  {t("csrfWait")}
+                </div>
+              )}
 
-            <div className="flex items-center my-4">
-              <span className="flex-1 h-px bg-[#232323]" />
-              <span className="px-3 text-gray-400 text-sm font-semibold">{t("or")}</span>
-              <span className="flex-1 h-px bg-[#232323]" />
+              <form onSubmit={onSubmit} className="mt-6 w-full flex flex-col gap-5" noValidate>
+                {/* Email */}
+                <div className="relative" onFocus={handleFocus}>
+                  <label className="sr-only" htmlFor="email">
+                    {t("emailPlaceholder")}
+                  </label>
+                  <input
+                    ref={(el) => {
+                      if (needsRef("email")) firstInvalidRef.current = el;
+                    }}
+                    id="email"
+                    type="email"
+                    inputMode="email"
+                    placeholder={t("emailPlaceholder")}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                    autoComplete="username"
+                    autoCapitalize="off"
+                    spellCheck="false"
+                    className={cx(inputBase, errors.email ? "border-red-500 focus:ring-red-400" : "")}
+                    required
+                    aria-invalid={!!errors.email}
+                  />
+                  {submitted && errors.email && hintsVisible && (
+                    <p className="mt-2 text-sm text-red-400" aria-live="assertive">
+                      {errors.email}
+                    </p>
+                  )}
+                </div>
+
+                {/* Password */}
+                <div className="relative" onFocus={handleFocus}>
+                  <label className="sr-only" htmlFor="password">
+                    {t("passwordPlaceholder")}
+                  </label>
+                  <input
+                    ref={(el) => {
+                      if (needsRef("password")) firstInvalidRef.current = el;
+                    }}
+                    id="password"
+                    type="password"
+                    placeholder={t("passwordPlaceholder")}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    autoComplete="current-password"
+                    autoCapitalize="off"
+                    spellCheck="false"
+                    className={cx(
+                      inputBase,
+                      errors.password ? "border-red-500 focus:ring-red-400" : ""
+                    )}
+                    required
+                    aria-invalid={!!errors.password}
+                  />
+                  {submitted && errors.password && hintsVisible && (
+                    <p className="mt-2 text-sm text-red-400" aria-live="assertive">
+                      {errors.password}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between -mt-1">
+                  <Link
+                    href="/password_reset"
+                    prefetch={false}
+                    className="text-sm text-[#81d742] underline hover:text-[#b3ffb3] transition"
+                  >
+                    {t("forgot")}
+                  </Link>
+                </div>
+
+                {error && (
+                  <div className="text-red-400 text-sm text-center" role="alert" aria-live="assertive">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading || !csrfReady}
+                  className={cx(
+                    "w-full px-6 py-3 text-[15px] font-bold rounded-xl transition",
+                    "bg-[#81d742] text-[#0b0b0b] hover:bg-[#baff7c]",
+                    "disabled:opacity-60 active:scale-[0.99]",
+                    "focus:outline-none focus:ring-2 focus:ring-[#a2ff70] focus:ring-offset-2 focus:ring-offset-[#0b0b0b]"
+                  )}
+                  style={{ boxShadow: "0 10px 40px rgba(129,215,66,.12)" }}
+                >
+                  {loading ? (
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <Loader2 className="animate-spin" size={18} /> {t("loggingIn")}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center justify-center gap-2">
+                      {t("loginBtn")} <ArrowRight className="w-4 h-4" />
+                    </span>
+                  )}
+                </button>
+
+                <div className="flex items-center my-1">
+                  <span className="flex-1 h-px bg-[#232323]" />
+                  <span className="px-3 text-gray-500 text-xs font-semibold">{t("or")}</span>
+                  <span className="flex-1 h-px bg-[#232323]" />
+                </div>
+
+                <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-500 italic select-none">
+                  {t("googleSoon")}
+                </div>
+
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled="true"
+                  className="flex items-center justify-center gap-2 bg-[#101010] text-[#6e6e6e] font-bold py-3 rounded-xl border border-[#232323] w-full cursor-not-allowed select-none"
+                  title={t("googleSoon")}
+                >
+                  <span className="w-6 h-6 mr-1 inline-block align-middle opacity-70" aria-hidden="true">
+                    <img src="/google.svg" width="24" height="24" alt="" />
+                  </span>
+                  {t("googleBtn")}
+                </button>
+
+                <div className="pt-1 text-gray-400 text-sm text-center">
+                  {t("noAccount")}{" "}
+                  <Link href="/register" prefetch={false} className="text-[#81d742] underline hover:text-[#b3ffb3]">
+                    {t("registerHere")}
+                  </Link>
+                </div>
+              </form>
             </div>
-
-            <div className="w-full -mt-1 -mb-1 text-center text-xs text-gray-400 italic select-none">
-              {t("googleSoon")}
-            </div>
-            <button
-              type="button"
-              disabled
-              aria-disabled="true"
-              className="flex items-center justify-center gap-2 bg-[#eceff3] text-[#8a8f98] font-bold py-3 rounded-lg border border-[#d7dbe0] shadow-none w-full cursor-not-allowed select-none"
-            >
-              <span className="w-6 h-6 mr-1 inline-block align-middle opacity-60" aria-hidden="true">
-                <img src="/google.svg" width="24" height="24" alt="" />
-              </span>
-              {t("googleBtn")}
-            </button>
-          </form>
-
-          <div className="mt-6 text-gray-400 text-sm text-center">
-            {t("noAccount")}{" "}
-            <Link href="/register" prefetch={false} className="text-[#81d742] underline hover:text-[#b3ffb3]">
-              {t("registerHere")}
-            </Link>
           </div>
-        </div>
-      </div>
-
-      {/* Beyaz yüzey (autofill dâhil) */}
-      <style jsx global>{`
-        .cabo-input-surface input {
-          background: #fff !important;
-          color: #000 !important;
-        }
-        .cabo-input-surface input:focus {
-          background: #fff !important;
-          color: #000 !important;
-        }
-        .cabo-input-surface input:-webkit-autofill,
-        .cabo-input-surface input:-webkit-autofill:hover,
-        .cabo-input-surface input:-webkit-autofill:focus {
-          -webkit-text-fill-color: #000 !important;
-          caret-color: #111;
-          -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
-                  box-shadow: 0 0 0 1000px #fff inset !important;
-        }
-        .cabo-input-surface input:-moz-autofill {
-          background: #fff !important;
-          color: #000 !important;
-        }
-      `}</style>
+        </main>
+      )}
     </PublicLayout>
   );
 }

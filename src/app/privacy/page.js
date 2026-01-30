@@ -1,40 +1,24 @@
 // src/app/privacy/page.js
+"use client";
+
 import PublicLayout from "@/components/PublicLayout";
 import Link from "next/link";
-import { headers } from "next/headers";
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
-export const metadata = {
-  title: "Privacy Policy | Cabo",
-  description:
-    "Privacy Policy compliant with Turkish KVKK for the Cabo affiliate platform. (TR/EN)",
-};
+import { useMemo } from "react";
+import { useLocale } from "@/context/LocaleContext";
 
 const BRAND = "Cabo";
-const COMPANY = "[Şirket Adı – Ticaret Unvanı]";           // TODO
-const COMPANY_ADDR = "[Şirket Adresi, İl/İlçe, Türkiye]";  // TODO
-const COMPANY_EMAIL = "kvkk@yourcompany.com";              // TODO
-const DPO_EMAIL = "dpo@yourcompany.com";                   // TODO
-
-function pickLang(searchParams) {
-  const qp = String(searchParams?.lang || "").toLowerCase();
-  if (qp.startsWith("tr") || qp === "tr") return "tr";
-  const h = headers();
-  const al = (h.get("accept-language") || "").toLowerCase();
-  return al.startsWith("tr") ? "tr" : "en";
-}
+const COMPANY = "[Şirket Adı – Ticaret Unvanı]"; // TODO
+const COMPANY_ADDR = "[Şirket Adresi, İl/İlçe, Türkiye]"; // TODO
+const COMPANY_EMAIL = "kvkk@yourcompany.com"; // TODO
+const DPO_EMAIL = "dpo@yourcompany.com"; // TODO
 
 const DICT = {
   en: {
     lastUpdated: "Last updated",
     title: "Privacy Policy",
-    intro:
-      `${COMPANY} (“we”) operates the ${BRAND} platform. This policy explains how we process personal data as data controller under Turkish Law No. 6698 (KVKK) and applicable laws.`,
+    intro: `${COMPANY} (“we”) operates the ${BRAND} platform. This policy explains how we process personal data as data controller under Turkish Law No. 6698 (KVKK) and applicable laws.`,
     controllerTitle: "Data Controller & Contact",
-    controller:
-      `${COMPANY}, ${COMPANY_ADDR}. For privacy requests: ${COMPANY_EMAIL}. For DPO/representative: ${DPO_EMAIL}.`,
+    controller: `${COMPANY}, ${COMPANY_ADDR}. For privacy requests: ${COMPANY_EMAIL}. For DPO/representative: ${DPO_EMAIL}.`,
     whatTitle: "Data We Process",
     whatList: [
       "Identity & contact: name, email, phone (if shared), IBAN & bank for payouts.",
@@ -80,8 +64,7 @@ const DICT = {
       "Request compensation for damages due to unlawful processing.",
     ],
     applyTitle: "How to Apply",
-    apply:
-      `Send a signed request to our address or email us at ${COMPANY_EMAIL}. We respond as soon as possible and within legal time limits.`,
+    apply: `Send a signed request to our address or email us at ${COMPANY_EMAIL}. We respond as soon as possible and within legal time limits.`,
     childrenTitle: "Children",
     children:
       "The Services are not directed to persons under 18. We do not knowingly process children’s data.",
@@ -89,19 +72,17 @@ const DICT = {
     changes:
       "We may update this policy. Material changes will be announced on the Platform.",
     contactTitle: "Contact",
-    contact:
-      `Questions? Contact ${COMPANY_EMAIL}.`,
+    contact: `Questions? Contact ${COMPANY_EMAIL}.`,
     back: "Back",
     toTerms: "Read Terms of Service",
   },
+
   tr: {
     lastUpdated: "Son güncelleme",
     title: "Gizlilik Politikası",
-    intro:
-      `${COMPANY} (“biz”), ${BRAND} platformunu işletmektedir. Bu politika, veri sorumlusu sıfatıyla 6698 sayılı KVKK ve ilgili mevzuat kapsamında kişisel verileri nasıl işlediğimizi açıklar.`,
+    intro: `${COMPANY} (“biz”), ${BRAND} platformunu işletmektedir. Bu politika, veri sorumlusu sıfatıyla 6698 sayılı KVKK ve ilgili mevzuat kapsamında kişisel verileri nasıl işlediğimizi açıklar.`,
     controllerTitle: "Veri Sorumlusu ve İletişim",
-    controller:
-      `${COMPANY}, ${COMPANY_ADDR}. KVKK başvuruları: ${COMPANY_EMAIL}. İrtibat kişisi/DPO: ${DPO_EMAIL}.`,
+    controller: `${COMPANY}, ${COMPANY_ADDR}. KVKK başvuruları: ${COMPANY_EMAIL}. İrtibat kişisi/DPO: ${DPO_EMAIL}.`,
     whatTitle: "İşlediğimiz Veriler",
     whatList: [
       "Kimlik & iletişim: ad, e-posta, telefon (paylaşıldıysa), ödeme için IBAN ve banka bilgisi.",
@@ -147,8 +128,7 @@ const DICT = {
       "Otomatik işlemeden doğan aleyhe sonuçlara itiraz.",
     ],
     applyTitle: "Başvuru Usulü",
-    apply:
-      `Islak imzalı başvurunu adresimize iletebilir veya ${COMPANY_EMAIL} üzerinden e-posta gönderebilirsin. Yasal sürelerde yanıtlarız.`,
+    apply: `Islak imzalı başvurunu adresimize iletebilir veya ${COMPANY_EMAIL} üzerinden e-posta gönderebilirsin. Yasal sürelerde yanıtlarız.`,
     childrenTitle: "Çocukların Verileri",
     children:
       "Hizmetler 18 yaş altına yönelik değildir; çocukların verilerini bilerek işlemeyiz.",
@@ -156,96 +136,114 @@ const DICT = {
     changes:
       "Bu politika güncellenebilir. Önemli değişiklikler Platform üzerinden duyurulur.",
     contactTitle: "İletişim",
-    contact:
-      `Soruların için: ${COMPANY_EMAIL}.`,
+    contact: `Soruların için: ${COMPANY_EMAIL}.`,
     back: "Geri",
     toTerms: "Şartlar ve Koşullar’ı oku",
   },
 };
 
-export default function PrivacyPage({ searchParams }) {
-  const lang = pickLang(searchParams);
-  const t = (k) => (DICT[lang] || DICT.en)[k] || k;
-  const L = (DICT[lang] || DICT.en);
+export default function PrivacyPage() {
+  const { locale } = useLocale();
+
+  const lang = useMemo(() => {
+    const s = String(locale || "").toLowerCase();
+    return s.startsWith("tr") ? "tr" : "en";
+  }, [locale]);
+
+  const L = DICT[lang] || DICT.en;
+  const t = (k) => L[k] ?? k;
 
   return (
     <PublicLayout>
-      <main className="max-w-3xl mx-auto px-4 py-10 text-gray-300">
-        <div className="mb-6">
-          <h1 className="text-3xl font-extrabold text-[#d1ffd0]">
-            {t("title")}
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            {t("lastUpdated")}: 24 Aug 2025 ·{" "}
-            <Link
-              href={`/terms?lang=${lang}`}
-              className="text-[#81d742] underline"
-            >
-              {t("toTerms")}
-            </Link>
-          </p>
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 text-gray-200">
+        {/* Header Card */}
+        <div className="rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_14px_50px_rgba(0,0,0,0.55)] p-6 md:p-7">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl md:text-[34px] font-extrabold text-[#d1ffd0] tracking-tight">
+              {t("title")}
+            </h1>
+
+            <div className="text-sm text-gray-400">
+              {t("lastUpdated")}: <span className="text-gray-300">24 Aug 2025</span>
+              <span className="mx-2">·</span>
+              <Link
+                href="/terms"
+                prefetch={false}
+                className="text-[#81d742] underline decoration-[#2f5f2f] underline-offset-4 hover:opacity-90 transition"
+              >
+                {t("toTerms")}
+              </Link>
+            </div>
+
+            <div className="mt-4 space-y-3 leading-relaxed text-gray-300">
+              <p>{t("intro")}</p>
+            </div>
+          </div>
         </div>
 
-        <Section>
-          <p>{t("intro")}</p>
-        </Section>
+        {/* Content Sections */}
+        <div className="mt-6 space-y-6">
+          <Section title={t("controllerTitle")}>
+            <p>{t("controller")}</p>
+          </Section>
 
-        <Section title={t("controllerTitle")}>
-          <p>{t("controller")}</p>
-        </Section>
+          <Section title={t("whatTitle")}>
+            <Ul items={L.whatList} />
+          </Section>
 
-        <Section title={t("whatTitle")}>
-          <Ul items={L.whatList} />
-        </Section>
+          <Section title={t("basisTitle")}>
+            <Ul items={L.basisList} />
+          </Section>
 
-        <Section title={t("basisTitle")}>
-          <Ul items={L.basisList} />
-        </Section>
+          <Section title={t("cookiesTitle")}>
+            <p>{t("cookies")}</p>
+          </Section>
 
-        <Section title={t("cookiesTitle")}>
-          <p>{t("cookies")}</p>
-        </Section>
+          <Section title={t("shareTitle")}>
+            <Ul items={L.shareList} />
+          </Section>
 
-        <Section title={t("shareTitle")}>
-          <Ul items={L.shareList} />
-        </Section>
+          <Section title={t("xferTitle")}>
+            <p>{t("xfer")}</p>
+          </Section>
 
-        <Section title={t("xferTitle")}>
-          <p>{t("xfer")}</p>
-        </Section>
+          <Section title={t("retainTitle")}>
+            <p>{t("retain")}</p>
+          </Section>
 
-        <Section title={t("retainTitle")}>
-          <p>{t("retain")}</p>
-        </Section>
+          <Section title={t("securityTitle")}>
+            <p>{t("security")}</p>
+          </Section>
 
-        <Section title={t("securityTitle")}>
-          <p>{t("security")}</p>
-        </Section>
+          <Section title={t("rightsTitle")}>
+            <Ul items={L.rightsList} />
+          </Section>
 
-        <Section title={t("rightsTitle")}>
-          <Ul items={L.rightsList} />
-        </Section>
+          <Section title={t("applyTitle")}>
+            <p>{t("apply")}</p>
+          </Section>
 
-        <Section title={t("applyTitle")}>
-          <p>{t("apply")}</p>
-        </Section>
+          <Section title={t("childrenTitle")}>
+            <p>{t("children")}</p>
+          </Section>
 
-        <Section title={t("childrenTitle")}>
-          <p>{t("children")}</p>
-        </Section>
+          <Section title={t("changesTitle")}>
+            <p>{t("changes")}</p>
+          </Section>
 
-        <Section title={t("changesTitle")}>
-          <p>{t("changes")}</p>
-        </Section>
+          <Section title={t("contactTitle")}>
+            <p>{t("contact")}</p>
+          </Section>
 
-        <Section title={t("contactTitle")}>
-          <p>{t("contact")}</p>
-        </Section>
-
-        <div className="mt-10">
-          <Link href="/" className="text-[#81d742] underline">
-            ← {t("back")}
-          </Link>
+          <div className="pt-4">
+            <Link
+              href="/"
+              prefetch={false}
+              className="text-[#81d742] underline decoration-[#2f5f2f] underline-offset-4 hover:opacity-90 transition"
+            >
+              ← {t("back")}
+            </Link>
+          </div>
         </div>
       </main>
     </PublicLayout>
@@ -254,17 +252,16 @@ export default function PrivacyPage({ searchParams }) {
 
 function Section({ title, children }) {
   return (
-    <section className="mt-8">
-      {title ? (
-        <h2 className="text-xl font-bold text-[#d1ffd0] mb-2">{title}</h2>
-      ) : null}
-      <div className="space-y-3 leading-relaxed">{children}</div>
+    <section className="rounded-2xl border border-[#232323] bg-[#0f0f0f] p-6 md:p-7">
+      <h2 className="text-xl font-bold text-[#d1ffd0] mb-3">{title}</h2>
+      <div className="space-y-3 leading-relaxed text-gray-300">{children}</div>
     </section>
   );
 }
+
 function Ul({ items = [] }) {
   return (
-    <ul className="list-disc pl-6 space-y-2">
+    <ul className="list-disc pl-6 space-y-2 text-gray-300">
       {items.map((x, i) => (
         <li key={i}>{x}</li>
       ))}

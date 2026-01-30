@@ -2,7 +2,7 @@
 "use client";
 
 // Amaç: SSS sayfası (erişilebilir, SEO dostu, JSON-LD ile zengin sonuç).
-// Not: Tasarım korunmuş; yönlendiren linkler kaldırıldı (ref linksiz sade katalog).
+// Not: Tasarım yeni “card/surface” public style ile uyumlu, dış link yok.
 
 import PublicLayout from "@/components/PublicLayout";
 import { useLocale } from "@/context/LocaleContext";
@@ -25,6 +25,7 @@ const translations = {
     a6: "No! Signing up and earning with Cabo is totally free. There are no hidden fees — just share and earn.",
     q7: "How do I maximize my earnings?",
     a7: "Promote trending products, use your social media, and keep your links visible. The more you share, the more you can earn. Easy.",
+    contents: "Contents",
   },
   tr: {
     faqTitle: "Sık Sorulan Sorular",
@@ -42,6 +43,7 @@ const translations = {
     a6: "Hayır! Cabo'ya kayıt olmak ve kazanmak tamamen ücretsizdir. Gizli ücret yok, sadece paylaş ve kazan.",
     q7: "Daha fazla nasıl kazanırım?",
     a7: "Trend ürünleri öne çıkar, sosyal medyada ve çevrende sıkça paylaş. Ne kadar çok paylaşırsan, o kadar fazla kazanırsın. Bu kadar basit.",
+    contents: "İçindekiler",
   },
 };
 
@@ -62,7 +64,7 @@ export default function FAQPage() {
       acceptedAnswer: { "@type": "Answer", text: t(`a${n}`) },
     }));
     return { "@context": "https://schema.org", "@type": "FAQPage", mainEntity };
-  }, [dict]);
+  }, [dict]); // dict değişince yeniden üret
 
   return (
     <PublicLayout>
@@ -71,37 +73,59 @@ export default function FAQPage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
-      <div className="max-w-3xl mx-auto py-16 px-6 sm:py-20 sm:px-8">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-[#d1ffd0] mb-10 text-center">
-          {t("faqTitle")}
-        </h1>
 
-        {/* İçindekiler (sayfa içi anchor’lar; dış sayfaya gitmiyor) */}
-        <nav aria-label="FAQ contents" className="mb-10">
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-gray-300">
-            {questionKeys.map((n) => (
-              <li key={`toc-${n}`}>
-                <a className="hover:underline hover:text-[#b3ffb3]" href={`#q${n}`}>
-                  {t(`q${n}`)}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 text-gray-200">
+        {/* Header Card */}
+        <div className="rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_14px_50px_rgba(0,0,0,0.55)] p-6 md:p-7">
+          <h1 className="text-3xl md:text-[34px] font-extrabold text-[#d1ffd0] tracking-tight text-center">
+            {t("faqTitle")}
+          </h1>
 
-        <div className="space-y-16">
+          {/* Contents */}
+          <div className="mt-6 rounded-xl border border-[#232323] bg-[#101010] p-4">
+            <div className="text-xs uppercase tracking-wider text-gray-400 mb-3">
+              {t("contents")}
+            </div>
+            <nav aria-label="FAQ contents">
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-gray-300">
+                {questionKeys.map((n) => (
+                  <li key={`toc-${n}`}>
+                    <a
+                      className="block rounded-lg px-3 py-2 border border-transparent hover:border-[#2b2b2b] hover:bg-[#121212] hover:text-[#b0f7a2] transition"
+                      href={`#q${n}`}
+                    >
+                      {t(`q${n}`)}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </div>
+        </div>
+
+        {/* Q/A Cards */}
+        <div className="mt-6 space-y-6">
           {questionKeys.map((n) => (
-            <section key={n} aria-labelledby={`q${n}`}>
-              <h2 id={`q${n}`} className="text-2xl md:text-3xl font-semibold text-[#81d742] mb-6">
+            <section
+              key={n}
+              aria-labelledby={`q${n}`}
+              className="rounded-2xl border border-[#232323] bg-[#0f0f0f] p-6 md:p-7"
+            >
+              <h2
+                id={`q${n}`}
+                className="text-xl md:text-2xl font-bold text-[#d1ffd0] mb-3 scroll-mt-24"
+              >
+                <span className="text-[#81d742] mr-2">Q{n}.</span>
                 {t(`q${n}`)}
               </h2>
-              <p className="text-lg md:text-xl text-gray-300 leading-relaxed">
+
+              <p className="text-base md:text-lg text-gray-300 leading-relaxed">
                 {t(`a${n}`)}
               </p>
             </section>
           ))}
         </div>
-      </div>
+      </main>
     </PublicLayout>
   );
 }

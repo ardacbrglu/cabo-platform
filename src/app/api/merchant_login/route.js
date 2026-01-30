@@ -1,15 +1,19 @@
-// app/api/merchant_login/route.js
+// src/app/api/merchant_login/route.js
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Merchant Credentials Login Proxy (NextAuth credentials callback)
- * - Zod input doğrulama
+ * Security Docblock — Cabo PROD
+ * Route: POST /api/merchant_login
+ * - Zod input validation
  * - Role gate: merchant + status=active
- * - IP & user rate limit
- * - 5 yanlış parola → 15dk kilit
- * - Origin/AJAX/Request-Id zorunlu (dev’de esneklik bayraklı)
- * - CSRF preload + NextAuth callback forward + Set-Cookie forward
+ * - IP & user rate limit (login: 5/min)
+ * - Failed attempts lock: 5 attempts -> 15 min
+ * - requireOrigin + requireAjax + requireRequestId
+ * - NextAuth credentials callback forward (CSRF fetch + cookie forward)
+ * - Forwards Set-Cookie back to client (session cookie)
+ * - Audit logging (evt, userId/requestId)
+ * - No-store responses + security headers
  */
 
 import { NextResponse } from "next/server";
@@ -75,7 +79,6 @@ function containsSessionCookie(setCookieHeader) {
   );
 }
 
-/** Origin builder — proxy/https güvenli */
 function getOriginFromReq(req) {
   const xfHost = req.headers.get("x-forwarded-host");
   const host = (xfHost || req.headers.get("host") || "").trim();
@@ -105,24 +108,26 @@ async function getNextAuthCsrf(origin) {
     redirect: "manual",
   });
   if (!csrfRes.ok) throw new Error(`csrf_fetch_${csrfRes.status}`);
+
   const json = await csrfRes.json().catch(() => ({}));
   const token = json?.csrfToken;
+
   const setCookieHeader = csrfRes.headers.get("set-cookie") || "";
   const jar = splitSetCookies(setCookieHeader)
     .map((c) => c.split(";")[0].trim())
     .filter(Boolean)
     .join("; ");
+
   if (!token || !jar) throw new Error("csrf_parse");
   return { token, cookieJar: jar, csrfSetCookie: setCookieHeader };
 }
 
 const BodySchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(200),
 });
 
 export async function POST(req) {
-  // --- Security preflight
   let requestId = "unknown";
   try {
     requestId = requireRequestId(req);
@@ -138,14 +143,12 @@ export async function POST(req) {
   }
 
   const locale = pickLocale(req);
-  const T = MSG[locale];
+  const T = MSG[locale] || MSG.en;
 
-  // --- IP rate limit
+  // IP rate limit
   {
     const rlKey = makeRateLimitKey(req, { scope: "merchant_login:ip" });
-    const { ok, resetMs } = await checkRateLimit({
-      key: rlKey, limit: RATE_LIMIT_PER_MIN, windowMs: 60_000,
-    });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: RATE_LIMIT_PER_MIN, windowMs: 60_000 });
     if (!ok) {
       const retry = Math.ceil((resetMs || 60_000) / 1000);
       audit({ evt: "merchant.login.ratelimit.ip", requestId });
@@ -158,38 +161,45 @@ export async function POST(req) {
     }
   }
 
-  // --- Body parse/validate
+  // parse body
   let data;
   try {
+    const ct = String(req.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      return withStd(
+        NextResponse.json({ success: false, error: "unsupported_media_type", request_id: requestId }, { status: 415 })
+      );
+    }
     data = BodySchema.parse(await req.json());
   } catch {
     return withStd(
-      NextResponse.json(
-        { success: false, error: "invalid_request", message: T.fill, request_id: requestId },
-        { status: 400 }
-      )
+      NextResponse.json({ success: false, error: "invalid_request", message: T.fill, request_id: requestId }, { status: 400 })
     );
   }
 
   const email = data.email.trim().toLowerCase();
   const password = data.password;
 
+  const generic = () =>
+    withStd(
+      NextResponse.json(
+        { success: false, error: "invalid_credentials", message: T.invalid, request_id: requestId },
+        { status: 401 }
+      )
+    );
+
   try {
     const user = await prisma.user.findUnique({
       where: { email },
       select: {
-        id: true, email: true, role: true, status: true, passwordHash: true,
-        failedAttempts: true, lockUntil: true,
+        id: true,
+        role: true,
+        status: true,
+        passwordHash: true,
+        failedAttempts: true,
+        lockUntil: true,
       },
     });
-
-    const generic = () =>
-      withStd(
-        NextResponse.json(
-          { success: false, error: "invalid_credentials", message: T.invalid, request_id: requestId },
-          { status: 401 }
-        )
-      );
 
     if (!user) {
       audit({ evt: "merchant.login.invalid_email", email: email.slice(0, 3) + "***", requestId });
@@ -199,9 +209,7 @@ export async function POST(req) {
     // user-level rate limit
     {
       const userKey = makeRateLimitKey(req, { scope: "merchant_login:user", userId: user.id });
-      const { ok, resetMs } = await checkRateLimit({
-        key: userKey, limit: RATE_LIMIT_PER_MIN, windowMs: 60_000,
-      });
+      const { ok, resetMs } = await checkRateLimit({ key: userKey, limit: RATE_LIMIT_PER_MIN, windowMs: 60_000 });
       if (!ok) {
         const retry = Math.ceil((resetMs || 60_000) / 1000);
         audit({ evt: "merchant.login.ratelimit.user", userId: user.id, requestId });
@@ -214,34 +222,18 @@ export async function POST(req) {
       }
     }
 
-    // Gates
+    // gates
     if (user.role !== "merchant") {
-      return withStd(
-        NextResponse.json(
-          { success: false, error: "forbidden", message: T.notMerchant, request_id: requestId },
-          { status: 403 }
-        )
-      );
+      return withStd(NextResponse.json({ success: false, error: "forbidden", message: T.notMerchant, request_id: requestId }, { status: 403 }));
     }
     if (user.lockUntil && new Date(user.lockUntil) > new Date()) {
-      return withStd(
-        NextResponse.json(
-          { success: false, error: "locked", message: T.locked, request_id: requestId },
-          { status: 403 }
-        )
-      );
+      return withStd(NextResponse.json({ success: false, error: "locked", message: T.locked, request_id: requestId }, { status: 403 }));
     }
     if (!user.passwordHash) return generic();
     if (user.status !== "active") {
-      return withStd(
-        NextResponse.json(
-          { success: false, error: "pending", message: T.pending, request_id: requestId },
-          { status: 403 }
-        )
-      );
+      return withStd(NextResponse.json({ success: false, error: "pending", message: T.pending, request_id: requestId }, { status: 403 }));
     }
 
-    // Password check + lock counter
     const okPass = await bcrypt.compare(password, user.passwordHash);
     if (!okPass) {
       const nextFailed = (user.failedAttempts || 0) + 1;
@@ -249,10 +241,7 @@ export async function POST(req) {
         where: { id: user.id },
         data: {
           failedAttempts: nextFailed,
-          lockUntil:
-            nextFailed >= MAX_FAILED_ATTEMPTS
-              ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS)
-              : user.lockUntil,
+          lockUntil: nextFailed >= MAX_FAILED_ATTEMPTS ? new Date(Date.now() + ACCOUNT_LOCK_DURATION_MS) : user.lockUntil,
         },
       });
       audit({ evt: "merchant.login.bad_password", userId: user.id, requestId });
@@ -260,25 +249,18 @@ export async function POST(req) {
     }
 
     // reset counters
-    await prisma.user.update({
-      where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null },
-    });
+    await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0, lockUntil: null } });
 
-    // NextAuth CSRF + callback
+    // NextAuth CSRF + callback forward
     const origin = getOriginFromReq(req);
 
     let csrfToken, cookieJar, csrfSetCookie;
     try {
       ({ token: csrfToken, cookieJar, csrfSetCookie } = await getNextAuthCsrf(origin));
     } catch (e) {
-      audit({ evt: "merchant.login.csrf_fetch_fail", userId: user.id, requestId, err: e?.message });
+      audit({ evt: "merchant.login.csrf_fetch_fail", userId: user.id, requestId, err: String(e?.message || e) });
       return debugHeader(
-        withStd(
-          NextResponse.json(
-            { success: false, error: "server_error", message: T.fail, request_id: requestId },
-            { status: 500 }
-          )
-        ),
+        withStd(NextResponse.json({ success: false, error: "server_error", message: T.fail, request_id: requestId }, { status: 500 })),
         `csrf_err:${e?.message || "err"}`
       );
     }
@@ -290,44 +272,32 @@ export async function POST(req) {
     form.set("redirect", "false");
     form.set("callbackUrl", origin);
 
-    const cbRes = await fetch(
-      `${origin}/api/auth/callback/credentials?json=true&redirect=false`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          accept: "application/json",
-          cookie: cookieJar,
-          origin,
-          referer: `${origin}/merchant/login`,
-        },
-        body: form.toString(),
-        redirect: "manual",
-      }
-    );
+    const cbRes = await fetch(`${origin}/api/auth/callback/credentials?json=true&redirect=false`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        cookie: cookieJar,
+        origin,
+        referer: `${origin}/merchant/login`,
+      },
+      body: form.toString(),
+      redirect: "manual",
+    });
 
     const setCookieHeader = cbRes.headers.get("set-cookie") || "";
     let cbJson = {};
-    try { cbJson = await cbRes.json(); } catch {}
+    try {
+      cbJson = await cbRes.json();
+    } catch {}
 
     const okJson = cbRes.ok && !cbJson?.error;
-    const okRedirectWithSession =
-      (cbRes.status === 302 || cbRes.status === 303) &&
-      containsSessionCookie(setCookieHeader);
+    const okRedirectWithSession = (cbRes.status === 302 || cbRes.status === 303) && containsSessionCookie(setCookieHeader);
 
     if (!okJson && !okRedirectWithSession) {
-      audit({
-        evt: "merchant.login.callback_fail",
-        userId: user.id, requestId,
-        status: cbRes.status, err: cbJson?.error || "unknown",
-      });
+      audit({ evt: "merchant.login.callback_fail", userId: user.id, requestId, status: cbRes.status, err: cbJson?.error || "unknown" });
       return debugHeader(
-        withStd(
-          NextResponse.json(
-            { success: false, error: "auth_failed", message: T.fail, request_id: requestId },
-            { status: 401 }
-          )
-        ),
+        withStd(NextResponse.json({ success: false, error: "auth_failed", message: T.fail, request_id: requestId }, { status: 401 })),
         `cb_fail:${cbRes.status}:${cbJson?.error || "unknown"}`
       );
     }
@@ -337,16 +307,17 @@ export async function POST(req) {
       withStd(NextResponse.json({ success: true, message: T.success, request_id: requestId }, { status: 200 })),
       okJson ? "ok:json" : "ok:302_session"
     );
+
     for (const c of splitSetCookies(setCookieHeader)) res.headers.append("set-cookie", c);
     for (const c of splitSetCookies(csrfSetCookie)) res.headers.append("set-cookie", c);
 
     audit({ evt: "merchant.login.ok", userId: user.id, requestId });
     return res;
   } catch (e) {
-    audit({ evt: "merchant.login.exception", requestId, err: e?.message });
+    audit({ evt: "merchant.login.exception", requestId, err: String(e?.message || e) });
     return withStd(
       NextResponse.json(
-        { success: false, error: "server_error", message: MSG[locale]?.fail || MSG.en.fail, request_id: requestId },
+        { success: false, error: "server_error", message: T.fail, request_id: requestId },
         { status: 500 }
       )
     );

@@ -25,14 +25,13 @@ import { applyApiSecurityHeaders } from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
 import { verifyRecaptcha } from "@/lib/captcha";
 import { audit } from "@/lib/logger";
-// sanitize için namespace import + güvenli fallback
 import * as validation from "@/lib/validation";
 
 /* -------------------------- helpers -------------------------- */
 
-function withStd(res, req) {
+function withStd(res) {
   res.headers.set("Cache-Control", "no-store");
-  return applyApiSecurityHeaders(res, req);
+  return applyApiSecurityHeaders(res);
 }
 
 const RL_LIMIT = Number(process.env.MERCHANT_RL_PER_MIN || "12");
@@ -75,111 +74,89 @@ const tFromReq = (req) =>
     ? MSG.tr
     : MSG.en;
 
-// Unicode güvenli normalize (NFKC) + görünmez karakter temizliği
+const maskEmail = (e) => String(e || "").replace(/(.{2}).*(@.*)/, "$1***$2");
+
+// Unicode normalize (NFKC) + görünmez karakter temizliği
 const normalizeU = (s) =>
   String(s ?? "")
     .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
 const RegisterSchema = z
   .object({
-    // Türkçe dahil tüm harfler: \p{L}; rakam: \p{N}; boşluk ve _ serbest
     name: z.string().min(3).max(40).regex(/^[\p{L}\p{N}_ ]+$/u),
-    companyName: z
-      .string()
-      .min(2)
-      .max(150)
-      .regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
+    companyName: z.string().min(2).max(150).regex(/^[\p{L}\p{N}\s&_.,'’()\-]+$/u),
     email: z.string().email(),
-    password: z.string().min(8).refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
+    password: z
+      .string()
+      .min(8)
+      .refine((s) => /[A-Za-z]/.test(s) && /\d/.test(s), "weak"),
     phoneNumber: z.string().regex(/^\+?\d{10,15}$/),
     termsAccepted: z.literal(true),
     captcha: z.string().min(1),
   })
   .strict();
 
-/** Güvenli sanitize: validation.sanitize?.text varsa onu kullanır, yoksa whitelist. */
+/** sanitize: validation.sanitize?.text varsa kullanır, yoksa whitelist */
 function sanitizeTextSafe(s) {
   const v = normalizeU(s);
   const fn = validation?.sanitize?.text;
   if (typeof fn === "function") {
     try {
       return fn(v);
-    } catch {
-      /* fallthrough */
-    }
+    } catch {}
   }
-  // Harf, rakam, boşluk ve bazı temel işaretler whitelisti (Unicode)
   return v.replace(/[^\p{L}\p{N}\s&_.,'’()\-@:+]/gu, "");
 }
 
 /* --------------------------- handler ------------------------- */
 
 export async function POST(req) {
-  // ---- Preflight
   let requestId = "unknown";
   try {
     requestId = requireRequestId(req);
     requireOrigin(req);
     requireAjax(req);
-  } catch {
+  } catch (e) {
     return withStd(
       NextResponse.json(
-        { success: false, error: "bad_request", message: "bad_request", request_id: requestId },
-        { status: 400 }
-      ),
-      req
+        { success: false, error: e?.code || "bad_request", message: "bad_request", request_id: requestId },
+        { status: e?.status || 400 }
+      )
     );
   }
 
   const M = tFromReq(req);
 
-  // ---- Rate limit
+  // Rate limit (fail-open)
   try {
     const rlKey = makeRateLimitKey(req, { scope: RL_SCOPE });
-    const { ok, resetMs } = await checkRateLimit({
-      key: rlKey,
-      limit: RL_LIMIT,
-      windowMs: RL_WINDOW_MS,
-    });
+    const { ok, resetMs } = await checkRateLimit({ key: rlKey, limit: RL_LIMIT, windowMs: RL_WINDOW_MS });
     if (!ok) {
       const retrySec = Math.max(1, Math.ceil((resetMs || RL_WINDOW_MS) / 1000));
       audit({ evt: "merchant.register.ratelimit", requestId, retrySec });
       return withStd(
         NextResponse.json(
-          {
-            success: false,
-            error: "too_many_requests",
-            message: M.ratelimit,
-            request_id: requestId,
-            retry_after: retrySec,
-          },
+          { success: false, error: "too_many_requests", message: M.ratelimit, request_id: requestId, retry_after: retrySec },
           { status: 429, headers: { "Retry-After": String(retrySec) } }
-        ),
-        req
+        )
       );
     }
-  } catch {
-    // rate-limit problemi akışı durdurmasın (fail-open)
-  }
+  } catch {}
 
-  // ---- Body
+  // Body
   let raw;
   try {
     raw = await req.json();
   } catch {
     return withStd(
-      NextResponse.json(
-        { success: false, error: "invalid_request", message: M.required, request_id: requestId },
-        { status: 400 }
-      ),
-      req
+      NextResponse.json({ success: false, error: "invalid_request", message: M.required, request_id: requestId }, { status: 400 })
     );
   }
 
-  // ---- Normalize + validate + sanitize (CAPTCHA'DAN ÖNCE!)
+  // Normalize + sanitize + validate
   const data = {
     name: sanitizeTextSafe(raw?.name),
     companyName: sanitizeTextSafe(raw?.companyName),
@@ -194,37 +171,21 @@ export async function POST(req) {
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path?.[0];
     const fieldMsg =
-      field === "email"
-        ? M.email
-        : field === "name"
-        ? M.name
-        : field === "companyName"
-        ? M.company
-        : field === "password"
-        ? M.password
-        : field === "phoneNumber"
-        ? M.phone
-        : field === "termsAccepted"
-        ? M.terms
-        : M.required;
+      field === "email" ? M.email :
+      field === "name" ? M.name :
+      field === "companyName" ? M.company :
+      field === "password" ? M.password :
+      field === "phoneNumber" ? M.phone :
+      field === "termsAccepted" ? M.terms :
+      M.required;
 
     audit({ evt: "merchant.register.invalid", field, requestId });
     return withStd(
-      NextResponse.json(
-        {
-          success: false,
-          error: "invalid_payload",
-          field,
-          message: fieldMsg,
-          request_id: requestId,
-        },
-        { status: 400 }
-      ),
-      req
+      NextResponse.json({ success: false, error: "invalid_payload", field, message: fieldMsg, request_id: requestId }, { status: 400 })
     );
   }
 
-  // ---- CAPTCHA (artık sadece form sahası geçerliyse çalışır)
+  // CAPTCHA (sadece geçerli payload sonrası)
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
   let cap = { ok: false, code: "TOKEN_MISSING" };
   try {
@@ -235,35 +196,25 @@ export async function POST(req) {
   if (!cap.ok) {
     audit({ evt: "merchant.register.captcha_fail", requestId, code: cap.code });
     return withStd(
-      NextResponse.json(
-        { success: false, error: "captcha_failed", message: M.captcha, request_id: requestId },
-        { status: 400 }
-      ),
-      req
+      NextResponse.json({ success: false, error: "captcha_failed", message: M.captcha, request_id: requestId }, { status: 400 })
     );
   }
 
   const { name, companyName, email, password, phoneNumber } = parsed.data;
 
-  // ---- Uniqueness
-  const exists = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true },
-  });
+  // Uniqueness
+  const exists = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (exists) {
-    audit({ evt: "merchant.register.conflict", requestId, email });
+    audit({ evt: "merchant.register.conflict", requestId, email: maskEmail(email) });
     return withStd(
-      NextResponse.json(
-        { success: false, error: "conflict", message: M.uniq, request_id: requestId },
-        { status: 409 }
-      ),
-      req
+      NextResponse.json({ success: false, error: "conflict", message: M.uniq, request_id: requestId }, { status: 409 })
     );
   }
 
-  // ---- Create merchant (pending)
+  // Create merchant (pending)
   try {
     const passwordHash = await bcrypt.hash(password, 10);
+
     await prisma.user.create({
       data: {
         name,
@@ -271,27 +222,16 @@ export async function POST(req) {
         companyName,
         email,
         passwordHash,
-        phoneNumber, // prisma modelinde opsiyonel
+        phoneNumber,
         role: "merchant",
         status: "pending",
         termsAccepted: true,
-        languagePreference: (req.headers.get("accept-language") || "")
-          .toLowerCase()
-          .startsWith("tr")
-          ? "tr"
-          : "en",
-        // currencyCode default TRY, createdAt default now()
+        languagePreference: (req.headers.get("accept-language") || "").toLowerCase().startsWith("tr") ? "tr" : "en",
       },
     });
 
-    audit({ evt: "merchant.register.ok", requestId, email });
-    return withStd(
-      NextResponse.json(
-        { success: true, message: M.success, request_id: requestId },
-        { status: 200 }
-      ),
-      req
-    );
+    audit({ evt: "merchant.register.ok", requestId, email: maskEmail(email) });
+    return withStd(NextResponse.json({ success: true, message: M.success, request_id: requestId }, { status: 200 }));
   } catch (e) {
     audit({
       evt: "merchant.register.db_error",
@@ -300,11 +240,7 @@ export async function POST(req) {
       meta: String(e?.message || "").slice(0, 220),
     });
     return withStd(
-      NextResponse.json(
-        { success: false, error: "server_error", message: M.fail, request_id: requestId },
-        { status: 500 }
-      ),
-      req
+      NextResponse.json({ success: false, error: "server_error", message: M.fail, request_id: requestId }, { status: 500 })
     );
   }
 }
