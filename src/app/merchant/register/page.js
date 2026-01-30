@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Merchant Register — Affiliate style (single centered card) ✅
+ * Merchant Register — Affiliate style (single centered card) ✅ (COMPACT / NO-SCROLL tuned)
  *
  * Security Docblock (Cabo PROD):
  * - Tüm istekler apiFetch wrapper ile (credentials:include, X-Requested-With, X-Request-Id).
@@ -33,7 +33,6 @@ const dicts = {
     submit: "Create Account",
     success: "Your merchant request has been received and is pending approval.",
 
-    // client validation
     req_company: "Please fill out this field.",
     req_name: "Please fill out this field.",
     req_email: "Please fill out this field.",
@@ -54,7 +53,6 @@ const dicts = {
     bottomLoginText: "Already have an account?",
     bottomLoginLink: "Log in",
 
-    // map server
     e_required: "Please fill in all fields.",
     e_email: "Invalid email address.",
     e_uniq: "This email is already registered.",
@@ -82,7 +80,6 @@ const dicts = {
     submit: "Hesabı Oluştur",
     success: "Satıcı başvurun alındı ve onay bekliyor.",
 
-    // client validation
     req_company: "Lütfen bu alanı doldurun.",
     req_name: "Lütfen bu alanı doldurun.",
     req_email: "Lütfen bu alanı doldurun.",
@@ -103,7 +100,6 @@ const dicts = {
     bottomLoginText: "Zaten hesabın var mı?",
     bottomLoginLink: "Giriş yap",
 
-    // map server
     e_required: "Lütfen tüm alanları doldurun.",
     e_email: "Geçersiz e-posta.",
     e_uniq: "Bu e-posta zaten kayıtlı.",
@@ -129,7 +125,7 @@ const GradientWord = ({ children }) => (
 );
 
 const Kicker = ({ children }) => (
-  <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-mono tracking-wide bg-[#111] border border-[#1e1e1e] text-[#cfcfcf]">
+  <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[10.5px] font-mono tracking-wide bg-[#111] border border-[#1e1e1e] text-[#cfcfcf]">
     <Sparkles className="w-4 h-4 text-[#81d742]" />
     <span>{children}</span>
   </div>
@@ -197,11 +193,7 @@ export default function MerchantRegisterPage() {
     else if (!/^\d{10,15}$/.test(form.phone)) errs.phone = t("invalidPhone");
 
     if (!form.password) errs.password = t("req_password");
-    else if (
-      form.password.length < 8 ||
-      !/\d/.test(form.password) ||
-      !/[A-Za-z]/.test(form.password)
-    )
+    else if (form.password.length < 8 || !/\d/.test(form.password) || !/[A-Za-z]/.test(form.password))
       errs.password = t("invalidPassword");
 
     if (!form.password2) errs.password2 = t("req_password2");
@@ -234,18 +226,16 @@ export default function MerchantRegisterPage() {
     if (code.includes("too_many") || code.includes("rate")) return t("e_ratelimit");
     if (code.includes("already_active")) return t("e_already_active");
     if (code.includes("pending")) return t("e_pending");
-    if (code.includes("uniq") || code.includes("exists") || code.includes("conflict"))
-      return t("e_uniq");
+    if (code.includes("uniq") || code.includes("exists") || code.includes("conflict")) return t("e_uniq");
     if (code.includes("email")) return t("e_email");
     if (code.includes("required")) return t("e_required");
 
     return json?.message || t("e_server");
   }
 
-  // ✅ affiliate login/register input palette
   const inputBase = useMemo(() => {
     return (
-      "w-full rounded-xl px-4 py-3 text-[14px] " +
+      "w-full rounded-xl px-4 py-[10px] text-[13px] " +
       "bg-[#111] text-white placeholder-gray-500 " +
       "border border-[#242424] " +
       "focus:outline-none focus:ring-2 focus:ring-[#81d742] focus:border-[#81d742] " +
@@ -254,7 +244,7 @@ export default function MerchantRegisterPage() {
   }, []);
 
   const selectBase =
-    "bg-[#111] text-white rounded-xl px-3 py-3 border border-[#242424] " +
+    "bg-[#111] text-white rounded-xl px-3 py-[10px] text-[13px] border border-[#242424] " +
     "focus:outline-none focus:ring-2 focus:ring-[#81d742] focus:border-[#81d742]";
 
   async function onSubmit(e) {
@@ -267,28 +257,21 @@ export default function MerchantRegisterPage() {
     setServerFieldErrors({});
     firstInvalidRef.current = null;
 
-    // --- CAPTCHA FALLBACK (affiliate register ile aynı mantık) ---
+    // CAPTCHA fallback
     if (!captcha) {
       try {
         const gre = window.grecaptcha;
         const fromGre = gre?.getResponse ? gre.getResponse() : "";
         const fromGlobal = window.__caboCaptchaToken || "";
-        const fromDom =
-          document.querySelector(".recaptcha-center")?.getAttribute("data-token") || "";
+        const fromDom = document.querySelector(".recaptcha-center")?.getAttribute("data-token") || "";
         const tok = fromGre || fromGlobal || fromDom || "";
         if (tok) setCaptcha(tok);
       } catch {}
     }
-    // ------------------------------------------------------------
 
     const errs = validate();
     if (Object.keys(errs).length) {
-      // ilk hatalı alanı fokusla
-      const order = ["companyName", "name", "email", "phone", "password", "password2", "captcha"];
-      const firstKey = order.find((k) => errs[k]);
-      if (firstKey) {
-        requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
-      }
+      requestAnimationFrame(() => firstInvalidRef.current?.focus?.());
       return;
     }
 
@@ -314,13 +297,9 @@ export default function MerchantRegisterPage() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data?.success) {
-        const msg = mapServerError(data);
-        setServerError(msg);
-
-        // captcha reset
+        setServerError(mapServerError(data));
         setCaptcha("");
         setCaptchaResetKey((k) => k + 1);
-
         return;
       }
 
@@ -339,23 +318,24 @@ export default function MerchantRegisterPage() {
     <PublicLayout>
       {!ready ? null : (
         <main className="relative w-full">
-          <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-10 px-4">
-            {/* ✅ same soft glow backdrop as affiliate */}
-            <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="absolute -inset-24 blur-3xl opacity-25 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
-            </div>
+          {/* ✅ FIX: Glow artık viewport'a çiziliyor -> kare/rect yok */}
+          <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 flex items-center justify-center">
 
+            <div className="absolute w-[900px] h-[900px] sm:w-[1100px] sm:h-[1100px] lg:w-[1400px] lg:h-[1400px] rounded-full blur-3xl opacity-20 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
+
+          </div>
+
+          <div className="relative z-10 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-8 px-4 bg-transparent">
             <form
               onSubmit={onSubmit}
               noValidate
               autoComplete="off"
-              className="relative w-full max-w-md rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_18px_60px_rgba(0,0,0,.55)] px-6 sm:px-8 py-8"
-              aria-describedby="merchant-register-desc"
+              className="relative w-full max-w-md rounded-2xl border border-[#232323] bg-[#0f0f0f] shadow-[0_18px_60px_rgba(0,0,0,.55)] px-5 sm:px-7 py-6"
             >
               <div className="text-center">
                 <Kicker>{t("kicker")}</Kicker>
 
-                <h1 className="mt-4 text-3xl font-extrabold text-[#d1ffd0]">
+                <h1 className="mt-3 text-2xl sm:text-3xl font-extrabold text-[#d1ffd0] leading-tight">
                   {t("title").includes("Cabo") ? (
                     <>
                       {t("title").split("Cabo")[0]}
@@ -367,68 +347,61 @@ export default function MerchantRegisterPage() {
                   )}
                 </h1>
 
-                <p className="mt-2 text-[13px] text-gray-400">{t("subtitle")}</p>
+                <p className="mt-1 text-[12px] text-gray-400 hidden sm:block">{t("subtitle")}</p>
               </div>
 
-              <div className="mt-6 flex flex-col gap-4">
-                {/* Company */}
-                <div className="relative">
-                  <label className="sr-only" htmlFor="company">{t("company")}</label>
-                  <input
-                    id="company"
-                    type="text"
-                    ref={(el) => {
-                      if (needsRef("companyName")) firstInvalidRef.current = el;
-                    }}
-                    value={form.companyName}
-                    onChange={(e) => setForm((s) => ({ ...s, companyName: e.target.value }))}
-                    placeholder={t("company")}
-                    className={cx(inputBase, submitted && errors.companyName ? "border-red-500 focus:ring-red-400" : "")}
-                    required
-                    aria-invalid={!!errors.companyName}
-                  />
-                  {submitted && errors.companyName && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
-                      <AlertTriangle size={14} className="inline mr-1" />
-                      {errors.companyName}
-                    </p>
-                  )}
+              <div className="mt-5 flex flex-col gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="relative">
+                    <label className="sr-only" htmlFor="company">{t("company")}</label>
+                    <input
+                      id="company"
+                      type="text"
+                      ref={(el) => { if (needsRef("companyName")) firstInvalidRef.current = el; }}
+                      value={form.companyName}
+                      onChange={(e) => setForm((s) => ({ ...s, companyName: e.target.value }))}
+                      placeholder={t("company")}
+                      className={cx(inputBase, submitted && errors.companyName ? "border-red-500 focus:ring-red-400" : "")}
+                      required
+                      aria-invalid={!!errors.companyName}
+                    />
+                    {submitted && errors.companyName && (
+                      <p className="mt-1.5 text-[12px] text-red-400" role="alert">
+                        <AlertTriangle size={13} className="inline mr-1" />
+                        {errors.companyName}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <label className="sr-only" htmlFor="fullName">{t("fullName")}</label>
+                    <input
+                      id="fullName"
+                      type="text"
+                      ref={(el) => { if (needsRef("name")) firstInvalidRef.current = el; }}
+                      value={form.name}
+                      onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
+                      placeholder={t("fullName")}
+                      className={cx(inputBase, submitted && errors.name ? "border-red-500 focus:ring-red-400" : "")}
+                      required
+                      aria-invalid={!!errors.name}
+                    />
+                    {submitted && errors.name && (
+                      <p className="mt-1.5 text-[12px] text-red-400" role="alert">
+                        <AlertTriangle size={13} className="inline mr-1" />
+                        {errors.name}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Full Name */}
-                <div className="relative">
-                  <label className="sr-only" htmlFor="fullName">{t("fullName")}</label>
-                  <input
-                    id="fullName"
-                    type="text"
-                    ref={(el) => {
-                      if (needsRef("name")) firstInvalidRef.current = el;
-                    }}
-                    value={form.name}
-                    onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                    placeholder={t("fullName")}
-                    className={cx(inputBase, submitted && errors.name ? "border-red-500 focus:ring-red-400" : "")}
-                    required
-                    aria-invalid={!!errors.name}
-                  />
-                  {submitted && errors.name && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
-                      <AlertTriangle size={14} className="inline mr-1" />
-                      {errors.name}
-                    </p>
-                  )}
-                </div>
-
-                {/* Email */}
                 <div className="relative">
                   <label className="sr-only" htmlFor="email">{t("email")}</label>
                   <input
                     id="email"
                     type="email"
                     inputMode="email"
-                    ref={(el) => {
-                      if (needsRef("email")) firstInvalidRef.current = el;
-                    }}
+                    ref={(el) => { if (needsRef("email")) firstInvalidRef.current = el; }}
                     value={form.email}
                     onChange={(e) => setForm((s) => ({ ...s, email: e.target.value.trimStart() }))}
                     placeholder={t("email")}
@@ -440,15 +413,14 @@ export default function MerchantRegisterPage() {
                     spellCheck="false"
                   />
                   {submitted && errors.email && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
-                      <AlertTriangle size={14} className="inline mr-1" />
+                    <p className="mt-1.5 text-[12px] text-red-400" role="alert">
+                      <AlertTriangle size={13} className="inline mr-1" />
                       {errors.email}
                     </p>
                   )}
                 </div>
 
-                {/* Phone */}
-                <div className="grid grid-cols-[120px_1fr] gap-3">
+                <div className="grid grid-cols-[112px_1fr] gap-3">
                   <select
                     value={form.countryCode}
                     onChange={(e) => setForm((s) => ({ ...s, countryCode: e.target.value }))}
@@ -463,13 +435,9 @@ export default function MerchantRegisterPage() {
                     id="phone"
                     type="tel"
                     inputMode="numeric"
-                    ref={(el) => {
-                      if (needsRef("phone")) firstInvalidRef.current = el;
-                    }}
+                    ref={(el) => { if (needsRef("phone")) firstInvalidRef.current = el; }}
                     value={form.phone}
-                    onChange={(e) =>
-                      setForm((s) => ({ ...s, phone: e.target.value.replace(/\D+/g, "") }))
-                    }
+                    onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value.replace(/\D+/g, "") }))}
                     placeholder={t("phone")}
                     className={cx(inputBase, submitted && errors.phone ? "border-red-500 focus:ring-red-400" : "")}
                     required
@@ -478,138 +446,124 @@ export default function MerchantRegisterPage() {
                   />
                 </div>
                 {submitted && errors.phone && (
-                  <p className="mt-[-6px] text-sm text-red-400" role="alert">
-                    <AlertTriangle size={14} className="inline mr-1" />
+                  <p className="mt-[-2px] text-[12px] text-red-400" role="alert">
+                    <AlertTriangle size={13} className="inline mr-1" />
                     {errors.phone}
                   </p>
                 )}
 
-                {/* Password */}
-                <div className="relative">
-                  <label className="sr-only" htmlFor="password">{t("password")}</label>
-                  <input
-                    id="password"
-                    type="password"
-                    ref={(el) => {
-                      if (needsRef("password")) firstInvalidRef.current = el;
-                    }}
-                    value={form.password}
-                    onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
-                    placeholder={t("password")}
-                    className={cx(inputBase, submitted && errors.password ? "border-red-500 focus:ring-red-400" : "")}
-                    minLength={8}
-                    autoComplete="new-password"
-                    required
-                    aria-invalid={!!errors.password}
-                  />
-                  {submitted && errors.password && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
-                      <AlertTriangle size={14} className="inline mr-1" />
-                      {errors.password}
-                    </p>
-                  )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="relative">
+                    <label className="sr-only" htmlFor="password">{t("password")}</label>
+                    <input
+                      id="password"
+                      type="password"
+                      ref={(el) => { if (needsRef("password")) firstInvalidRef.current = el; }}
+                      value={form.password}
+                      onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
+                      placeholder={t("password")}
+                      className={cx(inputBase, submitted && errors.password ? "border-red-500 focus:ring-red-400" : "")}
+                      minLength={8}
+                      autoComplete="new-password"
+                      required
+                      aria-invalid={!!errors.password}
+                    />
+                    {submitted && errors.password && (
+                      <p className="mt-1.5 text-[12px] text-red-400" role="alert">
+                        <AlertTriangle size={13} className="inline mr-1" />
+                        {errors.password}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <label className="sr-only" htmlFor="password2">{t("confirmPassword")}</label>
+                    <input
+                      id="password2"
+                      type="password"
+                      ref={(el) => { if (needsRef("password2")) firstInvalidRef.current = el; }}
+                      value={form.password2}
+                      onChange={(e) => setForm((s) => ({ ...s, password2: e.target.value }))}
+                      placeholder={t("confirmPassword")}
+                      className={cx(inputBase, submitted && errors.password2 ? "border-red-500 focus:ring-red-400" : "")}
+                      minLength={8}
+                      autoComplete="new-password"
+                      required
+                      aria-invalid={!!errors.password2}
+                    />
+                    {submitted && errors.password2 && (
+                      <p className="mt-1.5 text-[12px] text-red-400" role="alert">
+                        <AlertTriangle size={13} className="inline mr-1" />
+                        {errors.password2}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Confirm Password */}
-                <div className="relative">
-                  <label className="sr-only" htmlFor="password2">{t("confirmPassword")}</label>
-                  <input
-                    id="password2"
-                    type="password"
-                    ref={(el) => {
-                      if (needsRef("password2")) firstInvalidRef.current = el;
-                    }}
-                    value={form.password2}
-                    onChange={(e) => setForm((s) => ({ ...s, password2: e.target.value }))}
-                    placeholder={t("confirmPassword")}
-                    className={cx(inputBase, submitted && errors.password2 ? "border-red-500 focus:ring-red-400" : "")}
-                    minLength={8}
-                    autoComplete="new-password"
-                    required
-                    aria-invalid={!!errors.password2}
-                  />
-                  {submitted && errors.password2 && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
-                      <AlertTriangle size={14} className="inline mr-1" />
-                      {errors.password2}
-                    </p>
-                  )}
-                </div>
-
-                {/* Terms */}
-                <div className="flex items-start gap-3 pt-1">
+                <div className="flex items-start gap-3 pt-0.5">
                   <input
                     id="terms"
                     type="checkbox"
                     checked={terms}
                     onChange={(e) => setTerms(e.target.checked)}
-                    className="accent-[#81d742] h-5 w-5 mt-0.5"
+                    className="accent-[#81d742] h-4.5 w-4.5 mt-0.5"
                   />
-                  <label htmlFor="terms" className="text-sm text-gray-300">
+                  <label htmlFor="terms" className="text-[12.5px] leading-snug text-gray-300">
                     {t("termsLabelA")}{" "}
-                    <Link
-                      href="/terms"
-                      target="_blank"
-                      className="text-[#81d742] underline hover:text-[#b3ffb3]"
-                    >
+                    <Link href="/terms" target="_blank" className="text-[#81d742] underline hover:text-[#b3ffb3]">
                       {t("termsLabelB")}
                     </Link>{" "}
                     {t("termsLabelC")}{" "}
-                    <Link
-                      href="/privacy"
-                      target="_blank"
-                      className="text-[#81d742] underline hover:text-[#b3ffb3]"
-                    >
+                    <Link href="/privacy" target="_blank" className="text-[#81d742] underline hover:text-[#b3ffb3]">
                       {t("termsLabelD")}
                     </Link>
                   </label>
                 </div>
                 {submitted && errors.terms && (
-                  <p className="mt-[-6px] text-sm text-red-400 flex items-center gap-1.5" role="alert">
-                    <AlertTriangle size={16} /> {errors.terms}
+                  <p className="mt-[-4px] text-[12px] text-red-400 flex items-center gap-1.5" role="alert">
+                    <AlertTriangle size={14} /> {errors.terms}
                   </p>
                 )}
 
-                {/* CAPTCHA */}
                 <div
                   className={cx(
-                    "pt-1",
+                    "pt-0.5",
                     submitted && errors.captcha ? "ring-2 ring-red-400 rounded-xl p-2" : ""
                   )}
                   aria-invalid={submitted && errors.captcha ? "true" : "false"}
                 >
-                  <Captcha
-                    key={captchaResetKey}
-                    onChange={(v) => setCaptcha(v || "")}
-                    lang={(locale || "tr").toLowerCase()}
-                    theme="light"
-                    className="mb-2"
-                  />
+                  <div className="cabo-captcha-scale">
+                    <Captcha
+                      key={captchaResetKey}
+                      onChange={(v) => setCaptcha(v || "")}
+                      lang={(locale || "tr").toLowerCase()}
+                      theme="light"
+                      className="mb-1"
+                    />
+                  </div>
                   {submitted && errors.captcha && (
-                    <p className="mt-2 text-sm text-red-400" role="alert">
+                    <p className="mt-1.5 text-[12px] text-red-400" role="alert">
                       {errors.captcha}
                     </p>
                   )}
                 </div>
 
-                {/* Server messages */}
                 {serverError && (
-                  <div className="text-red-400 text-sm text-center" role="alert" aria-live="assertive">
+                  <div className="text-red-400 text-[12.5px] text-center" role="alert" aria-live="assertive">
                     {serverError}
                   </div>
                 )}
                 {success && (
-                  <div className="text-green-400 text-sm text-center" role="status" aria-live="polite">
+                  <div className="text-green-400 text-[12.5px] text-center" role="status" aria-live="polite">
                     {success}
                   </div>
                 )}
 
-                {/* Submit */}
                 <button
                   type="submit"
                   disabled={loading}
                   className={cx(
-                    "w-full px-6 py-3 text-[15px] font-bold rounded-xl transition",
+                    "w-full px-6 py-2.5 text-[14px] font-bold rounded-xl transition",
                     "bg-[#81d742] text-[#0b0b0b] hover:bg-[#baff7c]",
                     "disabled:opacity-60 active:scale-[0.99]",
                     "focus:outline-none focus:ring-2 focus:ring-[#a2ff70] focus:ring-offset-2 focus:ring-offset-[#0b0b0b]"
@@ -618,7 +572,7 @@ export default function MerchantRegisterPage() {
                 >
                   {loading ? (
                     <span className="inline-flex items-center justify-center gap-2">
-                      <Loader2 className="animate-spin" size={18} /> {t("submit")}
+                      <Loader2 className="animate-spin" size={16} /> {t("submit")}
                     </span>
                   ) : (
                     <span className="inline-flex items-center justify-center gap-2">
@@ -627,13 +581,9 @@ export default function MerchantRegisterPage() {
                   )}
                 </button>
 
-                <div className="pt-1 text-gray-400 text-sm text-center">
+                <div className="pt-0.5 text-gray-400 text-[13px] text-center">
                   {t("bottomLoginText")}{" "}
-                  <Link
-                    href="/merchant/login"
-                    prefetch={false}
-                    className="text-[#81d742] underline hover:text-[#b3ffb3]"
-                  >
+                  <Link href="/merchant/login" prefetch={false} className="text-[#81d742] underline hover:text-[#b3ffb3]">
                     {t("bottomLoginLink")}
                   </Link>
                 </div>
@@ -641,7 +591,6 @@ export default function MerchantRegisterPage() {
             </form>
           </div>
 
-          {/* Autofill mavi görünümü engelle */}
           <style jsx global>{`
             input:-webkit-autofill,
             input:-webkit-autofill:hover,
@@ -652,6 +601,10 @@ export default function MerchantRegisterPage() {
                       box-shadow: 0 0 0 1000px #111 inset !important;
               transition: background-color 9999s ease-in-out 0s;
             }
+
+            .cabo-captcha-scale { transform-origin: center top; }
+            @media (max-width: 420px) { .cabo-captcha-scale { transform: scale(0.92); } }
+            @media (min-width: 421px) { .cabo-captcha-scale { transform: scale(1); } }
           `}</style>
         </main>
       )}
