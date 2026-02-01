@@ -3,12 +3,11 @@
 /**
  * Homepage — FULL (PROD)
  *
- * Goals:
- * - No blank on first load (handled by PublicLayout fix too)
- * - Reveal never hides content; only adds subtle animation when sections enter view
- * - Full-bleed sections (ignore PublicLayout container max-width)
- * - Square screenshot slots (aspect-square) with sane sizing & mobile-friendly layout
- * - TR/EN dictionary COMPLETE (no leftover hardcoded English)
+ * Fixes:
+ * - Desktop spacing: image/text no longer feels tight (bigger gaps + column padding).
+ * - Strict alternation: dark/light/dark/light... while scrolling.
+ * - Remove useTranslation dependency to avoid possible async timeouts (UnhandledRejection/Timeout).
+ * - Shopify note rewritten to a meaningful, professional disclaimer.
  *
  * Security Docblock (prod)
  * - Public page: no auth required.
@@ -20,7 +19,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import PublicLayout from "@/components/PublicLayout";
-import { useTranslation } from "@/hooks/useTranslation";
 import { useLocale } from "@/context/LocaleContext";
 import {
   Sparkles,
@@ -50,7 +48,8 @@ const L = {
     cta_register: "Create account",
     cta_merchant: "Merchant access",
     scroll_hint: "Scroll to explore",
-    hero_note: "Premium, minimal, and made to feel effortless — because earning should be simple.",
+    hero_note:
+      "Premium, minimal, and made to feel effortless — because earning should be simple.",
 
     // how
     how_kicker: "How it works",
@@ -125,7 +124,8 @@ const L = {
     shopify_titleB: " is on the way.",
     shopify_desc:
       "We’re building a Shopify integration so merchants can connect stores faster and send secure purchase events back to Cabo.",
-    shopify_note: "(This section is informational — your real app flow stays secure & verified.)",
+    shopify_note:
+      "Note: When available, purchase events will be accepted only if they are signed/verified — so commissions are credited only for valid transactions.",
     shopify_card_title: "Shopify integration",
     shopify_status: "On the way",
     shopify_unlock_title: "What it unlocks",
@@ -140,7 +140,7 @@ const L = {
     final_cta_primary: "Create / Login",
     final_cta_merchant: "Merchant Portal",
 
-    // small labels used in UI (were hardcoded before)
+    // small labels
     ui_preview: "Preview",
     ui_clicks: "Clicks",
     ui_sales: "Sales",
@@ -175,7 +175,8 @@ const L = {
     cta_register: "Hesap oluştur",
     cta_merchant: "Satıcı girişi",
     scroll_hint: "Keşfetmek için kaydır",
-    hero_note: "Premium, minimal ve zahmetsiz hissettirecek şekilde — çünkü kazanmak basit olmalı.",
+    hero_note:
+      "Premium, minimal ve zahmetsiz hissettirecek şekilde — çünkü kazanmak basit olmalı.",
 
     // how
     how_kicker: "Nasıl çalışır?",
@@ -250,7 +251,8 @@ const L = {
     shopify_titleB: " yakında.",
     shopify_desc:
       "Mağazaları daha hızlı bağlamak ve Cabo’ya güvenli satın alma event’leri göndermek için Shopify entegrasyonu geliştiriyoruz.",
-    shopify_note: "(Bu bölüm bilgilendirme amaçlı — gerçek uygulama akışın güvenli ve doğrulanmış kalır.)",
+    shopify_note:
+      "Not: Yayına alındığında, satın alma bildirimleri yalnızca imzalı/doğrulanmış şekilde kabul edilir — böylece komisyon sadece geçerli işlemlerde yazılır.",
     shopify_card_title: "Shopify entegrasyonu",
     shopify_status: "Yakında",
     shopify_unlock_title: "Ne sağlar?",
@@ -265,7 +267,7 @@ const L = {
     final_cta_primary: "Kayıt / Giriş",
     final_cta_merchant: "Satıcı Portalı",
 
-    // small labels used in UI
+    // small labels
     ui_preview: "Önizleme",
     ui_clicks: "Tıklama",
     ui_sales: "Satış",
@@ -293,19 +295,18 @@ const L = {
 const cx = (...a) => a.filter(Boolean).join(" ");
 
 /**
- * Reveal that NEVER hides content.
- * - content is always visible
- * - when it enters view, we apply a subtle animation (opacity 0.88 -> 1, y 8px -> 0)
+ * Reveal: never hides content.
+ * Only adds a subtle animation once when the element first enters viewport.
+ * (No fallback timers to avoid any weird "timeout" behavior in devtools.)
  */
 function useRevealOnce({ threshold = 0.12, rootMargin = "0px 0px -12% 0px", immediate = false } = {}) {
   const ref = useRef(null);
-  const [reveal, setReveal] = useState(immediate); // immediate sections reveal on mount
+  const [reveal, setReveal] = useState(immediate);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
-    // reduced motion => mark revealed (no animation)
     try {
       if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
         setReveal(true);
@@ -313,18 +314,13 @@ function useRevealOnce({ threshold = 0.12, rootMargin = "0px 0px -12% 0px", imme
       }
     } catch {}
 
-    // immediate hero: reveal after first frame so animation can play
     if (immediate) {
-      const raf = requestAnimationFrame(() => setReveal(true));
-      return () => cancelAnimationFrame(raf);
+      setReveal(true);
+      return;
     }
-
-    // fallback timer: if IO fails, still reveal
-    const fallback = setTimeout(() => setReveal(true), 1200);
 
     if (typeof IntersectionObserver === "undefined") {
       setReveal(true);
-      clearTimeout(fallback);
       return;
     }
 
@@ -342,9 +338,7 @@ function useRevealOnce({ threshold = 0.12, rootMargin = "0px 0px -12% 0px", imme
     );
 
     io.observe(el);
-
     return () => {
-      clearTimeout(fallback);
       try {
         io.disconnect();
       } catch {}
@@ -356,11 +350,8 @@ function useRevealOnce({ threshold = 0.12, rootMargin = "0px 0px -12% 0px", imme
 
 function Reveal({ children, className = "", immediate = false, delay = 0 }) {
   const r = useRevealOnce({ immediate });
-
-  // Always visible; animation is applied only when "reveal=true"
   const base = "will-change-[opacity,transform] transition-none";
   const animated = r.reveal ? "cabo-reveal-in" : "";
-
   const style = delay ? { animationDelay: `${delay}ms` } : undefined;
 
   return (
@@ -371,9 +362,10 @@ function Reveal({ children, className = "", immediate = false, delay = 0 }) {
 }
 
 /**
- * Full-bleed section (fixes PublicLayout container width constraint)
- * - Always spans full viewport width inside any parent max-width container.
- * - min-h-screen ensures "full page length" feeling per section.
+ * Full-bleed section:
+ * - Spans full viewport width inside PublicLayout container
+ * - min-h-screen for that "page by page" feel
+ * - larger vertical padding for premium spacing
  */
 function SectionShell({ tone = "dark", id, withTopBorder = false, children }) {
   const isDark = tone === "dark";
@@ -387,7 +379,7 @@ function SectionShell({ tone = "dark", id, withTopBorder = false, children }) {
         withTopBorder ? (isDark ? "border-t border-[#141414]" : "border-t border-[#e7e7e7]") : ""
       )}
     >
-      <div className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">{children}</div>
+      <div className="w-full max-w-7xl px-4 sm:px-6 lg:px-10 py-14 sm:py-20">{children}</div>
     </section>
   );
 }
@@ -446,9 +438,6 @@ const Pill = ({ tone = "dark", children }) => (
 
 /**
  * Square screenshot slot
- * - aspect-square
- * - object-cover
- * - clamped sizing: not too big, not too small
  */
 function ImageSlotSquare({ tone = "dark", src, alt, label }) {
   const [ok, setOk] = useState(true);
@@ -457,7 +446,8 @@ function ImageSlotSquare({ tone = "dark", src, alt, label }) {
     <div
       className={cx(
         "rounded-3xl border overflow-hidden",
-        tone === "dark" ? "border-[#1f1f1f] bg-[#0f0f0f]" : "border-[#efefef] bg-white"
+        tone === "dark" ? "border-[#1f1f1f] bg-[#0f0f0f]" : "border-[#efefef] bg-white",
+        "shadow-[0_22px_70px_rgba(0,0,0,0.22)]"
       )}
     >
       <div className="relative aspect-square w-full">
@@ -473,7 +463,7 @@ function ImageSlotSquare({ tone = "dark", src, alt, label }) {
             onError={() => setOk(false)}
           />
         ) : (
-          <div className={cx("absolute inset-0 p-8 flex flex-col items-center justify-center text-center")}>
+          <div className="absolute inset-0 p-8 flex flex-col items-center justify-center text-center">
             <div className={cx("text-[12px] font-mono", tone === "dark" ? "text-gray-300" : "text-gray-700")}>
               {label}
             </div>
@@ -485,7 +475,7 @@ function ImageSlotSquare({ tone = "dark", src, alt, label }) {
   );
 }
 
-/* Monochrome Shopify mark (keeps your palette clean) */
+/* Monochrome Shopify mark */
 function ShopifyMark({ className = "w-4 h-4" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none">
@@ -507,15 +497,14 @@ function ShopifyMark({ className = "w-4 h-4" }) {
 
 /* ---------- page ---------- */
 export default function Homepage() {
-  const { t } = useTranslation();
-  const { locale = "en" } = useLocale() || {};
+  const { locale } = useLocale() || {};
+  const lang = String(locale || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
 
   const lt = useMemo(() => {
-    const dict = L[locale] || L.en;
-    return (key) => dict[key] ?? t?.(key) ?? key;
-  }, [locale, t]);
+    const dict = L[lang] || L.en;
+    return (key) => dict[key] ?? key;
+  }, [lang]);
 
-  // Example numbers (premium vibe)
   const example = {
     clicks: 1284,
     sales: 38,
@@ -528,14 +517,13 @@ export default function Homepage() {
 
   return (
     <PublicLayout>
-      {/* Local keyframes (no global tailwind config required) */}
       <style jsx global>{`
         .cabo-reveal-in {
           animation: caboRevealIn 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
         }
         @keyframes caboRevealIn {
           from {
-            opacity: 0.88;
+            opacity: 0.9;
             transform: translate3d(0, 10px, 0);
           }
           to {
@@ -545,7 +533,6 @@ export default function Homepage() {
         }
       `}</style>
 
-      {/* Skip link (a11y) */}
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:bg-[#1a1a1a] focus:text-white focus:px-3 focus:py-2 focus:rounded-md focus:z-50"
@@ -554,12 +541,9 @@ export default function Homepage() {
       </a>
 
       <main id="main" role="main" className="w-full scroll-smooth">
-        {/* HERO (dark) */}
+        {/* 1) HERO (dark) */}
         <SectionShell tone="dark" id="top">
-          <Reveal
-            immediate
-            className="grid gap-10 items-center md:grid-cols-[1.15fr_.85fr]"
-          >
+          <Reveal immediate className="grid items-center gap-12 lg:gap-16 md:grid-cols-[1.15fr_.85fr]">
             <div className="text-center md:text-left">
               <Kicker tone="dark" icon={<Sparkles className="w-4 h-4 text-[#81d742]" />}>
                 {lt("hero_kicker")}
@@ -620,8 +604,8 @@ export default function Homepage() {
               </div>
             </div>
 
-            {/* Right: premium preview mock */}
-            <div className="relative">
+            {/* Right: preview */}
+            <div className="relative md:pl-6 lg:pl-10">
               <div className="absolute -inset-6 blur-3xl opacity-30 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
               <SoftCard tone="dark" className="relative p-5">
                 <div className="flex items-center justify-between">
@@ -631,27 +615,13 @@ export default function Homepage() {
 
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   {[
-                    {
-                      icon: <MousePointerClick className="w-4 h-4" />,
-                      label: lt("ui_clicks"),
-                      value: String(example.clicks),
-                    },
-                    {
-                      icon: <ShoppingCart className="w-4 h-4" />,
-                      label: lt("ui_sales"),
-                      value: String(example.sales),
-                    },
-                    {
-                      icon: <ChartNoAxesCombined className="w-4 h-4" />,
-                      label: lt("ui_net_paid"),
-                      value: `₺${example.netPaid.toFixed(2)}`,
-                    },
+                    { icon: <MousePointerClick className="w-4 h-4" />, label: lt("ui_clicks"), value: String(example.clicks) },
+                    { icon: <ShoppingCart className="w-4 h-4" />, label: lt("ui_sales"), value: String(example.sales) },
+                    { icon: <ChartNoAxesCombined className="w-4 h-4" />, label: lt("ui_net_paid"), value: `₺${example.netPaid.toFixed(2)}` },
                   ].map((x, i) => (
                     <div key={i} className="rounded-xl border border-[#222] bg-[#121212] px-3 py-3">
                       <div className="text-gray-300">{x.icon}</div>
-                      <div className="mt-2 text-[13px] font-extrabold font-mono text-white leading-none">
-                        {x.value}
-                      </div>
+                      <div className="mt-2 text-[13px] font-extrabold font-mono text-white leading-none">{x.value}</div>
                       <div className="mt-1 text-[11px] font-mono text-gray-500">{x.label}</div>
                     </div>
                   ))}
@@ -684,9 +654,9 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* HOW (light) */}
+        {/* 2) HOW (light) */}
         <SectionShell tone="light" id="how" withTopBorder>
-          <Reveal className="">
+          <Reveal>
             <div className="text-center">
               <Kicker tone="light" icon={<Link2 className="w-4 h-4 text-[#111]" />}>
                 {lt("how_kicker")}
@@ -698,15 +668,15 @@ export default function Homepage() {
               </h2>
             </div>
 
-            <div className="mt-10 grid gap-4 md:grid-cols-2">
+            <div className="mt-12 grid gap-5 md:grid-cols-2">
               {[
                 { icon: <Link2 className="w-5 h-5" />, title: lt("step1_title"), desc: lt("step1_desc") },
                 { icon: <Copy className="w-5 h-5" />, title: lt("step2_title"), desc: lt("step2_desc") },
                 { icon: <TrendingUp className="w-5 h-5" />, title: lt("step3_title"), desc: lt("step3_desc") },
                 { icon: <Wallet2 className="w-5 h-5" />, title: lt("step4_title"), desc: lt("step4_desc") },
               ].map((s, i) => (
-                <SoftCard key={i} tone="light" className="p-5">
-                  <div className="flex items-start gap-3">
+                <SoftCard key={i} tone="light" className="p-6">
+                  <div className="flex items-start gap-4">
                     <div className="rounded-xl bg-[#0b0b0b] text-white p-3">{s.icon}</div>
                     <div>
                       <div className="text-[14px] font-extrabold">{s.title}</div>
@@ -717,7 +687,7 @@ export default function Homepage() {
               ))}
             </div>
 
-            <div className="mt-10 flex justify-center">
+            <div className="mt-12 flex justify-center">
               <div className="inline-flex items-center gap-2 text-[11px] font-mono text-[#555]">
                 <ArrowDown className="w-4 h-4" />
                 <span>{lt("scroll_hint")}</span>
@@ -726,9 +696,9 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* DASHBOARD (dark) */}
+        {/* 3) DASHBOARD (dark) */}
         <SectionShell tone="dark" id="dashboard" withTopBorder>
-          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
+          <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
             <div className="md:col-span-5">
               <Kicker tone="dark" icon={<ChartNoAxesCombined className="w-4 h-4 text-[#81d742]" />}>
                 {lt("dash_kicker")}
@@ -741,7 +711,7 @@ export default function Homepage() {
 
               <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">{lt("dash_desc")}</p>
 
-              <div className="mt-6 grid grid-cols-3 gap-3">
+              <div className="mt-7 grid grid-cols-3 gap-3">
                 {[
                   { label: lt("ui_clicks"), value: example.clicks, icon: <MousePointerClick className="w-4 h-4" /> },
                   { label: lt("ui_sales"), value: example.sales, icon: <ShoppingCart className="w-4 h-4" /> },
@@ -756,8 +726,8 @@ export default function Homepage() {
               </div>
             </div>
 
-            <div className="md:col-span-7">
-              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+            <div className="md:col-span-7 md:pl-6 lg:pl-10">
+              <div className="mx-auto w-full max-w-[560px] lg:max-w-[620px]">
                 <ImageSlotSquare
                   tone="dark"
                   src="/screenshots/home/dashboard.png"
@@ -769,11 +739,11 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* PRODUCTS (light) */}
+        {/* 4) PRODUCTS (light) */}
         <SectionShell tone="light" id="products" withTopBorder>
-          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
-            <div className="md:col-span-7 md:order-1 order-2">
-              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+          <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
+            <div className="md:col-span-7 md:order-1 order-2 md:pr-6 lg:pr-10">
+              <div className="mx-auto w-full max-w-[560px] lg:max-w-[620px]">
                 <ImageSlotSquare
                   tone="light"
                   src="/screenshots/home/products.png"
@@ -795,7 +765,7 @@ export default function Homepage() {
 
               <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">{lt("products_desc")}</p>
 
-              <div className="mt-6 flex flex-wrap gap-2">
+              <div className="mt-7 flex flex-wrap gap-2">
                 <Pill tone="light">{lt("pill_select_product")}</Pill>
                 <Pill tone="light">{lt("pill_generate_link")}</Pill>
                 <Pill tone="light">{lt("pill_copy_share")}</Pill>
@@ -804,9 +774,9 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* PERFORMANCE (dark) */}
+        {/* 5) PERFORMANCE (dark) */}
         <SectionShell tone="dark" id="performance" withTopBorder>
-          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
+          <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
             <div className="md:col-span-5">
               <Kicker tone="dark" icon={<TrendingUp className="w-4 h-4 text-[#81d742]" />}>
                 {lt("perf_kicker")}
@@ -819,15 +789,15 @@ export default function Homepage() {
 
               <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">{lt("perf_desc")}</p>
 
-              <div className="mt-6 flex flex-wrap gap-2">
+              <div className="mt-7 flex flex-wrap gap-2">
                 <Pill tone="dark">{lt("pill_clicks_sales")}</Pill>
                 <Pill tone="dark">{lt("pill_product_filters")}</Pill>
                 <Pill tone="dark">{lt("pill_instant_insights")}</Pill>
               </div>
             </div>
 
-            <div className="md:col-span-7">
-              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+            <div className="md:col-span-7 md:pl-6 lg:pl-10">
+              <div className="mx-auto w-full max-w-[560px] lg:max-w-[620px]">
                 <ImageSlotSquare
                   tone="dark"
                   src="/screenshots/home/performance.png"
@@ -839,11 +809,11 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* WALLET (light) */}
+        {/* 6) WALLET (light) */}
         <SectionShell tone="light" id="wallet" withTopBorder>
-          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
-            <div className="md:col-span-7 md:order-1 order-2">
-              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+          <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
+            <div className="md:col-span-7 md:order-1 order-2 md:pr-6 lg:pr-10">
+              <div className="mx-auto w-full max-w-[560px] lg:max-w-[620px]">
                 <ImageSlotSquare
                   tone="light"
                   src="/screenshots/home/wallet.png"
@@ -865,7 +835,7 @@ export default function Homepage() {
 
               <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">{lt("wallet_desc")}</p>
 
-              <SoftCard tone="light" className="mt-6 p-5">
+              <SoftCard tone="light" className="mt-7 p-6">
                 <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed_available")}</div>
                 <div className="mt-1 text-[26px] font-extrabold font-mono text-[#0b0b0b]">
                   ₺{example.confirmed.toFixed(2)}
@@ -882,88 +852,90 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* TRUST / SECURITY (light) */}
-        <SectionShell tone="light" id="trust" withTopBorder>
-          <Reveal className="">
+        {/* 7) TRUST (dark) — to keep strict alternation */}
+        <SectionShell tone="dark" id="trust" withTopBorder>
+          <Reveal>
             <div className="text-center">
-              <Kicker tone="light" icon={<ShieldCheck className="w-4 h-4 text-[#111]" />}>
+              <Kicker tone="dark" icon={<ShieldCheck className="w-4 h-4 text-[#81d742]" />}>
                 {lt("trust_kicker")}
               </Kicker>
 
               <h2 className="mt-4 text-[28px] sm:text-[40px] font-extrabold tracking-tight">
-                <span>{lt("trust_titleA")} </span>
+                <span className="text-white">{lt("trust_titleA")} </span>
                 <GradientWord>{lt("trust_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-2xl mx-auto">{lt("trust_desc")}</p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl mx-auto">
+                {lt("trust_desc")}
+              </p>
 
               <div className="mt-8 flex flex-wrap justify-center gap-2">
-                <Pill tone="light">{lt("pill1")}</Pill>
-                <Pill tone="light">{lt("pill2")}</Pill>
-                <Pill tone="light">{lt("pill3")}</Pill>
-                <Pill tone="light">{lt("pill4")}</Pill>
-                <Pill tone="light">{lt("pill5")}</Pill>
+                <Pill tone="dark">{lt("pill1")}</Pill>
+                <Pill tone="dark">{lt("pill2")}</Pill>
+                <Pill tone="dark">{lt("pill3")}</Pill>
+                <Pill tone="dark">{lt("pill4")}</Pill>
+                <Pill tone="dark">{lt("pill5")}</Pill>
               </div>
             </div>
 
-            <div className="mt-10 grid md:grid-cols-3 gap-4">
+            <div className="mt-12 grid md:grid-cols-3 gap-5">
               {[
                 { tag: lt("trust_c1_tag"), title: lt("trust_c1_title"), desc: lt("trust_c1_desc") },
                 { tag: lt("trust_c2_tag"), title: lt("trust_c2_title"), desc: lt("trust_c2_desc") },
                 { tag: lt("trust_c3_tag"), title: lt("trust_c3_title"), desc: lt("trust_c3_desc") },
               ].map((c, i) => (
-                <SoftCard key={i} tone="light" className="p-5">
-                  <div className="text-[12px] font-mono text-[#666]">{c.tag}</div>
-                  <div className="mt-2 text-[14px] font-extrabold text-[#0b0b0b] leading-snug">{c.title}</div>
-                  <div className="mt-2 text-[13px] text-[#444] leading-relaxed">{c.desc}</div>
+                <SoftCard key={i} tone="dark" className="p-6">
+                  <div className="text-[12px] font-mono text-gray-400">{c.tag}</div>
+                  <div className="mt-2 text-[14px] font-extrabold text-white leading-snug">{c.title}</div>
+                  <div className="mt-2 text-[13px] text-gray-400 leading-relaxed">{c.desc}</div>
                 </SoftCard>
               ))}
             </div>
           </Reveal>
         </SectionShell>
 
-        {/* SHOPIFY (dark) */}
-        <SectionShell tone="dark" id="shopify" withTopBorder>
-          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
+        {/* 8) SHOPIFY (light) — strict alternation */}
+        <SectionShell tone="light" id="shopify" withTopBorder>
+          <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
             <div className="md:col-span-7">
-              <Kicker tone="dark" icon={<ShopifyMark className="w-4 h-4 text-[#81d742]" />}>
+              <Kicker tone="light" icon={<ShopifyMark className="w-4 h-4 text-[#111]" />}>
                 {lt("shopify_kicker")}
               </Kicker>
 
               <h2 className="mt-4 text-[28px] sm:text-[40px] font-extrabold tracking-tight">
-                <span className="text-white">{lt("shopify_titleA")} </span>
+                <span>{lt("shopify_titleA")} </span>
                 <GradientWord>{lt("shopify_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl">{lt("shopify_desc")}</p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-2xl">{lt("shopify_desc")}</p>
 
-              <div className="mt-6 flex flex-wrap gap-2">
-                <Pill tone="dark">{lt("pill_store_connection")}</Pill>
-                <Pill tone="dark">{lt("pill_signed_events")}</Pill>
-                <Pill tone="dark">{lt("pill_fast_onboarding")}</Pill>
+              <div className="mt-7 flex flex-wrap gap-2">
+                <Pill tone="light">{lt("pill_store_connection")}</Pill>
+                <Pill tone="light">{lt("pill_signed_events")}</Pill>
+                <Pill tone="light">{lt("pill_fast_onboarding")}</Pill>
               </div>
             </div>
 
-            <div className="md:col-span-5">
-              <SoftCard tone="dark" className="p-5">
+            <div className="md:col-span-5 md:pl-6 lg:pl-10">
+              <SoftCard tone="light" className="p-6">
                 <div className="flex items-center justify-between">
-                  <div className="text-[12px] font-mono text-[#d1ffd0] inline-flex items-center gap-2">
-                    <ShopifyMark className="w-4 h-4 text-[#81d742]" />
+                  <div className="text-[12px] font-mono text-[#111] inline-flex items-center gap-2">
+                    <ShopifyMark className="w-4 h-4 text-[#111]" />
                     {lt("shopify_card_title")}
                   </div>
                   <div className="text-[11px] font-mono text-gray-500">{lt("shopify_status")}</div>
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-[#202020] bg-[#101010] p-4">
+                <div className="mt-4 rounded-2xl border border-[#e7e7e7] bg-[#fafafa] p-4">
                   <div className="text-[11px] font-mono text-gray-500">{lt("shopify_unlock_title")}</div>
                   <div className="mt-3 space-y-2">
                     {[lt("shopify_unlock_1"), lt("shopify_unlock_2"), lt("shopify_unlock_3")].map((x, i) => (
                       <div
                         key={i}
-                        className="flex items-center gap-2 text-[11px] font-mono border border-[#1f1f1f] bg-[#121212] rounded-xl px-3 py-2"
+                        className="flex items-center gap-2 text-[11px] font-mono border border-[#e7e7e7] bg-white rounded-xl px-3 py-2"
                       >
-                        <BadgeCheck className="w-4 h-4 text-[#81d742]" />
-                        <span className="text-gray-300">{x}</span>
+                        <BadgeCheck className="w-4 h-4 text-[#1a7f37]" />
+                        <span className="text-[#222]">{x}</span>
                       </div>
                     ))}
                   </div>
@@ -975,7 +947,7 @@ export default function Homepage() {
           </Reveal>
         </SectionShell>
 
-        {/* FINAL CTA (dark) */}
+        {/* 9) FINAL (dark) */}
         <SectionShell tone="dark" id="final" withTopBorder>
           <Reveal className="text-center">
             <h2 className="text-[28px] sm:text-[48px] font-extrabold tracking-tight">
@@ -983,9 +955,11 @@ export default function Homepage() {
               <GradientWord>{lt("final_titleB")}</GradientWord>
             </h2>
 
-            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">{lt("final_desc")}</p>
+            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">
+              {lt("final_desc")}
+            </p>
 
-            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
+            <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
               <Link
                 href="/register"
                 prefetch={false}
