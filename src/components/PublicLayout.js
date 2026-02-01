@@ -82,21 +82,18 @@ function usePathnameSafe() {
 
     const updateAsync = () => {
       const nextPath = readPath();
-      // schedule state update out of the current event stack
       if (rafId) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         setPath((prev) => (prev === nextPath ? prev : nextPath));
       });
     };
 
-    // initial
     updateAsync();
 
     try {
       if (!window.__CABO_HIST_PATCHED__) {
         const fire = () => {
           try {
-            // dispatch after current call stack
             queueMicrotask(() => {
               try {
                 window.dispatchEvent(new Event("cabo:locationchange"));
@@ -154,6 +151,16 @@ export default function PublicLayout({ children }) {
   const panelRef = useRef(null);
   const currentPath = usePathnameSafe();
 
+  // ✅ IMPORTANT: render even when !ready (fixes blank screen on first load)
+  const effectiveLocale = ready ? (locale || "en") : "en";
+  const dict = translations[effectiveLocale] || translations.en;
+  const t = (k) => dict[k] || String(k);
+
+  const activeLangCode = String(effectiveLocale).toLowerCase().startsWith("tr") ? "tr" : "en";
+  const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
+  const setLangPersist = (code) =>
+    typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code);
+
   // viewport
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -169,7 +176,7 @@ export default function PublicLayout({ children }) {
     setLangOpen(false);
   }, [currentPath, isMobile]);
 
-  // outside click + ESC (panel portal'a taşındı; overlay de var ama emniyet için)
+  // outside click + ESC
   useEffect(() => {
     const onDocClick = (e) => {
       const tgt = e.target;
@@ -195,7 +202,7 @@ export default function PublicLayout({ children }) {
   // SCROLL LOCK — HTML scroller kilitlenir (body değil!)
   useEffect(() => {
     if (!isMobile) return;
-    const root = document.documentElement; // html scroller
+    const root = document.documentElement;
     const prevOverflow = root.style.overflowY;
     if (mobileOpen) root.style.overflowY = "hidden";
     else root.style.overflowY = prevOverflow || "";
@@ -203,16 +210,6 @@ export default function PublicLayout({ children }) {
       root.style.overflowY = prevOverflow || "";
     };
   }, [isMobile, mobileOpen]);
-
-  if (!ready) return null;
-
-  const dict = translations[locale] || translations.en;
-  const t = (k) => dict[k] || String(k);
-
-  const activeLangCode = String(locale).toLowerCase().startsWith("tr") ? "tr" : "en";
-  const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
-  const setLangPersist = (code) =>
-    typeof persistLocale === "function" ? persistLocale(code) : setLocale?.(code);
 
   const navLinks = [
     { href: "/", label: t("home") },
@@ -317,7 +314,7 @@ export default function PublicLayout({ children }) {
         </div>
       </header>
 
-      {/* MOBILE PANEL — Top-layer Portal (her şeyin üstünde) */}
+      {/* MOBILE PANEL — Top-layer Portal */}
       {isMobile && mobileOpen && (
         <Portal>
           <div

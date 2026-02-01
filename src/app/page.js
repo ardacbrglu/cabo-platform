@@ -1,12 +1,20 @@
 "use client";
 
 /**
+ * Homepage — FULL (PROD)
+ *
+ * Goals:
+ * - No blank on first load (handled by PublicLayout fix too)
+ * - Reveal never hides content; only adds subtle animation when sections enter view
+ * - Full-bleed sections (ignore PublicLayout container max-width)
+ * - Square screenshot slots (aspect-square) with sane sizing & mobile-friendly layout
+ * - TR/EN dictionary COMPLETE (no leftover hardcoded English)
+ *
  * Security Docblock (prod)
  * - Public page: no auth required.
  * - No secrets rendered; no user-specific data fetched client-side.
  * - No dangerouslySetInnerHTML.
- * - Full-bleed sections implemented to bypass PublicLayout "container" max-width.
- * - Images are loaded from /public (static) for best performance.
+ * - Images are loaded from /public (static).
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -42,7 +50,9 @@ const L = {
     cta_register: "Create account",
     cta_merchant: "Merchant access",
     scroll_hint: "Scroll to explore",
+    hero_note: "Premium, minimal, and made to feel effortless — because earning should be simple.",
 
+    // how
     how_kicker: "How it works",
     how_titleA: "Simple on the surface,",
     how_titleB: " powerful underneath.",
@@ -55,6 +65,7 @@ const L = {
     step4_title: "Withdraw",
     step4_desc: "When you meet the threshold, request payout — clean and simple.",
 
+    // sections
     dash_kicker: "Dashboard",
     dash_titleA: "See earnings early,",
     dash_titleB: " stay motivated.",
@@ -114,6 +125,13 @@ const L = {
     shopify_titleB: " is on the way.",
     shopify_desc:
       "We’re building a Shopify integration so merchants can connect stores faster and send secure purchase events back to Cabo.",
+    shopify_note: "(This section is informational — your real app flow stays secure & verified.)",
+    shopify_card_title: "Shopify integration",
+    shopify_status: "On the way",
+    shopify_unlock_title: "What it unlocks",
+    shopify_unlock_1: "Connect Shopify stores quickly",
+    shopify_unlock_2: "Secure purchase callbacks back to Cabo",
+    shopify_unlock_3: "Cleaner merchant onboarding",
 
     final_titleA: "Ready to",
     final_titleB: " earn smarter?",
@@ -121,6 +139,28 @@ const L = {
       "Join Cabo as an affiliate or access the merchant portal to list products and track performance.",
     final_cta_primary: "Create / Login",
     final_cta_merchant: "Merchant Portal",
+
+    // small labels used in UI (were hardcoded before)
+    ui_preview: "Preview",
+    ui_clicks: "Clicks",
+    ui_sales: "Sales",
+    ui_net_paid: "Net Paid",
+    ui_wallet: "Wallet",
+    ui_confirmed: "Confirmed",
+    ui_min_payout: "Min payout",
+    ui_platform_fee: "Platform fee",
+    ui_confirmed_available: "Confirmed available",
+
+    // pills
+    pill_select_product: "Select product",
+    pill_generate_link: "Generate link",
+    pill_copy_share: "Copy & share",
+    pill_clicks_sales: "Clicks vs Sales",
+    pill_product_filters: "Product filters",
+    pill_instant_insights: "Instant insights",
+    pill_store_connection: "Store connection",
+    pill_signed_events: "Signed events",
+    pill_fast_onboarding: "Fast onboarding",
   },
 
   tr: {
@@ -135,7 +175,9 @@ const L = {
     cta_register: "Hesap oluştur",
     cta_merchant: "Satıcı girişi",
     scroll_hint: "Keşfetmek için kaydır",
+    hero_note: "Premium, minimal ve zahmetsiz hissettirecek şekilde — çünkü kazanmak basit olmalı.",
 
+    // how
     how_kicker: "Nasıl çalışır?",
     how_titleA: "Yüzeyde basit,",
     how_titleB: " arkada güçlü.",
@@ -148,6 +190,7 @@ const L = {
     step4_title: "Çekim",
     step4_desc: "Eşiğe ulaştığında ödeme talep et — temiz ve basit.",
 
+    // sections
     dash_kicker: "Dashboard",
     dash_titleA: "Kazancı erken gör,",
     dash_titleB: " motive kal.",
@@ -207,6 +250,13 @@ const L = {
     shopify_titleB: " yakında.",
     shopify_desc:
       "Mağazaları daha hızlı bağlamak ve Cabo’ya güvenli satın alma event’leri göndermek için Shopify entegrasyonu geliştiriyoruz.",
+    shopify_note: "(Bu bölüm bilgilendirme amaçlı — gerçek uygulama akışın güvenli ve doğrulanmış kalır.)",
+    shopify_card_title: "Shopify entegrasyonu",
+    shopify_status: "Yakında",
+    shopify_unlock_title: "Ne sağlar?",
+    shopify_unlock_1: "Shopify mağazasını hızlı bağlama",
+    shopify_unlock_2: "Cabo’ya güvenli satın alma callback’leri",
+    shopify_unlock_3: "Daha temiz merchant onboarding",
 
     final_titleA: "Hazır mısın?",
     final_titleB: " Daha akıllı kazan.",
@@ -214,35 +264,66 @@ const L = {
       "Affiliate olarak katıl veya satıcı portalına girip ürünlerini listele ve performansı takip et.",
     final_cta_primary: "Kayıt / Giriş",
     final_cta_merchant: "Satıcı Portalı",
+
+    // small labels used in UI
+    ui_preview: "Önizleme",
+    ui_clicks: "Tıklama",
+    ui_sales: "Satış",
+    ui_net_paid: "Net Ödenen",
+    ui_wallet: "Wallet",
+    ui_confirmed: "Onaylı",
+    ui_min_payout: "Min. çekim",
+    ui_platform_fee: "Platform ücreti",
+    ui_confirmed_available: "Çekilebilir onaylı",
+
+    // pills
+    pill_select_product: "Ürün seç",
+    pill_generate_link: "Link üret",
+    pill_copy_share: "Kopyala & paylaş",
+    pill_clicks_sales: "Tıklama vs Satış",
+    pill_product_filters: "Ürün filtreleri",
+    pill_instant_insights: "Anında içgörü",
+    pill_store_connection: "Mağaza bağlantısı",
+    pill_signed_events: "İmzalı event’ler",
+    pill_fast_onboarding: "Hızlı onboarding",
   },
 };
 
 /* ---------- helpers ---------- */
 const cx = (...a) => a.filter(Boolean).join(" ");
 
-
-
-
-
-function useRevealOnce(threshold = 0.16) {
+/**
+ * Reveal that NEVER hides content.
+ * - content is always visible
+ * - when it enters view, we apply a subtle animation (opacity 0.88 -> 1, y 8px -> 0)
+ */
+function useRevealOnce({ threshold = 0.12, rootMargin = "0px 0px -12% 0px", immediate = false } = {}) {
   const ref = useRef(null);
-  const [show, setShow] = useState(false);
+  const [reveal, setReveal] = useState(immediate); // immediate sections reveal on mount
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
-    let didReveal = false;
+    // reduced motion => mark revealed (no animation)
+    try {
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+        setReveal(true);
+        return;
+      }
+    } catch {}
 
-    // FAIL-SAFE: Eğer IntersectionObserver hiç tetiklenmezse sayfa boş kalmasın.
-    const fallback = setTimeout(() => {
-      if (!didReveal) setShow(true);
-    }, 600);
+    // immediate hero: reveal after first frame so animation can play
+    if (immediate) {
+      const raf = requestAnimationFrame(() => setReveal(true));
+      return () => cancelAnimationFrame(raf);
+    }
 
-    // IntersectionObserver yoksa direkt göster
-    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
-      didReveal = true;
-      setShow(true);
+    // fallback timer: if IO fails, still reveal
+    const fallback = setTimeout(() => setReveal(true), 1200);
+
+    if (typeof IntersectionObserver === "undefined") {
+      setReveal(true);
       clearTimeout(fallback);
       return;
     }
@@ -251,33 +332,43 @@ function useRevealOnce(threshold = 0.16) {
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
-            didReveal = true;
-            setShow(true);
-            clearTimeout(fallback);
+            setReveal(true);
             io.disconnect();
             break;
           }
         }
       },
-      { threshold }
+      { threshold, rootMargin }
     );
 
     io.observe(el);
 
     return () => {
       clearTimeout(fallback);
-      io.disconnect();
+      try {
+        io.disconnect();
+      } catch {}
     };
-  }, [threshold]);
+  }, [threshold, rootMargin, immediate]);
 
-  return { ref, show };
+  return { ref, reveal };
 }
 
+function Reveal({ children, className = "", immediate = false, delay = 0 }) {
+  const r = useRevealOnce({ immediate });
 
+  // Always visible; animation is applied only when "reveal=true"
+  const base = "will-change-[opacity,transform] transition-none";
+  const animated = r.reveal ? "cabo-reveal-in" : "";
 
+  const style = delay ? { animationDelay: `${delay}ms` } : undefined;
 
-
-
+  return (
+    <div ref={r.ref} style={style} className={cx(base, animated, className)}>
+      {children}
+    </div>
+  );
+}
 
 /**
  * Full-bleed section (fixes PublicLayout container width constraint)
@@ -290,14 +381,13 @@ function SectionShell({ tone = "dark", id, withTopBorder = false, children }) {
     <section
       id={id}
       className={cx(
-        // full-bleed trick:
         "relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen",
         "min-h-screen flex items-center justify-center",
         isDark ? "bg-[#0b0b0b] text-white" : "bg-white text-[#0b0b0b]",
         withTopBorder ? (isDark ? "border-t border-[#141414]" : "border-t border-[#e7e7e7]") : ""
       )}
     >
-      <div className="w-full max-w-6xl px-4 sm:px-6">{children}</div>
+      <div className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">{children}</div>
     </section>
   );
 }
@@ -354,7 +444,13 @@ const Pill = ({ tone = "dark", children }) => (
   </span>
 );
 
-function ImageSlot({ tone = "dark", src, alt, label }) {
+/**
+ * Square screenshot slot
+ * - aspect-square
+ * - object-cover
+ * - clamped sizing: not too big, not too small
+ */
+function ImageSlotSquare({ tone = "dark", src, alt, label }) {
   const [ok, setOk] = useState(true);
 
   return (
@@ -364,24 +460,27 @@ function ImageSlot({ tone = "dark", src, alt, label }) {
         tone === "dark" ? "border-[#1f1f1f] bg-[#0f0f0f]" : "border-[#efefef] bg-white"
       )}
     >
-      {ok ? (
-        <img
-          src={src}
-          alt={alt}
-          loading="lazy"
-          className={cx("w-full h-auto block", tone === "dark" ? "opacity-95" : "opacity-100")}
-          onError={() => setOk(false)}
-        />
-      ) : (
-        <div className={cx("p-10 text-center", tone === "dark" ? "bg-[#0b0b0b]" : "bg-white")}>
-          <div className={cx("text-[12px] font-mono", tone === "dark" ? "text-gray-300" : "text-gray-700")}>
-            {label}
+      <div className="relative aspect-square w-full">
+        {ok ? (
+          <img
+            src={src}
+            alt={alt}
+            loading="lazy"
+            className={cx(
+              "absolute inset-0 w-full h-full object-cover block",
+              tone === "dark" ? "opacity-95" : "opacity-100"
+            )}
+            onError={() => setOk(false)}
+          />
+        ) : (
+          <div className={cx("absolute inset-0 p-8 flex flex-col items-center justify-center text-center")}>
+            <div className={cx("text-[12px] font-mono", tone === "dark" ? "text-gray-300" : "text-gray-700")}>
+              {label}
+            </div>
+            <div className="mt-2 text-[11px] font-mono text-gray-500">{src}</div>
           </div>
-          <div className={cx("mt-2 text-[11px] font-mono", tone === "dark" ? "text-gray-500" : "text-gray-500")}>
-            {src}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -413,10 +512,10 @@ export default function Homepage() {
 
   const lt = useMemo(() => {
     const dict = L[locale] || L.en;
-    return (key) => dict[key] ?? t(key) ?? key;
+    return (key) => dict[key] ?? t?.(key) ?? key;
   }, [locale, t]);
 
-  // Example numbers (premium vibe / "money is real" early)
+  // Example numbers (premium vibe)
   const example = {
     clicks: 1284,
     sales: 38,
@@ -427,18 +526,25 @@ export default function Homepage() {
     progressPct: 64,
   };
 
-  const hero = useRevealOnce();
-  const how = useRevealOnce();
-  const dash = useRevealOnce();
-  const products = useRevealOnce();
-  const perf = useRevealOnce();
-  const wallet = useRevealOnce();
-  const trust = useRevealOnce();
-  const shopify = useRevealOnce();
-  const final = useRevealOnce();
-
   return (
     <PublicLayout>
+      {/* Local keyframes (no global tailwind config required) */}
+      <style jsx global>{`
+        .cabo-reveal-in {
+          animation: caboRevealIn 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+        @keyframes caboRevealIn {
+          from {
+            opacity: 0.88;
+            transform: translate3d(0, 10px, 0);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+          }
+        }
+      `}</style>
+
       {/* Skip link (a11y) */}
       <a
         href="#main"
@@ -450,21 +556,16 @@ export default function Homepage() {
       <main id="main" role="main" className="w-full scroll-smooth">
         {/* HERO (dark) */}
         <SectionShell tone="dark" id="top">
-          <div
-            ref={hero.ref}
-            className={cx(
-              "grid gap-10 items-center",
-              "md:grid-cols-[1.2fr_.8fr]",
-              "transition-all duration-700",
-              hero.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
+          <Reveal
+            immediate
+            className="grid gap-10 items-center md:grid-cols-[1.15fr_.85fr]"
           >
             <div className="text-center md:text-left">
               <Kicker tone="dark" icon={<Sparkles className="w-4 h-4 text-[#81d742]" />}>
                 {lt("hero_kicker")}
               </Kicker>
 
-              <h1 className="mt-4 text-[36px] sm:text-[48px] md:text-[58px] leading-[1.05] font-extrabold tracking-tight">
+              <h1 className="mt-4 text-[34px] sm:text-[46px] md:text-[58px] leading-[1.05] font-extrabold tracking-tight">
                 <span className="text-[#d1ffd0]">{lt("heroTitleA")}</span>
                 <span className="text-[#81d742]">{lt("heroTitleB")}</span>
               </h1>
@@ -519,30 +620,30 @@ export default function Homepage() {
               </div>
             </div>
 
-            {/* Right: premium preview mock (with real-looking numbers) */}
+            {/* Right: premium preview mock */}
             <div className="relative">
               <div className="absolute -inset-6 blur-3xl opacity-30 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
               <SoftCard tone="dark" className="relative p-5">
                 <div className="flex items-center justify-between">
                   <div className="text-[12px] font-mono text-gray-400">Cabo</div>
-                  <div className="text-[11px] font-mono text-gray-500">Preview</div>
+                  <div className="text-[11px] font-mono text-gray-500">{lt("ui_preview")}</div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   {[
                     {
                       icon: <MousePointerClick className="w-4 h-4" />,
-                      label: "Clicks",
+                      label: lt("ui_clicks"),
                       value: String(example.clicks),
                     },
                     {
                       icon: <ShoppingCart className="w-4 h-4" />,
-                      label: "Sales",
+                      label: lt("ui_sales"),
                       value: String(example.sales),
                     },
                     {
                       icon: <ChartNoAxesCombined className="w-4 h-4" />,
-                      label: "Net Paid",
+                      label: lt("ui_net_paid"),
                       value: `₺${example.netPaid.toFixed(2)}`,
                     },
                   ].map((x, i) => (
@@ -558,8 +659,8 @@ export default function Homepage() {
 
                 <div className="mt-4 rounded-2xl border border-[#222] bg-[#101010] p-4">
                   <div className="flex items-center justify-between">
-                    <div className="text-[12px] font-mono text-[#d1ffd0]">Wallet</div>
-                    <div className="text-[11px] font-mono text-gray-500">Confirmed</div>
+                    <div className="text-[12px] font-mono text-[#d1ffd0]">{lt("ui_wallet")}</div>
+                    <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed")}</div>
                   </div>
 
                   <div className="mt-2 text-[24px] font-extrabold font-mono text-[#d1ffd0]">
@@ -567,7 +668,7 @@ export default function Homepage() {
                   </div>
 
                   <div className="mt-1 text-[11px] font-mono text-gray-500">
-                    Min payout • Platform fee{" "}
+                    {lt("ui_min_payout")} • {lt("ui_platform_fee")}{" "}
                     <span className="text-[#81d742] font-semibold">₺{example.minPayout}</span>{" "}
                     <span className="text-[#e3d67d] font-semibold">%{example.platformFee}</span>
                   </div>
@@ -577,23 +678,15 @@ export default function Homepage() {
                   </div>
                 </div>
 
-                <div className="mt-4 text-[11px] font-mono text-gray-500">
-                  Premium, minimal, and made to feel effortless — because earning should be simple.
-                </div>
+                <div className="mt-4 text-[11px] font-mono text-gray-500">{lt("hero_note")}</div>
               </SoftCard>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
-        {/* HOW (light) — stays here (no extra "how it works" section elsewhere) */}
+        {/* HOW (light) */}
         <SectionShell tone="light" id="how" withTopBorder>
-          <div
-            ref={how.ref}
-            className={cx(
-              "transition-all duration-700",
-              how.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="">
             <div className="text-center">
               <Kicker tone="light" icon={<Link2 className="w-4 h-4 text-[#111]" />}>
                 {lt("how_kicker")}
@@ -630,18 +723,12 @@ export default function Homepage() {
                 <span>{lt("scroll_hint")}</span>
               </div>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
-        {/* DASHBOARD (dark) — screenshot + copy */}
+        {/* DASHBOARD (dark) */}
         <SectionShell tone="dark" id="dashboard" withTopBorder>
-          <div
-            ref={dash.ref}
-            className={cx(
-              "grid md:grid-cols-12 gap-6 items-center transition-all duration-700",
-              dash.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
             <div className="md:col-span-5">
               <Kicker tone="dark" icon={<ChartNoAxesCombined className="w-4 h-4 text-[#81d742]" />}>
                 {lt("dash_kicker")}
@@ -652,21 +739,17 @@ export default function Homepage() {
                 <GradientWord>{lt("dash_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">
-                {lt("dash_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">{lt("dash_desc")}</p>
 
               <div className="mt-6 grid grid-cols-3 gap-3">
                 {[
-                  { label: "Clicks", value: example.clicks, icon: <MousePointerClick className="w-4 h-4" /> },
-                  { label: "Sales", value: example.sales, icon: <ShoppingCart className="w-4 h-4" /> },
-                  { label: "Wallet", value: `₺${example.confirmed.toFixed(2)}`, icon: <Wallet2 className="w-4 h-4" /> },
+                  { label: lt("ui_clicks"), value: example.clicks, icon: <MousePointerClick className="w-4 h-4" /> },
+                  { label: lt("ui_sales"), value: example.sales, icon: <ShoppingCart className="w-4 h-4" /> },
+                  { label: lt("ui_wallet"), value: `₺${example.confirmed.toFixed(2)}`, icon: <Wallet2 className="w-4 h-4" /> },
                 ].map((x, i) => (
                   <div key={i} className="rounded-2xl border border-[#202020] bg-[#101010] p-4">
                     <div className="text-gray-400">{x.icon}</div>
-                    <div className="mt-2 text-white font-mono font-extrabold text-[14px] leading-none">
-                      {x.value}
-                    </div>
+                    <div className="mt-2 text-white font-mono font-extrabold text-[14px] leading-none">{x.value}</div>
                     <div className="mt-1 text-gray-500 font-mono text-[11px]">{x.label}</div>
                   </div>
                 ))}
@@ -674,35 +757,33 @@ export default function Homepage() {
             </div>
 
             <div className="md:col-span-7">
-              <ImageSlot
-                tone="dark"
-                src="/screenshots/home/dashboard.png"
-                alt="Cabo dashboard screenshot"
-                label={lt("dash_img_label")}
-              />
+              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+                <ImageSlotSquare
+                  tone="dark"
+                  src="/screenshots/home/dashboard.png"
+                  alt="Cabo dashboard screenshot"
+                  label={lt("dash_img_label")}
+                />
+              </div>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* PRODUCTS (light) */}
         <SectionShell tone="light" id="products" withTopBorder>
-          <div
-            ref={products.ref}
-            className={cx(
-              "grid md:grid-cols-12 gap-6 items-center transition-all duration-700",
-              products.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
-            <div className="md:col-span-7">
-              <ImageSlot
-                tone="light"
-                src="/screenshots/home/products.png"
-                alt="Cabo products screenshot"
-                label={lt("products_img_label")}
-              />
+          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
+            <div className="md:col-span-7 md:order-1 order-2">
+              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+                <ImageSlotSquare
+                  tone="light"
+                  src="/screenshots/home/products.png"
+                  alt="Cabo products screenshot"
+                  label={lt("products_img_label")}
+                />
+              </div>
             </div>
 
-            <div className="md:col-span-5">
+            <div className="md:col-span-5 md:order-2 order-1">
               <Kicker tone="light" icon={<Link2 className="w-4 h-4 text-[#111]" />}>
                 {lt("products_kicker")}
               </Kicker>
@@ -712,28 +793,20 @@ export default function Homepage() {
                 <GradientWord>{lt("products_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">
-                {lt("products_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">{lt("products_desc")}</p>
 
               <div className="mt-6 flex flex-wrap gap-2">
-                <Pill tone="light">Select product</Pill>
-                <Pill tone="light">Generate link</Pill>
-                <Pill tone="light">Copy & share</Pill>
+                <Pill tone="light">{lt("pill_select_product")}</Pill>
+                <Pill tone="light">{lt("pill_generate_link")}</Pill>
+                <Pill tone="light">{lt("pill_copy_share")}</Pill>
               </div>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* PERFORMANCE (dark) */}
         <SectionShell tone="dark" id="performance" withTopBorder>
-          <div
-            ref={perf.ref}
-            className={cx(
-              "grid md:grid-cols-12 gap-6 items-center transition-all duration-700",
-              perf.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
             <div className="md:col-span-5">
               <Kicker tone="dark" icon={<TrendingUp className="w-4 h-4 text-[#81d742]" />}>
                 {lt("perf_kicker")}
@@ -744,47 +817,43 @@ export default function Homepage() {
                 <GradientWord>{lt("perf_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">
-                {lt("perf_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-xl">{lt("perf_desc")}</p>
 
               <div className="mt-6 flex flex-wrap gap-2">
-                <Pill tone="dark">Clicks vs Sales</Pill>
-                <Pill tone="dark">Product filters</Pill>
-                <Pill tone="dark">Instant insights</Pill>
+                <Pill tone="dark">{lt("pill_clicks_sales")}</Pill>
+                <Pill tone="dark">{lt("pill_product_filters")}</Pill>
+                <Pill tone="dark">{lt("pill_instant_insights")}</Pill>
               </div>
             </div>
 
             <div className="md:col-span-7">
-              <ImageSlot
-                tone="dark"
-                src="/screenshots/home/performance.png"
-                alt="Cabo performance screenshot"
-                label={lt("perf_img_label")}
-              />
+              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+                <ImageSlotSquare
+                  tone="dark"
+                  src="/screenshots/home/performance.png"
+                  alt="Cabo performance screenshot"
+                  label={lt("perf_img_label")}
+                />
+              </div>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* WALLET (light) */}
         <SectionShell tone="light" id="wallet" withTopBorder>
-          <div
-            ref={wallet.ref}
-            className={cx(
-              "grid md:grid-cols-12 gap-6 items-center transition-all duration-700",
-              wallet.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
-            <div className="md:col-span-7">
-              <ImageSlot
-                tone="light"
-                src="/screenshots/home/wallet.png"
-                alt="Cabo wallet screenshot"
-                label={lt("wallet_img_label")}
-              />
+          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
+            <div className="md:col-span-7 md:order-1 order-2">
+              <div className="mx-auto w-full max-w-[520px] sm:max-w-[560px]">
+                <ImageSlotSquare
+                  tone="light"
+                  src="/screenshots/home/wallet.png"
+                  alt="Cabo wallet screenshot"
+                  label={lt("wallet_img_label")}
+                />
+              </div>
             </div>
 
-            <div className="md:col-span-5">
+            <div className="md:col-span-5 md:order-2 order-1">
               <Kicker tone="light" icon={<Wallet2 className="w-4 h-4 text-[#111]" />}>
                 {lt("wallet_kicker")}
               </Kicker>
@@ -794,36 +863,28 @@ export default function Homepage() {
                 <GradientWord>{lt("wallet_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">
-                {lt("wallet_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-xl">{lt("wallet_desc")}</p>
 
               <SoftCard tone="light" className="mt-6 p-5">
-                <div className="text-[11px] font-mono text-gray-500">Confirmed available</div>
+                <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed_available")}</div>
                 <div className="mt-1 text-[26px] font-extrabold font-mono text-[#0b0b0b]">
                   ₺{example.confirmed.toFixed(2)}
                 </div>
                 <div className="mt-2 text-[11px] font-mono text-gray-500">
-                  Min payout <span className="font-semibold text-[#111]">₺{example.minPayout}</span> • Platform fee{" "}
-                  <span className="font-semibold text-[#111]">%{example.platformFee}</span>
+                  {lt("ui_min_payout")} <span className="font-semibold text-[#111]">₺{example.minPayout}</span> •{" "}
+                  {lt("ui_platform_fee")} <span className="font-semibold text-[#111]">%{example.platformFee}</span>
                 </div>
                 <div className="mt-3 h-2 rounded-full bg-[#ececec] overflow-hidden">
                   <div className="h-full bg-[#81d742]" style={{ width: `${example.progressPct}%` }} />
                 </div>
               </SoftCard>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* TRUST / SECURITY (light) */}
         <SectionShell tone="light" id="trust" withTopBorder>
-          <div
-            ref={trust.ref}
-            className={cx(
-              "transition-all duration-700",
-              trust.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="">
             <div className="text-center">
               <Kicker tone="light" icon={<ShieldCheck className="w-4 h-4 text-[#111]" />}>
                 {lt("trust_kicker")}
@@ -834,9 +895,7 @@ export default function Homepage() {
                 <GradientWord>{lt("trust_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-2xl mx-auto">
-                {lt("trust_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-[#444] max-w-2xl mx-auto">{lt("trust_desc")}</p>
 
               <div className="mt-8 flex flex-wrap justify-center gap-2">
                 <Pill tone="light">{lt("pill1")}</Pill>
@@ -849,43 +908,23 @@ export default function Homepage() {
 
             <div className="mt-10 grid md:grid-cols-3 gap-4">
               {[
-                {
-                  tag: lt("trust_c1_tag"),
-                  title: lt("trust_c1_title"),
-                  desc: lt("trust_c1_desc"),
-                },
-                {
-                  tag: lt("trust_c2_tag"),
-                  title: lt("trust_c2_title"),
-                  desc: lt("trust_c2_desc"),
-                },
-                {
-                  tag: lt("trust_c3_tag"),
-                  title: lt("trust_c3_title"),
-                  desc: lt("trust_c3_desc"),
-                },
+                { tag: lt("trust_c1_tag"), title: lt("trust_c1_title"), desc: lt("trust_c1_desc") },
+                { tag: lt("trust_c2_tag"), title: lt("trust_c2_title"), desc: lt("trust_c2_desc") },
+                { tag: lt("trust_c3_tag"), title: lt("trust_c3_title"), desc: lt("trust_c3_desc") },
               ].map((c, i) => (
                 <SoftCard key={i} tone="light" className="p-5">
                   <div className="text-[12px] font-mono text-[#666]">{c.tag}</div>
-                  <div className="mt-2 text-[14px] font-extrabold text-[#0b0b0b] leading-snug">
-                    {c.title}
-                  </div>
+                  <div className="mt-2 text-[14px] font-extrabold text-[#0b0b0b] leading-snug">{c.title}</div>
                   <div className="mt-2 text-[13px] text-[#444] leading-relaxed">{c.desc}</div>
                 </SoftCard>
               ))}
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* SHOPIFY (dark) */}
         <SectionShell tone="dark" id="shopify" withTopBorder>
-          <div
-            ref={shopify.ref}
-            className={cx(
-              "grid md:grid-cols-12 gap-6 items-center transition-all duration-700",
-              shopify.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="grid md:grid-cols-12 gap-8 items-center">
             <div className="md:col-span-7">
               <Kicker tone="dark" icon={<ShopifyMark className="w-4 h-4 text-[#81d742]" />}>
                 {lt("shopify_kicker")}
@@ -896,14 +935,12 @@ export default function Homepage() {
                 <GradientWord>{lt("shopify_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl">
-                {lt("shopify_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl">{lt("shopify_desc")}</p>
 
               <div className="mt-6 flex flex-wrap gap-2">
-                <Pill tone="dark">Store connection</Pill>
-                <Pill tone="dark">Signed events</Pill>
-                <Pill tone="dark">Fast onboarding</Pill>
+                <Pill tone="dark">{lt("pill_store_connection")}</Pill>
+                <Pill tone="dark">{lt("pill_signed_events")}</Pill>
+                <Pill tone="dark">{lt("pill_fast_onboarding")}</Pill>
               </div>
             </div>
 
@@ -912,19 +949,15 @@ export default function Homepage() {
                 <div className="flex items-center justify-between">
                   <div className="text-[12px] font-mono text-[#d1ffd0] inline-flex items-center gap-2">
                     <ShopifyMark className="w-4 h-4 text-[#81d742]" />
-                    Shopify integration
+                    {lt("shopify_card_title")}
                   </div>
-                  <div className="text-[11px] font-mono text-gray-500">On the way</div>
+                  <div className="text-[11px] font-mono text-gray-500">{lt("shopify_status")}</div>
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-[#202020] bg-[#101010] p-4">
-                  <div className="text-[11px] font-mono text-gray-500">What it unlocks</div>
+                  <div className="text-[11px] font-mono text-gray-500">{lt("shopify_unlock_title")}</div>
                   <div className="mt-3 space-y-2">
-                    {[
-                      "Connect Shopify stores quickly",
-                      "Secure purchase callbacks back to Cabo",
-                      "Cleaner merchant onboarding",
-                    ].map((x, i) => (
+                    {[lt("shopify_unlock_1"), lt("shopify_unlock_2"), lt("shopify_unlock_3")].map((x, i) => (
                       <div
                         key={i}
                         className="flex items-center gap-2 text-[11px] font-mono border border-[#1f1f1f] bg-[#121212] rounded-xl px-3 py-2"
@@ -936,31 +969,21 @@ export default function Homepage() {
                   </div>
                 </div>
 
-                <div className="mt-4 text-[11px] font-mono text-gray-500">
-                  (This section is informational — your real app flow stays secure & verified.)
-                </div>
+                <div className="mt-4 text-[11px] font-mono text-gray-500">{lt("shopify_note")}</div>
               </SoftCard>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
 
         {/* FINAL CTA (dark) */}
         <SectionShell tone="dark" id="final" withTopBorder>
-          <div
-            ref={final.ref}
-            className={cx(
-              "transition-all duration-700 text-center",
-              final.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-            )}
-          >
+          <Reveal className="text-center">
             <h2 className="text-[28px] sm:text-[48px] font-extrabold tracking-tight">
               <span className="text-white">{lt("final_titleA")} </span>
               <GradientWord>{lt("final_titleB")}</GradientWord>
             </h2>
 
-            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">
-              {lt("final_desc")}
-            </p>
+            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">{lt("final_desc")}</p>
 
             <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
               <Link
@@ -993,7 +1016,7 @@ export default function Homepage() {
                 {lt("final_cta_merchant")}
               </Link>
             </div>
-          </div>
+          </Reveal>
         </SectionShell>
       </main>
     </PublicLayout>
