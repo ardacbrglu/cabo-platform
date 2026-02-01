@@ -226,9 +226,7 @@ export default function ProductsPage() {
     <Layout>
       {/* Header + Search */}
       <div className="flex flex-col items-center mt-10 mb-6 px-3">
-        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">
-          {t("productMarketplace")}
-        </h1>
+        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">{t("productMarketplace")}</h1>
         <p className="mt-3 text-base md:text-lg text-gray-200 font-mono opacity-90 text-center max-w-2xl">
           {t("productSubtitle")}
         </p>
@@ -342,6 +340,7 @@ export default function ProductsPage() {
                         />
                       </div>
 
+                      {/* Title: 2 lines clamp + fixed minHeight to keep actions aligned */}
                       <h2
                         className="mt-4 text-[1.45rem] md:text-[1.55rem] font-extrabold text-white leading-tight w-full"
                         style={{
@@ -435,11 +434,7 @@ export default function ProductsPage() {
                           color: cardMessages[p.productId].kind === "error" ? "#ffd9a8" : ACCENT,
                         }}
                       >
-                        {cardMessages[p.productId].kind === "error" ? (
-                          <AlertTriangle size={16} />
-                        ) : (
-                          <CheckCircle2 size={16} />
-                        )}
+                        {cardMessages[p.productId].kind === "error" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
                         <span className="break-words">{cardMessages[p.productId].text}</span>
                       </div>
                     )}
