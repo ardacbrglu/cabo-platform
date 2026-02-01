@@ -1,11 +1,16 @@
 "use client";
 
 /**
- * Product Marketplace (Affiliate) — PROD (Aligned Cards Fix)
- * - 1 / 2 / 3 columns responsive grid
- * - Card parallelism: title/desc clamp + fixed min-heights + actions pinned to bottom (mt-auto)
- * - "Added" button style improved (premium soft green)
- * - Small perf tweaks: useMemo filtering, useEffect (no layout effect), stable computed strings
+ * Product Marketplace (Affiliate) — PROD (Aligned Cards Fix + Visibility Alignment)
+ *
+ * Security Docblock (Cabo PROD):
+ * - Tüm istekler apiFetch wrapper ile (credentials:include, X-Requested-With, X-Request-Id).
+ * - Mutasyonlarda client CSRF zorunlu değil; server Origin/Referer + AJAX + Request-Id doğrular (endpoint'e göre).
+ * - PII console.log yapılmaz.
+ *
+ * Fix:
+ * - "Added" hesabı artık My Links ile birebir aynı:
+ *   isVisible && (expiresAt == null || expiresAt > now)
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -44,6 +49,13 @@ const perSale = (p) => Math.max(0, (Number(p.price || 0) * Number(p.commissionRa
 function handleImgError(e) {
   e.currentTarget.onerror = null;
   e.currentTarget.src = PLACEHOLDER;
+}
+
+function isLinkActiveForMyLinks(link) {
+  if (!link?.isVisible) return false;
+  if (!link.expiresAt) return true;
+  const exp = new Date(link.expiresAt);
+  return exp > new Date();
 }
 
 export default function ProductsPage() {
@@ -102,10 +114,12 @@ export default function ProductsPage() {
 
         const p = Array.isArray(j?.products) ? j.products : [];
         const ul = Array.isArray(j?.userLinks) ? j.userLinks : [];
+
+        // ✅ Prefer backend's visibleLinkIds (already aligned), otherwise compute with expiry-aware fallback
         const v = new Set(
           Array.isArray(j?.visibleLinkIds)
             ? j.visibleLinkIds
-            : ul.filter((x) => x.isVisible).map((x) => x.productId)
+            : ul.filter(isLinkActiveForMyLinks).map((x) => x.productId)
         );
 
         setProducts(p);
@@ -178,7 +192,13 @@ export default function ProductsPage() {
         flash(productId, t("productSuccess"), "success");
         setUserLinks((prev) => {
           const ex = prev.find((l) => l.productId === productId);
-          if (ex) return prev.map((l) => (l.productId === productId ? { ...l, isVisible: true } : l));
+          if (ex) {
+            return prev.map((l) =>
+              l.productId === productId
+                ? { ...l, isVisible: true, expiresAt: data.expiresAt || l.expiresAt || null }
+                : l
+            );
+          }
           return [...prev, { productId, token: data.token, isVisible: true, expiresAt: data.expiresAt || null }];
         });
         setVisibleLinkIds((prev) => new Set(prev).add(productId));
@@ -206,7 +226,9 @@ export default function ProductsPage() {
     <Layout>
       {/* Header + Search */}
       <div className="flex flex-col items-center mt-10 mb-6 px-3">
-        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">{t("productMarketplace")}</h1>
+        <h1 className="text-4xl md:text-6xl font-extrabold text-[#d1ffd0] tracking-tight">
+          {t("productMarketplace")}
+        </h1>
         <p className="mt-3 text-base md:text-lg text-gray-200 font-mono opacity-90 text-center max-w-2xl">
           {t("productSubtitle")}
         </p>
@@ -298,7 +320,7 @@ export default function ProductsPage() {
                       </div>
                     </div>
 
-                    {/* Visual + title + desc (fixed heights for alignment) */}
+                    {/* Visual + title + desc */}
                     <div className="px-6 pt-4 flex flex-col items-center text-center">
                       <div
                         className="rounded-xl overflow-hidden"
@@ -320,7 +342,6 @@ export default function ProductsPage() {
                         />
                       </div>
 
-                      {/* Title: 2 lines clamp + fixed minHeight to keep actions aligned */}
                       <h2
                         className="mt-4 text-[1.45rem] md:text-[1.55rem] font-extrabold text-white leading-tight w-full"
                         style={{
@@ -329,14 +350,13 @@ export default function ProductsPage() {
                           WebkitBoxOrient: "vertical",
                           overflow: "hidden",
                           wordBreak: "break-word",
-                          minHeight: "3.6em", // ~2 lines
+                          minHeight: "3.6em",
                         }}
                         title={p.name || ""}
                       >
                         {p.name}
                       </h2>
 
-                      {/* Desc: 2 lines clamp + fixed minHeight */}
                       <p
                         className="mt-2 text-gray-300 text-[14px] md:text-[15px] leading-6 w-full"
                         style={{
@@ -345,7 +365,7 @@ export default function ProductsPage() {
                           WebkitBoxOrient: "vertical",
                           overflow: "hidden",
                           maxWidth: "46ch",
-                          minHeight: "3.0em", // ~2 lines
+                          minHeight: "3.0em",
                         }}
                         title={p.description || ""}
                       >
@@ -415,7 +435,11 @@ export default function ProductsPage() {
                           color: cardMessages[p.productId].kind === "error" ? "#ffd9a8" : ACCENT,
                         }}
                       >
-                        {cardMessages[p.productId].kind === "error" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                        {cardMessages[p.productId].kind === "error" ? (
+                          <AlertTriangle size={16} />
+                        ) : (
+                          <CheckCircle2 size={16} />
+                        )}
                         <span className="break-words">{cardMessages[p.productId].text}</span>
                       </div>
                     )}
@@ -476,7 +500,9 @@ export default function ProductsPage() {
       </div>
 
       <style jsx global>{`
-        .tabnums { font-variant-numeric: tabular-nums; }
+        .tabnums {
+          font-variant-numeric: tabular-nums;
+        }
       `}</style>
     </Layout>
   );
