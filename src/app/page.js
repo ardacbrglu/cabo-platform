@@ -220,6 +220,10 @@ const L = {
 /* ---------- helpers ---------- */
 const cx = (...a) => a.filter(Boolean).join(" ");
 
+
+
+
+
 function useRevealOnce(threshold = 0.16) {
   const ref = useRef(null);
   const [show, setShow] = useState(false);
@@ -228,11 +232,28 @@ function useRevealOnce(threshold = 0.16) {
     const el = ref.current;
     if (!el) return;
 
+    let didReveal = false;
+
+    // FAIL-SAFE: Eğer IntersectionObserver hiç tetiklenmezse sayfa boş kalmasın.
+    const fallback = setTimeout(() => {
+      if (!didReveal) setShow(true);
+    }, 600);
+
+    // IntersectionObserver yoksa direkt göster
+    if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+      didReveal = true;
+      setShow(true);
+      clearTimeout(fallback);
+      return;
+    }
+
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
+            didReveal = true;
             setShow(true);
+            clearTimeout(fallback);
             io.disconnect();
             break;
           }
@@ -242,11 +263,21 @@ function useRevealOnce(threshold = 0.16) {
     );
 
     io.observe(el);
-    return () => io.disconnect();
+
+    return () => {
+      clearTimeout(fallback);
+      io.disconnect();
+    };
   }, [threshold]);
 
   return { ref, show };
 }
+
+
+
+
+
+
 
 /**
  * Full-bleed section (fixes PublicLayout container width constraint)
