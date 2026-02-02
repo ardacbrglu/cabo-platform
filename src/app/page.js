@@ -44,15 +44,14 @@ const L = {
 
     hero_kicker: "Affiliate platform",
     heroTitleA: "Drop your link.",
-    heroTitleB: " Let it pay you back.",
+    heroTitleB: " Let the money flow.",
     heroDesc:
       "Create an account in minutes, claim a link, copy & share it anywhere — and watch clicks and confirmed sales update in real time. No “influencer” requirement — anyone can start.",
     cta_affiliate: "Start earning",
     cta_register: "Create account",
     cta_merchant: "Merchant access",
     scroll_hint: "Scroll to explore",
-    hero_note:
-      "Minimal, premium, and frictionless — because earning should feel simple.",
+    hero_note: "Minimal, premium, and frictionless — because earning should feel simple.",
 
     how_kicker: "How it works",
     how_titleA: "Register fast.",
@@ -96,8 +95,7 @@ const L = {
     wallet_kicker: "Wallet",
     wallet_titleA: "Withdraw with",
     wallet_titleB: " confidence.",
-    wallet_desc:
-      "Clear payout readiness, minimum threshold, and fee transparency — designed to feel effortless.",
+    wallet_desc: "Clear payout readiness, minimum threshold, and fee transparency — designed to feel effortless.",
     wallet_img_label: "Drop screenshot: /public/screenshots/home/wallet.png",
 
     trust_kicker: "Built for trust",
@@ -121,8 +119,7 @@ const L = {
       "Requests can be traced via request IDs; abuse is reduced with IP/user limits and conservative caching.",
     trust_c3_tag: "Integrity",
     trust_c3_title: "Reliable event tracking.",
-    trust_c3_desc:
-      "Purchase events can be verified via signed callbacks (HMAC-style) and logged for accountability.",
+    trust_c3_desc: "Purchase events can be verified via signed callbacks (HMAC-style) and logged for accountability.",
 
     shopify_kicker: "Shopify",
     shopify_titleA: "Shopify integration",
@@ -161,15 +158,14 @@ const L = {
 
     hero_kicker: "Affiliate platformu",
     heroTitleA: "Linkini bırak.",
-    heroTitleB: " Para sana aksın.",
+    heroTitleB: "Para akışını başlat.",
     heroDesc:
       "Dakikalar içinde kayıt ol, linkini al, kopyala & paylaş — tıklamalar ve onaylı satışlar canlı güncellensin. “Influencer olma” şartı yok — herkes başlayabilir.",
     cta_affiliate: "Kazanmaya başla",
     cta_register: "Hesap oluştur",
     cta_merchant: "Satıcı girişi",
     scroll_hint: "Keşfetmek için kaydır",
-    hero_note:
-      "Minimal, premium ve zahmetsiz — çünkü kazanmak basit hissettirmeli.",
+    hero_note: "Minimal, premium ve zahmetsiz — çünkü kazanmak basit hissettirmeli.",
 
     how_kicker: "Nasıl çalışır?",
     how_titleA: "Hızlı kayıt.",
@@ -196,8 +192,7 @@ const L = {
     perf_kicker: "Performans",
     perf_titleA: "Satışlarını",
     perf_titleB: " canlı izle.",
-    perf_desc:
-      "Ne işe yarıyor net gör: tıklama vs onaylı satış, ürün bazlı kırılım ve trendler — gürültüsüz.",
+    perf_desc: "Ne işe yarıyor net gör: tıklama vs onaylı satış, ürün bazlı kırılım ve trendler — gürültüsüz.",
     perf_img_label: "Ekran görüntüsü: /public/screenshots/home/performance.png",
     pill_clicks_sales: "Tıklama vs Satış",
     pill_product_filters: "Ürün filtreleri",
@@ -206,15 +201,13 @@ const L = {
     dash_kicker: "Dashboard",
     dash_titleA: "Kazancı erken gör,",
     dash_titleB: " motive kal.",
-    dash_desc:
-      "Kompakt özet: tıklama, onaylı satış, net ödenen ve wallet önizlemesi — tek bakışta.",
+    dash_desc: "Kompakt özet: tıklama, onaylı satış, net ödenen ve wallet önizlemesi — tek bakışta.",
     dash_img_label: "Ekran görüntüsü: /public/screenshots/home/dashboard.png",
 
     wallet_kicker: "Wallet",
     wallet_titleA: "Güvenle",
     wallet_titleB: " çekim yap.",
-    wallet_desc:
-      "Minimum eşik, platform ücreti ve ödeme uygunluğu net — zahmetsiz hissetsin diye.",
+    wallet_desc: "Minimum eşik, platform ücreti ve ödeme uygunluğu net — zahmetsiz hissetsin diye.",
     wallet_img_label: "Ekran görüntüsü: /public/screenshots/home/wallet.png",
 
     trust_kicker: "Güven için üretildi",
@@ -230,12 +223,10 @@ const L = {
 
     trust_c1_tag: "RBAC",
     trust_c1_title: "Kritik işlemlerde erişim kontrolü.",
-    trust_c1_desc:
-      "Korunan aksiyonlar oturum + doğru rol + active status ister — yanlış erişim azalır.",
+    trust_c1_desc: "Korunan aksiyonlar oturum + doğru rol + active status ister — yanlış erişim azalır.",
     trust_c2_tag: "Koruma",
     trust_c2_title: "Request ID, rate limit, güvenli varsayılanlar.",
-    trust_c2_desc:
-      "Her istek request-id ile izlenir; user+IP limitleri ve cache kontrolüyle abuse düşer.",
+    trust_c2_desc: "Her istek request-id ile izlenir; user+IP limitleri ve cache kontrolüyle abuse düşer.",
     trust_c3_tag: "Bütünlük",
     trust_c3_title: "Güvenilir event takibi.",
     trust_c3_desc:
@@ -288,11 +279,7 @@ function prefersReducedMotion() {
 /**
  * Reveal once on enter
  */
-function useRevealOnce({
-  threshold = 0.14,
-  rootMargin = "0px 0px -14% 0px",
-  immediate = false,
-} = {}) {
+function useRevealOnce({ threshold = 0.14, rootMargin = "0px 0px -14% 0px", immediate = false } = {}) {
   const ref = useRef(null);
   const [reveal, setReveal] = useState(immediate);
 
@@ -446,9 +433,7 @@ function SectionShell({ tone = "dark", id, withTopBorder = false, children }) {
             : "opacity-100 bg-[radial-gradient(900px_520px_at_50%_10%,rgba(0,0,0,0.06),transparent_60%)]"
         )}
       />
-      <div className="relative w-full max-w-7xl px-4 sm:px-6 lg:px-10 py-14 sm:py-20">
-        {children}
-      </div>
+      <div className="relative w-full max-w-7xl px-4 sm:px-6 lg:px-10 py-14 sm:py-20">{children}</div>
     </section>
   );
 }
@@ -510,13 +495,7 @@ const Pill = ({ tone = "dark", children }) => (
  * - aspect-[6/5] (wider than square)
  * - Frame can be forced "dark" to blend with dark UI screenshots (even on light sections)
  */
-function ImageSlotWide({
-  tone = "dark",
-  frame = "auto", // "auto" | "dark"
-  src,
-  alt,
-  label,
-}) {
+function ImageSlotWide({ tone = "dark", frame = "auto", src, alt, label }) {
   const [ok, setOk] = useState(true);
   const wrapRef = useRef(null);
 
@@ -552,9 +531,7 @@ function ImageSlotWide({
           />
         ) : (
           <div className="absolute inset-0 p-8 flex flex-col items-center justify-center text-center">
-            <div className={cx("text-[12px] font-mono", frameDark ? "text-gray-300" : "text-gray-700")}>
-              {label}
-            </div>
+            <div className={cx("text-[12px] font-mono", frameDark ? "text-gray-300" : "text-gray-700")}>{label}</div>
             <div className="mt-2 text-[11px] font-mono text-gray-500">{src}</div>
           </div>
         )}
@@ -565,15 +542,7 @@ function ImageSlotWide({
 
 /* Shopify svg from /public/shopify.svg */
 function ShopifySvg({ className = "w-4 h-4" }) {
-  return (
-    <img
-      src="/shopify.svg"
-      alt="Shopify"
-      className={cx(className, "inline-block")}
-      loading="lazy"
-      draggable={false}
-    />
-  );
+  return <img src="/shopify.svg" alt="Shopify" className={cx(className, "inline-block")} loading="lazy" draggable={false} />;
 }
 
 /* ---------- page ---------- */
@@ -669,9 +638,7 @@ export default function Homepage() {
                 <GradientWord className="font-extrabold">{lt("heroTitleB")}</GradientWord>
               </h1>
 
-              <p className="mt-4 text-[15px] sm:text-[17px] text-gray-400 max-w-xl mx-auto md:mx-0">
-                {lt("heroDesc")}
-              </p>
+              <p className="mt-4 text-[15px] sm:text-[17px] text-gray-400 max-w-xl mx-auto md:mx-0">{lt("heroDesc")}</p>
 
               <div className="mt-7 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center md:justify-start">
                 <Link
@@ -719,75 +686,70 @@ export default function Homepage() {
               </div>
             </div>
 
-            {/* Right: preview with LOCAL glow only */}
+            {/* Right: preview with LOCAL glow only (border + subtle aura) */}
             <div className="relative md:pl-6 lg:pl-10">
-              {/* Local glow (small radius, doesn't wash the whole section) */}
+              {/* LOCAL aura (small radius) — only affects area around the card */}
               <div
-                className="pointer-events-none absolute -inset-6 md:-inset-8 blur-3xl"
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-6 md:-inset-7 rounded-[32px] blur-2xl"
                 style={{
-                  opacity: 0.22,
+                  opacity: 0.36,
                   background:
-                    "radial-gradient(420px 260px at 55% 45%, rgba(129,215,66,.55), transparent 65%), radial-gradient(380px 220px at 65% 55%, rgba(255,138,107,.45), transparent 70%), radial-gradient(360px 220px at 45% 60%, rgba(107,224,255,.35), transparent 72%)",
+                    "radial-gradient(340px 220px at 50% 35%, rgba(129,215,66,.55), transparent 70%), radial-gradient(320px 210px at 70% 55%, rgba(255,138,107,.45), transparent 72%), radial-gradient(300px 200px at 35% 65%, rgba(107,224,255,.35), transparent 74%)",
                 }}
               />
 
-              <SoftCard tone="dark" className="relative p-5">
-                <div className="flex items-center justify-between">
-                  <div className="text-[12px] font-mono text-gray-400">Cabo</div>
-                  <div className="text-[11px] font-mono text-gray-500">{lt("ui_preview")}</div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {[
-                    {
-                      icon: <MousePointerClick className="w-4 h-4" />,
-                      label: lt("ui_clicks"),
-                      value: String(example.clicks),
-                    },
-                    {
-                      icon: <ShoppingCart className="w-4 h-4" />,
-                      label: lt("ui_sales"),
-                      value: String(example.sales),
-                    },
-                    {
-                      icon: <ChartNoAxesCombined className="w-4 h-4" />,
-                      label: lt("ui_net_paid"),
-                      value: `₺${example.netPaid.toFixed(2)}`,
-                    },
-                  ].map((x, i) => (
-                    <div key={i} className="rounded-xl border border-[#1f1f1f] bg-[#0c0c0c] px-3 py-3">
-                      <div className="text-gray-300">{x.icon}</div>
-                      <div className="mt-2 text-[13px] font-extrabold font-mono text-white leading-none">
-                        {x.value}
-                      </div>
-                      <div className="mt-1 text-[11px] font-mono text-gray-500">{x.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
+              {/* Premium “glow border ring” wrapper (does not change background) */}
+              <div
+                className="relative rounded-[28px] p-[1px]"
+                style={{
+                  background:
+                    "linear-gradient(135deg, rgba(129,215,66,.55), rgba(255,138,107,.35), rgba(107,224,255,.30))",
+                  boxShadow: "0 0 0 1px rgba(255,255,255,0.03) inset",
+                }}
+              >
+                <SoftCard tone="dark" className="relative p-5 rounded-[27px]">
                   <div className="flex items-center justify-between">
-                    <div className="text-[12px] font-mono text-[#d1ffd0]">{lt("ui_wallet")}</div>
-                    <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed")}</div>
+                    <div className="text-[12px] font-mono text-gray-400">Cabo</div>
+                    <div className="text-[11px] font-mono text-gray-500">{lt("ui_preview")}</div>
                   </div>
 
-                  <div className="mt-2 text-[24px] font-extrabold font-mono text-[#d1ffd0]">
-                    ₺{example.confirmed.toFixed(2)}
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    {[
+                      { icon: <MousePointerClick className="w-4 h-4" />, label: lt("ui_clicks"), value: String(example.clicks) },
+                      { icon: <ShoppingCart className="w-4 h-4" />, label: lt("ui_sales"), value: String(example.sales) },
+                      { icon: <ChartNoAxesCombined className="w-4 h-4" />, label: lt("ui_net_paid"), value: `₺${example.netPaid.toFixed(2)}` },
+                    ].map((x, i) => (
+                      <div key={i} className="rounded-xl border border-[#1f1f1f] bg-[#0c0c0c] px-3 py-3">
+                        <div className="text-gray-300">{x.icon}</div>
+                        <div className="mt-2 text-[13px] font-extrabold font-mono text-white leading-none">{x.value}</div>
+                        <div className="mt-1 text-[11px] font-mono text-gray-500">{x.label}</div>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="mt-1 text-[11px] font-mono text-gray-500">
-                    {lt("ui_min_payout")} • {lt("ui_platform_fee")}{" "}
-                    <span className="text-[#81d742] font-semibold">₺{example.minPayout}</span>{" "}
-                    <span className="text-[#e3d67d] font-semibold">%{example.platformFee}</span>
+                  <div className="mt-4 rounded-2xl border border-[#1f1f1f] bg-[#0b0b0b] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[12px] font-mono text-[#d1ffd0]">{lt("ui_wallet")}</div>
+                      <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed")}</div>
+                    </div>
+
+                    <div className="mt-2 text-[24px] font-extrabold font-mono text-[#d1ffd0]">₺{example.confirmed.toFixed(2)}</div>
+
+                    <div className="mt-1 text-[11px] font-mono text-gray-500">
+                      {lt("ui_min_payout")} • {lt("ui_platform_fee")}{" "}
+                      <span className="text-[#81d742] font-semibold">₺{example.minPayout}</span>{" "}
+                      <span className="text-[#e3d67d] font-semibold">%{example.platformFee}</span>
+                    </div>
+
+                    <div className="mt-3 h-2 rounded-full bg-[#161616] overflow-hidden">
+                      <div className="h-full bg-[#81d742]" style={{ width: `${example.progressPct}%` }} />
+                    </div>
                   </div>
 
-                  <div className="mt-3 h-2 rounded-full bg-[#161616] overflow-hidden">
-                    <div className="h-full bg-[#81d742]" style={{ width: `${example.progressPct}%` }} />
-                  </div>
-                </div>
-
-                <div className="mt-4 text-[11px] font-mono text-gray-500">{lt("hero_note")}</div>
-              </SoftCard>
+                  <div className="mt-4 text-[11px] font-mono text-gray-500">{lt("hero_note")}</div>
+                </SoftCard>
+              </div>
             </div>
           </Reveal>
         </SectionShell>
@@ -874,7 +836,6 @@ export default function Homepage() {
           <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
             <div className="md:col-span-7 md:order-1 order-2 md:pr-6 lg:pr-10">
               <div className="mx-auto w-full max-w-[620px] lg:max-w-[720px]">
-                {/* Force DARK frame on LIGHT section to blend screenshot edges */}
                 <ImageSlotWide
                   tone="light"
                   frame="dark"
@@ -954,7 +915,6 @@ export default function Homepage() {
           <Reveal className="grid md:grid-cols-12 gap-12 lg:gap-16 items-center">
             <div className="md:col-span-7 md:order-1 order-2 md:pr-6 lg:pr-10">
               <div className="mx-auto w-full max-w-[620px] lg:max-w-[720px]">
-                {/* Force DARK frame on LIGHT section to blend screenshot edges */}
                 <ImageSlotWide
                   tone="light"
                   frame="dark"
@@ -979,9 +939,7 @@ export default function Homepage() {
 
               <SoftCard tone="light" className="mt-7 p-6">
                 <div className="text-[11px] font-mono text-gray-500">{lt("ui_confirmed_available")}</div>
-                <div className="mt-1 text-[26px] font-extrabold font-mono text-[#0b0b0b]">
-                  ₺{example.confirmed.toFixed(2)}
-                </div>
+                <div className="mt-1 text-[26px] font-extrabold font-mono text-[#0b0b0b]">₺{example.confirmed.toFixed(2)}</div>
                 <div className="mt-2 text-[11px] font-mono text-gray-500">
                   {lt("ui_min_payout")} <span className="font-semibold text-[#111]">₺{example.minPayout}</span> •{" "}
                   {lt("ui_platform_fee")} <span className="font-semibold text-[#111]">%{example.platformFee}</span>
@@ -1007,9 +965,7 @@ export default function Homepage() {
                 <GradientWord>{lt("trust_titleB")}</GradientWord>
               </h2>
 
-              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl mx-auto">
-                {lt("trust_desc")}
-              </p>
+              <p className="mt-4 text-[13px] sm:text-[14px] text-gray-400 max-w-2xl mx-auto">{lt("trust_desc")}</p>
 
               <div className="mt-8 flex flex-wrap justify-center gap-2">
                 <Pill tone="dark">{lt("pill1")}</Pill>
@@ -1090,9 +1046,7 @@ export default function Homepage() {
               <GradientWord>{lt("final_titleB")}</GradientWord>
             </h2>
 
-            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">
-              {lt("final_desc")}
-            </p>
+            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-[14px] sm:text-[16px]">{lt("final_desc")}</p>
 
             <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
               <Link
