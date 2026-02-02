@@ -9,6 +9,10 @@ export const runtime = "nodejs";
  * - Ratelimit: 60/dk (IP) + 60/dk (userId)
  * - Require: X-Request-Id
  * - DB: Prisma only
+ *
+ * Perf improvements:
+ * - Parallelize independent aggregates with Promise.all
+ * - Keep response shape identical to existing UI contract
  */
 
 import { NextResponse } from "next/server";
@@ -36,7 +40,6 @@ async function readNumberConfig(keys, fallback) {
     const raw = row?.value ?? "";
     const val = Number(raw);
     if (Number.isFinite(val) && val > 0) return val;
-    // 0.xx gibi yüzde de olabilir
     const asFloat = parseFloat(raw);
     if (Number.isFinite(asFloat) && asFloat > 0) return asFloat;
   }
@@ -60,12 +63,10 @@ export async function GET(req) {
       }
     }
 
-    // Session
     const session = await getServerSession(authOptions);
     const email = session?.user?.email?.toLowerCase?.();
     if (!email) return json({ error: "unauthorized", request_id: requestId }, { status: 401 });
 
-    // User
     const dbUser = await prisma.user.findUnique({
       where: { email },
       select: {
@@ -100,14 +101,13 @@ export async function GET(req) {
 
     const userId = dbUser.id;
 
-    // Config – DB anahtar isimleri ile birebir
+    // Config
     const minPayout = await readNumberConfig(["min_payout"], 100);
-    // platform_commission_rate: 0.12 → %12
+
     let platformCommissionRaw = await readNumberConfig(
       ["platform_commission_rate", "platform_commission_percent", "platform_commission", "platformFeePercent"],
       0.1
     );
-    // 0–1 aralığı ise yüzdelik çevir
     const platformCommission =
       platformCommissionRaw <= 1 ? Math.round(platformCommissionRaw * 100) : Math.round(platformCommissionRaw);
 
@@ -124,11 +124,11 @@ export async function GET(req) {
       where: { userId },
       select: { productId: true, linkId: true },
     });
+
     const productIds = links.map((l) => l.productId);
     const linkIds = links.map((l) => l.linkId);
 
     if (productIds.length === 0) {
-      // Net ödenmiş (paid) toplam (0)
       return json({
         totalClicks: 0,
         totalSales: 0,
@@ -156,78 +156,101 @@ export async function GET(req) {
       });
     }
 
-    // Counters
-    const totalClicks = await prisma.click.count({ where: { linkId: { in: linkIds } } });
+    // parallel aggregates
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const salesAggQty = await prisma.affiliateUserSale.aggregate({
-      _sum: { quantity: true },
-      where: { productId: { in: productIds }, userId },
-    });
+    const [
+      totalClicks,
+      salesAggQty,
+      earnAgg,
+      activeReqCount,
+      activeSumAgg,
+      paidAgg,
+      recentConversions,
+      lastConversion,
+      lastClick,
+    ] = await Promise.all([
+      prisma.click.count({ where: { linkId: { in: linkIds } } }),
+
+      prisma.affiliateUserSale.aggregate({
+        _sum: { quantity: true },
+        where: { productId: { in: productIds }, userId },
+      }),
+
+      prisma.affiliateUserSale.aggregate({
+        _sum: { commissionAffiliate: true },
+        where: { productId: { in: productIds }, userId, status: "confirmed" },
+      }),
+
+      prisma.payoutRequest.count({
+        where: { userId, status: { in: ["pending", "approved"] } },
+      }),
+
+      prisma.payoutRequest.aggregate({
+        _sum: { amountTotal: true },
+        where: { userId, status: { in: ["pending", "approved"] } },
+      }),
+
+      prisma.payoutRequest.aggregate({
+        _sum: { netPayable: true },
+        where: { userId, status: "paid" },
+      }),
+
+      prisma.affiliateUserSale.findMany({
+        where: { productId: { in: productIds }, status: "confirmed", userId },
+        orderBy: { convertedAt: "desc" },
+        take: 5,
+        include: { merchantProduct: { select: { name: true } } },
+      }),
+
+      prisma.affiliateUserSale.findFirst({
+        where: { userId, status: "confirmed", productId: { in: productIds }, convertedAt: { gte: since } },
+        orderBy: { convertedAt: "desc" },
+        include: { merchantProduct: { select: { name: true } } },
+      }),
+
+      prisma.click.findFirst({
+        where: { linkId: { in: linkIds }, clickedAt: { gte: since } },
+        orderBy: { clickedAt: "desc" },
+        include: { affiliateLink: { include: { product: true } } },
+      }),
+    ]);
+
     const totalSales = n(salesAggQty?._sum?.quantity);
-
-    const earnAgg = await prisma.affiliateUserSale.aggregate({
-      _sum: { commissionAffiliate: true },
-      where: { productId: { in: productIds }, userId, status: "confirmed" },
-    });
     const confirmedTotal = n(earnAgg?._sum?.commissionAffiliate);
 
-    // Aktif çekimlerin rezervasyonu (pending & approved)
-    const activeReqCount = await prisma.payoutRequest.count({
-      where: { userId, status: { in: ["pending", "approved"] } },
-    });
-    const activeSumAgg = await prisma.payoutRequest.aggregate({
-      _sum: { amountTotal: true },
-      where: { userId, status: { in: ["pending", "approved"] } },
-    });
     const reservedByActive = n(activeSumAgg?._sum?.amountTotal);
     const confirmedAvailable = Math.max(confirmedTotal - reservedByActive, 0);
 
-    // **Net ödenmiş**: status='paid' olan PayoutRequest.netPayable toplamı
-    const paidAgg = await prisma.payoutRequest.aggregate({
-      _sum: { netPayable: true },
-      where: { userId, status: "paid" },
-    });
     const netPaidTotal = n(paidAgg?._sum?.netPayable);
 
-    // Recent conversions
-    const recentConversions = await prisma.affiliateUserSale.findMany({
-      where: { productId: { in: productIds }, status: "confirmed", userId },
-      orderBy: { convertedAt: "desc" },
-      take: 5,
-      include: { merchantProduct: { select: { name: true } } },
-    });
-
-    // Leaderboard (ilk 3)
-    const activeAffiliates = await prisma.user.findMany({
-      where: { role: "affiliate", status: "active" },
-      select: { id: true, name: true },
-    });
-    const idSet = new Set(activeAffiliates.map((u) => u.id));
-    const lb = await prisma.affiliateUserSale.groupBy({
+    // Leaderboard (top 3) — keep existing logic but slightly safer scale:
+    // group-by top 10, then filter active affiliates, then take 3
+    const lbCandidates = await prisma.affiliateUserSale.groupBy({
       by: ["userId"],
-      where: { status: "confirmed", userId: { in: [...idSet] } },
+      where: { status: "confirmed" },
       _sum: { commissionAffiliate: true },
       orderBy: { _sum: { commissionAffiliate: "desc" } },
-      take: 3,
+      take: 10,
     });
-    const nameById = new Map(activeAffiliates.map((u) => [u.id, u.name || "User"]));
-    const leaderboard = lb.map((row) => ({
-      name: nameById.get(row.userId) || "User",
-      value: `₺${n(row?._sum?.commissionAffiliate).toFixed(2)}`,
-    }));
 
-    // Live (24h)
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const lastConversion = await prisma.affiliateUserSale.findFirst({
-      where: { userId, status: "confirmed", productId: { in: productIds }, convertedAt: { gte: since } },
-      orderBy: { convertedAt: "desc" },
-      include: { merchantProduct: { select: { name: true } } },
+    const candidateIds = lbCandidates.map((x) => x.userId);
+    const activeAffiliates = await prisma.user.findMany({
+      where: { id: { in: candidateIds }, role: "affiliate", status: "active" },
+      select: { id: true, name: true },
     });
-    const lastClick = await prisma.click.findFirst({
-      where: { linkId: { in: linkIds }, clickedAt: { gte: since } },
-      orderBy: { clickedAt: "desc" },
-      include: { affiliateLink: { include: { product: true } } },
-    });
+
+    const activeSet = new Set(activeAffiliates.map((u) => u.id));
+    const nameById = new Map(activeAffiliates.map((u) => [u.id, u.name || "User"]));
+
+    const leaderboard = lbCandidates
+      .filter((row) => activeSet.has(row.userId))
+      .slice(0, 3)
+      .map((row) => ({
+        name: nameById.get(row.userId) || "User",
+        value: `₺${n(row?._sum?.commissionAffiliate).toFixed(2)}`,
+      }));
+
     const liveConv = lastConversion
       ? {
           type: "conversion",
@@ -237,6 +260,7 @@ export async function GET(req) {
           quantity: lastConversion.quantity || 1,
         }
       : null;
+
     const liveClick = lastClick
       ? {
           type: "click",
@@ -253,13 +277,8 @@ export async function GET(req) {
         }
       : null;
 
-    // Payout eligibility
     const payoutEligible =
-      confirmedAvailable >= minPayout &&
-      !ibanMissing &&
-      !bankMissing &&
-      !realNameMissing &&
-      activeReqCount < 2;
+      confirmedAvailable >= minPayout && !ibanMissing && !bankMissing && !realNameMissing && activeReqCount < 2;
 
     let payoutDisabledReason = null;
     if (ibanMissing || bankMissing || realNameMissing) payoutDisabledReason = "bank";
@@ -271,8 +290,8 @@ export async function GET(req) {
     return json({
       totalClicks,
       totalSales,
-      totalEarnings: confirmedTotal, // toplam onaylanmış (brüt)
-      netPaidTotal,                  // **yeni**: ödenmiş net toplam
+      totalEarnings: confirmedTotal,
+      netPaidTotal,
       confirmedTotal,
       confirmedAvailable,
       minPayout,

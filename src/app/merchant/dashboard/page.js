@@ -51,23 +51,48 @@ function handleImgError(e) {
   e.currentTarget.src = PLACEHOLDER;
 }
 
-// Allow only https URLs (or return null so callers can fall back safely).
-function sanitizeImageUrl(url) {
+
+
+
+
+
+function sanitizeImageUrl(url, opts = {}) {
+  const { allowDataImage = false } = opts;
+
   if (!url || typeof url !== "string") return null;
   const s = url.trim();
   if (!s || s.length > 2048) return null;
 
-  // Permit data:image (already validated elsewhere) — used for previews
-  if (s.startsWith("data:image/")) return s;
+  // Allow only validated data images (ONLY when explicitly allowed)
+  if (allowDataImage && s.startsWith("data:image/")) {
+    return isDataImage(s) ? s : null;
+  }
+
+  // Block dangerous protocols fast
+  const lower = s.toLowerCase();
+  if (
+    lower.startsWith("javascript:") ||
+    lower.startsWith("vbscript:") ||
+    lower.startsWith("file:") ||
+    lower.startsWith("data:")
+  ) {
+    return null;
+  }
 
   try {
     const parsed = new URL(s);
-    if (parsed.protocol !== "https:") return null;
+    // Allow http(s) (you can restrict to https only if you want)
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
     return parsed.toString();
   } catch {
     return null;
   }
 }
+
+
+
+
+
 
 function getQuotaStatus(p) {
   if (!p.isActive) return "inactive";
