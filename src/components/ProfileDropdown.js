@@ -1,163 +1,477 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useUser } from "@/context/UserContext";
+/**
+ * PublicLayout (JS, PROD)
+ *
+ * Fix:
+ * - No blank/empty first paint: never returns null when locale context is not "ready".
+ *   Uses safe fallback locale ("en") and renders immediately; language switching becomes fully active when ready.
+ *
+ * Security Docblock (Cabo PROD):
+ * - Public wrapper only; no auth required.
+ * - No sensitive data is rendered.
+ * - No inline untrusted HTML.
+ * - Mobile menu uses Portal; scroll-lock is applied to <html> safely.
+ */
+
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { User2, LogOut, Bell, Settings, Headset } from "lucide-react";
-import useTranslation from "@/hooks/useTranslation";
+import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/context/LocaleContext";
-import { useNotifications } from "@/hooks/useNotifications";
-import NotificationBadge from "@/components/NotificationBadge";
+import { Menu, Globe, ChevronDown, ChevronRight } from "lucide-react";
+import Portal from "@/components/Portal";
 
-/* NANO ölçüler (desktop’ta da tutarlılık) */
-const N_ICON = 14;
-const N_ITEM_H = 30;
-const N_PX = 7;
-const N_GAP = 5;
-const N_FONT = 12;
+/* PublicLayout (JS, prod, mobile panel top-layer & priority) */
 
-export default function ProfileDropdown({ alwaysVisible = false }) {
-  const [open, setOpen] = useState(false);
-  const { user } = useUser();
-  const router = useRouter();
-  const dropdownRef = useRef(null);
-  const { t } = useTranslation();
-  const { ready } = useLocale();
-  const { unreadCount } = useNotifications();
-  const hasUnread = (unreadCount || 0) > 0;
+const translations = {
+  en: {
+    home: "Home",
+    faq: "FAQ",
+    login: "Login",
+    register: "Register",
+    merchantQ: "Are you a product owner?",
+    merchantAccess: "Merchant access",
+    copyright: "Cabo Affiliate | Built by Arda Cabaroğlu",
+    language: "Language",
+  },
+  tr: {
+    home: "Anasayfa",
+    faq: "Sık Sorulanlar",
+    login: "Giriş Yap",
+    register: "Kayıt Ol",
+    merchantQ: "Ürün sahibi misin?",
+    merchantAccess: "Satıcı girişi",
+    copyright: "Cabo Affiliate | Arda Cabaroğlu tarafından geliştirilmiştir",
+    language: "Dil",
+  },
+};
+
+const LANGS = [
+  { code: "tr", short: "TR" },
+  { code: "en", short: "EN" },
+];
+
+function FlagTR({ className = "w-4 h-3" }) {
+  return (
+    <svg viewBox="0 0 18 12" className={`${className} rounded-[2px]`} aria-hidden="true">
+      <rect width="18" height="12" fill="#E30A17" />
+      <circle cx="7.2" cy="6" r="3.05" fill="#fff" />
+      <circle cx="8.1" cy="6" r="2.45" fill="#E30A17" />
+      <polygon
+        fill="#fff"
+        points="10.5,6 11.25,6.22 11.05,5.49 11.6,5 10.84,4.93 10.5,4.25 10.16,4.93 9.4,5 9.95,5.49 9.75,6.22"
+      />
+    </svg>
+  );
+}
+function FlagUS({ className = "w-4 h-3" }) {
+  return (
+    <svg viewBox="0 0 19 12" className={`${className} rounded-[2px]`} aria-hidden="true">
+      <rect width="19" height="12" fill="#B22234" />
+      {[1, 3, 5, 7, 9, 11].map((y) => (
+        <rect key={y} x={0} y={y} width="19" height="1" fill="#fff" />
+      ))}
+      <rect x="0" y="0" width="8" height="7" fill="#3C3B6E" />
+      {[1.2, 3.6, 2.4, 4.8].map((x, i) => (
+        <circle key={i} cx={x * 1.5} cy={2 + i} r="0.25" fill="#fff" />
+      ))}
+    </svg>
+  );
+}
+const Flag = ({ code, className }) => (code === "tr" ? <FlagTR className={className} /> : <FlagUS className={className} />);
+
+// SPA path watcher — safer: no sync setState inside patched history flow
+function usePathnameSafe() {
+  const [path, setPath] = useState("/");
 
   useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false);
+    let rafId = 0;
+
+    const readPath = () => {
+      try {
+        return window.location.pathname || "/";
+      } catch {
+        return "/";
+      }
     };
-    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("touchstart", onDoc, { passive: true });
-    document.addEventListener("keydown", onEsc);
+
+    const updateAsync = () => {
+      const nextPath = readPath();
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        setPath((prev) => (prev === nextPath ? prev : nextPath));
+      });
+    };
+
+    updateAsync();
+
+    try {
+      if (!window.__CABO_HIST_PATCHED__) {
+        const fire = () => {
+          try {
+            queueMicrotask(() => {
+              try {
+                window.dispatchEvent(new Event("cabo:locationchange"));
+              } catch {}
+            });
+          } catch {
+            try {
+              setTimeout(() => {
+                try {
+                  window.dispatchEvent(new Event("cabo:locationchange"));
+                } catch {}
+              }, 0);
+            } catch {}
+          }
+        };
+
+        const wrap = (type) => {
+          const orig = history[type];
+          if (typeof orig !== "function") return;
+          history[type] = function (...args) {
+            const ret = orig.apply(this, args);
+            fire();
+            return ret;
+          };
+        };
+
+        wrap("pushState");
+        wrap("replaceState");
+        window.__CABO_HIST_PATCHED__ = true;
+      }
+    } catch {}
+
+    window.addEventListener("popstate", updateAsync);
+    window.addEventListener("cabo:locationchange", updateAsync);
+
     return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("touchstart", onDoc);
-      document.removeEventListener("keydown", onEsc);
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener("popstate", updateAsync);
+      window.removeEventListener("cabo:locationchange", updateAsync);
     };
-  }, [open]);
+  }, []);
 
-  function handleLogout(e) {
-    e.preventDefault();
-    if (typeof window !== "undefined") window.location.assign("/api/logout");
-    else router.push("/api/logout");
-  }
+  return path;
+}
 
-  if (!ready) {
-    return (
-      <div className="relative flex items-center">
-        <button
-          className="inline-flex items-center rounded-full border text-white opacity-60"
-          style={{ height: N_ITEM_H, padding: `0 ${N_PX}px`, columnGap: N_GAP, fontSize: N_FONT }}
-          disabled
-        >
-          <User2 size={N_ICON} />
-          <span className="truncate max-w-[7.5rem]">{user?.name || ""}</span>
-        </button>
-      </div>
-    );
-  }
+export default function PublicLayout({ children }) {
+  // IMPORTANT: do not block render when not ready
+  const ctx = useLocale?.() || {};
+  const localeRaw = ctx?.locale || "en";
+  const ready = ctx?.ready !== false;
+  const setLocale = ctx?.setLocale;
+  const persistLocale = ctx?.persistLocale;
 
-  if (alwaysVisible) return null;
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileLangOpen, setMobileLangOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
+
+  const langRef = useRef(null);
+  const panelRef = useRef(null);
+  const currentPath = usePathnameSafe();
+
+  // viewport
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  // route/breakpoint change -> panelleri kapat
+  useEffect(() => {
+    setMobileOpen(false);
+    setMobileLangOpen(false);
+    setLangOpen(false);
+  }, [currentPath, isMobile]);
+
+  // outside click + ESC
+  useEffect(() => {
+    const onDocClick = (e) => {
+      const tgt = e.target;
+      if (langRef.current && !langRef.current.contains(tgt)) setLangOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        setLangOpen(false);
+        setMobileLangOpen(false);
+        setMobileOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("touchstart", onDocClick, { passive: true });
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("touchstart", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  // SCROLL LOCK — HTML scroller kilitlenir (body değil!)
+  useEffect(() => {
+    if (!isMobile) return;
+    const root = document.documentElement;
+    const prevOverflow = root.style.overflowY;
+    if (mobileOpen) root.style.overflowY = "hidden";
+    else root.style.overflowY = prevOverflow || "";
+    return () => {
+      root.style.overflowY = prevOverflow || "";
+    };
+  }, [isMobile, mobileOpen]);
+
+  // safe locale resolution
+  const activeLangCode = String(localeRaw).toLowerCase().startsWith("tr") ? "tr" : "en";
+  const dict = translations[activeLangCode] || translations.en;
+  const t = (k) => dict[k] || String(k);
+
+  const activeLang = LANGS.find((l) => l.code === activeLangCode) || LANGS[1];
+
+  const setLangPersist = (code) => {
+    // Ready değilken bile güvenli şekilde set etmeye çalış
+    if (typeof persistLocale === "function") persistLocale(code);
+    else if (typeof setLocale === "function") setLocale(code);
+  };
+
+  const navLinks = [
+    { href: "/", label: t("home") },
+    { href: "/faq", label: t("faq") },
+    { href: "/login", label: t("login") },
+    { href: "/register", label: t("register") },
+  ];
+  const isActive = (href) => currentPath === href;
+  const linkClassDesktop = (href) =>
+    `inline-block transition hover:text-[#81d742] ${
+      isActive(href) ? "text-[#81d742] font-semibold" : "text-gray-200"
+    }`;
 
   return (
-    <div className="relative flex items-center" ref={dropdownRef} style={{ zIndex: 210 }}>
-      {/* Trigger (rozet SAĞ ÜST) */}
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        aria-haspopup="true"
-        aria-expanded={open}
-        aria-label={t("profile")}
-        className="inline-flex items-center rounded-full border text-white hover:text-[#81d742] hover:border-[#81d742] transition-colors"
-        style={{
-          height: N_ITEM_H,
-          padding: `0 ${N_PX}px`,
-          columnGap: N_GAP,
-          fontSize: N_FONT,
-          lineHeight: `${N_ITEM_H}px`,
-          background: "transparent",
-          boxShadow: "0 2px 7px rgba(0,0,0,.08)",
-          borderColor: "rgba(255,255,255,.9)",
-        }}
-      >
-        <span className="relative inline-flex">
-          <User2 size={N_ICON} />
-          <NotificationBadge show={hasUnread} size={8} offsetX={-3} offsetY={-3} />
-        </span>
-        <span className="truncate max-w-[7.5rem] font-mono font-semibold">
-          {user?.name || ""}
-        </span>
-        <svg width="12" height="12" className="ml-1 relative top-[1px]">
-          <path d="M3 4.5L6 8l3-3.5" stroke="#81d742" strokeWidth="2" fill="none" />
-        </svg>
-      </button>
-
-      {/* Dropdown */}
-      {open && (
-        <div
-          className="animate-fadeIn"
-          onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 8px)",
-            minWidth: 220,
-            borderRadius: 10,
-            fontSize: "12.5px",
-            padding: "4px 0",
-            boxShadow: "0 12px 32px rgba(0,0,0,.22)",
-            background: "#181818",
-            border: "1px solid #232323",
-            zIndex: 211,
-          }}
-        >
-          <Link
-            href="/notifications"
-            className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] transition"
-            onClick={() => setOpen(false)}
-          >
-            <span className="relative inline-flex items-center">
-              <Bell size={16} />
-              <NotificationBadge show={hasUnread} size={9} offsetX={-4} offsetY={-4} />
-            </span>
-            {t("notifications")}
-          </Link>
-          <Link
-            href="/settings"
-            className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] transition"
-            onClick={() => setOpen(false)}
-          >
-            <Settings size={16} /> {t("settings")}
-          </Link>
-          <Link
-            href="/support"
-            className="flex items-center gap-3 px-4 py-2 font-mono font-semibold text-white hover:text-[#81d742] transition"
-            onClick={() => setOpen(false)}
-          >
-            <Headset size={16} /> {t("support")}
+    <div className="public-shell" suppressHydrationWarning>
+      {/* HEADER */}
+      <header className="public-header relative z-[3000]">
+        <div className="edge-band h-full flex items-center justify-between">
+          <Link href="/" prefetch={false} className="brand-cabo select-none" aria-label="Cabo homepage">
+            Cabo
           </Link>
 
-          <div className="border-t border-[#232323] my-1" />
+          {/* Desktop nav */}
+          {!isMobile ? (
+            <nav aria-label="Public navigation" className="relative whitespace-nowrap">
+              <ul className="flex items-center text-sm font-medium gap-6 [--gap:1.5rem] [&>li]:ml-[var(--gap)] [&>li:first-child]:ml-0">
+                {navLinks.map((item) => (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={linkClassDesktop(item.href)}
+                      prefetch={false}
+                      aria-current={isActive(item.href) ? "page" : undefined}
+                    >
+                      {item.label}
+                    </Link>
+                  </li>
+                ))}
 
-          <button
-            onClick={handleLogout}
-            type="button"
-            className="flex items-center gap-3 px-4 py-2 font-mono font-bold text-red-500 hover:text-[#ff7070] transition w-full"
-            style={{ background: "transparent", outline: "none" }}
-          >
-            <LogOut size={16} />
-            <span>{t("logout")}</span>
-          </button>
+                {/* Desktop language */}
+                <li className="relative ml-[var(--gap)]" ref={langRef}>
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded transition flex items-center gap-2 text-gray-200 hover:text-[#b0f7a2] disabled:opacity-60 disabled:hover:text-gray-200"
+                    aria-label="Change language"
+                    aria-haspopup="menu"
+                    aria-expanded={langOpen}
+                    onClick={() => setLangOpen((s) => !s)}
+                    disabled={!ready}
+                    style={{ outline: "none" }}
+                    title={!ready ? "Loading…" : ""}
+                  >
+                    <Globe size={18} />
+                    <span className="hidden sm:inline-block">{activeLang.short}</span>
+                    <ChevronDown size={16} className={`transition ${langOpen ? "rotate-180" : ""}`} />
+                  </button>
+
+                  {langOpen && (
+                    <div
+                      role="menu"
+                      aria-label="Language selector"
+                      className="absolute right-0 mt-2 w-36 rounded-xl border border-[#242424] bg-[#0f0f0f] shadow-[0_8px_24px_rgba(0,0,0,0.45)] p-1 z-50"
+                    >
+                      {LANGS.map((l) => {
+                        const active = activeLang.code === l.code;
+                        return (
+                          <button
+                            key={l.code}
+                            type="button"
+                            onClick={() => {
+                              setLangPersist(l.code);
+                              setLangOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+                              active
+                                ? "bg-[#141414] text-[#81d742] font-semibold"
+                                : "text-gray-200 hover:bg-[#151515]"
+                            }`}
+                            role="menuitem"
+                            aria-current={active ? "true" : "false"}
+                            style={{ outline: "none" }}
+                          >
+                            <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
+                            <span className="tracking-wide">{l.short}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </li>
+              </ul>
+            </nav>
+          ) : (
+            <button
+              onClick={() => setMobileOpen((s) => !s)}
+              className="text-white"
+              type="button"
+              aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
+            >
+              <Menu size={24} />
+            </button>
+          )}
         </div>
+      </header>
+
+      {/* MOBILE PANEL — Top-layer Portal */}
+      {isMobile && mobileOpen && (
+        <Portal>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile menu"
+            onClick={() => {
+              setMobileOpen(false);
+              setMobileLangOpen(false);
+            }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 2147483646,
+              pointerEvents: "auto",
+              background: "transparent",
+            }}
+          >
+            <div
+              ref={panelRef}
+              className="edge-band text-sm allow-inner-scroll"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "fixed",
+                left: 0,
+                right: 0,
+                top: "var(--public-header-h)",
+                background: "#111",
+                paddingTop: "8px",
+                paddingBottom: "12px",
+                maxHeight: "min(92vh,560px)",
+                overflow: "auto",
+                WebkitOverflowScrolling: "touch",
+                boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
+                borderBottom: "1px solid #232323",
+              }}
+            >
+              {navLinks.map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  prefetch={false}
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setMobileLangOpen(false);
+                  }}
+                  className={`block py-2 transition ${
+                    isActive(l.href) ? "text-[#81d742] font-semibold" : "text-gray-300 hover:text-white"
+                  }`}
+                  aria-current={isActive(l.href) ? "page" : undefined}
+                >
+                  {l.label}
+                </Link>
+              ))}
+
+              <div className="mt-2 pt-2">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between py-2 text-gray-300 hover:text-white transition disabled:opacity-60 disabled:hover:text-gray-300"
+                  onClick={() => setMobileLangOpen((s) => !s)}
+                  aria-haspopup="menu"
+                  aria-expanded={mobileLangOpen}
+                  aria-label={dict.language}
+                  disabled={!ready}
+                  style={{ outline: "none" }}
+                  title={!ready ? "Loading…" : ""}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Globe size={16} />
+                    <span className="uppercase tracking-wide">{dict.language}</span>
+                  </span>
+                  <ChevronRight size={16} className={`transition ${mobileLangOpen ? "rotate-90" : ""}`} />
+                </button>
+
+                {mobileLangOpen && (
+                  <div role="menu" aria-label="Language selector" className="mt-1 p-1 rounded-lg bg-[#101010]">
+                    {LANGS.map((l) => {
+                      const active = activeLang.code === l.code;
+                      return (
+                        <button
+                          key={l.code}
+                          type="button"
+                          onClick={() => setLangPersist(l.code)}
+                          className={`w-full text-left px-3 py-2 rounded-md transition flex items-center gap-2 ${
+                            active
+                              ? "bg-[#1a1a1a] text-[#81d742] font-semibold"
+                              : "text-gray-200 hover:bg-[#1a1a1a]"
+                          }`}
+                          role="menuitem"
+                          aria-current={active ? "true" : "false"}
+                          style={{ outline: "none" }}
+                        >
+                          <Flag code={l.code} className="w-4 h-3 ring-1 ring-[#2b2b2b]" />
+                          <span className="tracking-wide">{l.short}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </Portal>
       )}
+
+      {/* MAIN */}
+      <main id="cabo-main" className="bg-transparent">
+        <div className="container">{children}</div>
+      </main>
+
+      {/* FOOTER */}
+      <footer
+        className="cabo-public-footer text-gray-500 text-xs font-mono border-t border-[#232323] shrink-0
+                   !pt-2 !pb-[calc(12px+env(safe-area-inset-bottom))]"
+      >
+        <div className="edge-band">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <div className="merchant text-center md:text-left">
+              <span className="block md:inline text-[11px] md:text-xs text-gray-400">{dict.merchantQ}</span>
+              <Link
+                href="/merchant/login"
+                prefetch={false}
+                className="inline-block mt-1 md:mt-0 md:ml-2 text-[11px] md:text-xs px-2 py-1 rounded-full border border-[#2b2b2b] text-[#81d742] hover:opacity-90 transition"
+              >
+                {dict.merchantAccess}
+              </Link>
+            </div>
+            <div className="copy text-center md:text-right text-[10px] md:text-xs">
+              &copy; 2025 {dict.copyright}
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
