@@ -305,5 +305,4 @@ export async function POST(req) {
     audit?.({ evt: "testshop_verify.crash", err: String(e?.message || e).slice(0, 300) });
     return j({ ok: false, error: "server_error" }, { status: 500 }, { "x-cabo-allowed": "crash" });
   }
-  
 }
