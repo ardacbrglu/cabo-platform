@@ -11,6 +11,10 @@ export const runtime = "nodejs";
  * - Transactions: create/cancel payout requests are wrapped in a transaction
  * - Validation: Zod (bank info, request id); IBAN TR check; min payout threshold
  * - Response: no-store; security headers; Retry-After on 429
+ *
+ * Fix (2026):
+ * - Next.js runtime'da cookies() async olabilir → cookies().get çağrısı "t.get is not a function" patlatır.
+ * - Bu yüzden CSRF cookie okuması async yapıldı ve çağrılar await edildi.
  */
 
 import { NextResponse } from "next/server";
@@ -27,32 +31,51 @@ import { isIbanTR, normalizeIban, bankInfoSchema, payoutRequestIdSchema } from "
 const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TX_OPTS = { maxWait: 7000, timeout: 20000 };
 
+function getReqId(req) {
+  return (
+    req.headers.get("x-request-id") ||
+    req.headers.get("X-Request-Id") ||
+    req.headers.get("x-requestid") ||
+    ""
+  );
+}
+
 function secureJson(data, init = {}, req) {
-  const res = NextResponse.json(data, init);
+  const request_id = getReqId(req);
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? { request_id, ...data }
+    : { request_id, data };
+
+  const res = NextResponse.json(payload, init);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Cross-Origin-Resource-Policy", "same-site");
   return applyApiSecurityHeaders(res, req);
 }
+
 const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 const cleanBankName = (s) => String(s || "").trim().slice(0, 120);
 const cleanRealName = (s) => String(s || "").trim().replace(/\s+/g, " ").slice(0, 120);
 
-function readCsrfCookieValue() {
-  const store = cookies();
+/** Next.js bazı sürümlerde cookies() async dönebilir. */
+async function readCsrfCookieValue() {
+  const store = await cookies();
   const raw =
     store.get("__Host-next-auth.csrf-token")?.value ||
     store.get("next-auth.csrf-token")?.value ||
     "";
   return String(raw).split("|")[0] || "";
 }
-function validateCsrfOrDeny(req) {
+
+async function validateCsrfOrDeny(req) {
   const method = (req?.method || "GET").toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+
   const headerToken =
     req.headers.get("X-CSRF-Token") || req.headers.get("x-csrf-token") || "";
-  const cookieToken = readCsrfCookieValue();
+  const cookieToken = await readCsrfCookieValue();
+
   if (!headerToken || !cookieToken || headerToken !== cookieToken) {
     return secureJson({ error: "Invalid CSRF token" }, { status: 403 }, req);
   }
@@ -114,7 +137,7 @@ export async function GET(req) {
     const rl = await checkRateLimit({ key: `${rlKey}:GET`, limit: 30, windowMs: 60_000 });
     if (!rl.ok) {
       return secureJson(
-        { error: "Too many requests" },
+        { error: "Too many requests", retry_after: Math.ceil(rl.resetMs / 1000) },
         { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } },
         req
       );
@@ -165,10 +188,7 @@ export async function GET(req) {
       where: { userId, status: { in: ["pending", "approved"] } },
       select: { amountTotal: true },
     });
-    const pendingRequestsAmount = activeRequests.reduce(
-      (s, r) => s + Number(r.amountTotal || 0),
-      0
-    );
+    const pendingRequestsAmount = activeRequests.reduce((s, r) => s + Number(r.amountTotal || 0), 0);
 
     const balance = confirmed + pending;
     const iban = normalizeIban(statusRow.iban || "");
@@ -209,8 +229,7 @@ export async function GET(req) {
       const progressed = (item.payoutRequestItems || []).some(
         (it) => it.status === "merchant_paid" || it.status === "platform_confirmed"
       );
-      const locked =
-        item.status !== "pending" || (lockAt && now >= lockAt.getTime()) || progressed;
+      const locked = item.status !== "pending" || (lockAt && now >= lockAt.getTime()) || progressed;
 
       return {
         requestId: item.requestId,
@@ -265,7 +284,7 @@ export async function GET(req) {
 /* ============================== POST ============================= */
 export async function POST(req) {
   try {
-    const csrfErr = validateCsrfOrDeny(req);
+    const csrfErr = await validateCsrfOrDeny(req);
     if (csrfErr) return csrfErr;
 
     try {
@@ -289,7 +308,7 @@ export async function POST(req) {
     const rl = await checkRateLimit({ key: `${rlKey}:POST`, limit: 10, windowMs: 60_000 });
     if (!rl.ok) {
       return secureJson(
-        { error: "Too many requests" },
+        { error: "Too many requests", retry_after: Math.ceil(rl.resetMs / 1000) },
         { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } },
         req
       );
@@ -353,24 +372,21 @@ export async function POST(req) {
         where: { id: userId },
         select: { iban: true, bankName: true, realUserFullname: true, status: true },
       });
-      if (!u || u.status !== "active")
-        return secureJson({ error: "ACCOUNT_INACTIVE" }, { status: 403 }, req);
+      if (!u || u.status !== "active") return secureJson({ error: "ACCOUNT_INACTIVE" }, { status: 403 }, req);
 
       const iban = normalizeIban(u.iban || "");
       const bankName = u.bankName || "";
       const realName = u.realUserFullname || "";
       if (!isIbanTR(iban)) return secureJson({ error: "IBAN_REQUIRED" }, { status: 400 }, req);
       if (!cleanBankName(bankName)) return secureJson({ error: "BANK_REQUIRED" }, { status: 400 }, req);
-      if (cleanRealName(realName).split(" ").length < 2)
-        return secureJson({ error: "REALNAME_REQUIRED" }, { status: 400 }, req);
+      if (cleanRealName(realName).split(" ").length < 2) return secureJson({ error: "REALNAME_REQUIRED" }, { status: 400 }, req);
 
       const links = await prisma.affiliateLink.findMany({
         where: { userId, isVisible: true },
         select: { productId: true },
       });
       const productIds = links.map((l) => l.productId);
-      if (!productIds.length)
-        return secureJson({ error: "NO_ELIGIBLE_SALES" }, { status: 400 }, req);
+      if (!productIds.length) return secureJson({ error: "NO_ELIGIBLE_SALES" }, { status: 400 }, req);
 
       const sales = await prisma.affiliateUserSale.findMany({
         where: {
@@ -384,22 +400,13 @@ export async function POST(req) {
       if (!sales.length) return secureJson({ error: "NO_ELIGIBLE_SALES" }, { status: 400 }, req);
 
       const totalAmount = sales.reduce((s, r) => s + Number(r.commissionAffiliate || 0), 0);
-      if (!Number.isFinite(totalAmount) || totalAmount <= 0)
-        return secureJson({ error: "NO_ELIGIBLE_SALES" }, { status: 400 }, req);
-      if (totalAmount < minPayout) {
-        return secureJson({ error: "MIN_THRESHOLD" }, { status: 400 }, req);
-      }
+      if (!Number.isFinite(totalAmount) || totalAmount <= 0) return secureJson({ error: "NO_ELIGIBLE_SALES" }, { status: 400 }, req);
+      if (totalAmount < minPayout) return secureJson({ error: "MIN_THRESHOLD" }, { status: 400 }, req);
 
       const grouped = new Map();
       for (const s of sales) {
         const key = `${s.merchantId}-${s.productId}`;
-        const g =
-          grouped.get(key) ?? {
-            amount: 0,
-            saleIds: [],
-            merchantId: s.merchantId,
-            productId: s.productId,
-          };
+        const g = grouped.get(key) ?? { amount: 0, saleIds: [], merchantId: s.merchantId, productId: s.productId };
         g.amount += Number(s.commissionAffiliate || 0);
         g.saleIds.push(s.saleId);
         grouped.set(key, g);
@@ -495,10 +502,7 @@ export async function POST(req) {
           }
 
           const now = Date.now();
-          const lockAt =
-            reqItem.requestedAt
-              ? new Date(reqItem.requestedAt).getTime() + CANCELLATION_WINDOW_MS
-              : 0;
+          const lockAt = reqItem.requestedAt ? new Date(reqItem.requestedAt).getTime() + CANCELLATION_WINDOW_MS : 0;
           const progressed = reqItem.payoutRequestItems.some(
             (itm) => itm.status === "merchant_paid" || itm.status === "platform_confirmed"
           );

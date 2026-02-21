@@ -9,6 +9,10 @@ export const runtime = "nodejs";
  * - Ratelimit: POST 10/min (IP+userId scope: payout-details).
  * - Validation: Zod (requestId, pagination, bank info).
  * - Privacy: no-store; set strict security headers.
+ *
+ * Fix (2026):
+ * - cookies() async olabilir → cookies().get patlar ("t.get is not a function")
+ * - CSRF cookie okuması async yapıldı ve await edildi.
  */
 
 import { NextResponse } from "next/server";
@@ -20,36 +24,49 @@ import { z } from "zod";
 import { cookies } from "next/headers";
 import applyApiSecurityHeaders from "@/lib/headers";
 import { requireOrigin, requireAjax, requireRequestId } from "@/lib/security";
-import {
-  payoutRequestIdSchema,
-  updateRequestBankSchema,
-  normalizeIban,
-} from "@/lib/validation";
+import { updateRequestBankSchema, normalizeIban } from "@/lib/validation";
 
 const CANCELLATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+function getReqId(req) {
+  return (
+    req.headers.get("x-request-id") ||
+    req.headers.get("X-Request-Id") ||
+    req.headers.get("x-requestid") ||
+    ""
+  );
+}
+
 function secureJson(data, init = {}, req) {
-  const res = NextResponse.json(data, init);
+  const request_id = getReqId(req);
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? { request_id, ...data }
+    : { request_id, data };
+
+  const res = NextResponse.json(payload, init);
   res.headers.set("Cache-Control", "no-store");
   res.headers.set("Vary", "Cookie");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Cross-Origin-Resource-Policy", "same-site");
   return applyApiSecurityHeaders(res, req);
 }
+
 const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 
-function readCsrfCookieValue() {
-  const store = cookies();
+/** Next.js bazı sürümlerde cookies() async dönebilir. */
+async function readCsrfCookieValue() {
+  const store = await cookies();
   const raw =
     store.get("__Host-next-auth.csrf-token")?.value ||
     store.get("next-auth.csrf-token")?.value ||
     "";
   return String(raw).split("|")[0] || "";
 }
-function validateCsrfOrDeny(req) {
+
+async function validateCsrfOrDeny(req) {
   const headerToken =
     req.headers.get("X-CSRF-Token") || req.headers.get("x-csrf-token") || "";
-  const cookieToken = readCsrfCookieValue();
+  const cookieToken = await readCsrfCookieValue();
   if (!headerToken || !cookieToken || headerToken !== cookieToken) {
     return secureJson({ error: "Invalid CSRF token" }, { status: 403 }, req);
   }
@@ -78,26 +95,26 @@ const bodySchema = z.object({
 /** ✅ DB'deki hem yüzde (12) hem oran (0.12) anahtarlarını destekler. */
 async function getPlatformCommissionPercent() {
   const keys = [
-    "platform_commission_percent", // 12 => yüzde
-    "platform_commission_rate",    // 0.12 => oran
-    "platform_commission",         // olası legacy
-    "platformFeePercent",          // olası legacy
+    "platform_commission_percent",
+    "platform_commission_rate",
+    "platform_commission",
+    "platformFeePercent",
   ];
   for (const keyName of keys) {
     const row = await prisma.platformConfig.findUnique({ where: { keyName } });
     if (!row?.value) continue;
     const num = Number(row.value);
     if (!Number.isFinite(num) || num < 0) continue;
-    const pct = num <= 1 ? num * 100 : num;          // 0.12 → 12
-    const fixed = Math.round(pct * 100) / 100;       // 2 ondalık
-    if (fixed >= 0 && fixed <= 1000) return fixed;   // makul aralık
+    const pct = num <= 1 ? num * 100 : num;
+    const fixed = Math.round(pct * 100) / 100;
+    if (fixed >= 0 && fixed <= 1000) return fixed;
   }
-  return 10; // fallback
+  return 10;
 }
 
 export async function POST(req) {
   try {
-    const csrfErr = validateCsrfOrDeny(req);
+    const csrfErr = await validateCsrfOrDeny(req);
     if (csrfErr) return csrfErr;
 
     try {
@@ -119,7 +136,7 @@ export async function POST(req) {
     const rl = await checkRateLimit({ key: `${rlKey}:POST`, limit: 10, windowMs: 60_000 });
     if (!rl.ok) {
       return secureJson(
-        { error: "Too many requests" },
+        { error: "Too many requests", retry_after: Math.ceil(rl.resetMs / 1000) },
         { status: 429, headers: { "Retry-After": String(Math.ceil(rl.resetMs / 1000)) } },
         req
       );
@@ -203,7 +220,6 @@ export async function POST(req) {
         realUserFullname: true,
         platformPaid: true,
         platformPaidAt: true,
-        // yeni:
         merchantPaidAt: true,
         platformConfirmedAt: true,
         amountTotal: true,
@@ -293,12 +309,10 @@ export async function POST(req) {
         platformPaidAt: payoutReq.platformPaidAt,
         merchantPaidAt: payoutReq.merchantPaidAt,
         platformConfirmedAt: payoutReq.platformConfirmedAt,
-
         amountTotal,
         platformCommissionPercent,
         platformCommissionTotal,
         netPayable,
-
         lockAt: lockAt ? lockAt.toISOString() : null,
         canEditBank,
       },
