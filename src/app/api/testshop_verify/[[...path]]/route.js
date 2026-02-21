@@ -2,20 +2,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Cabo — TestShop Verify API (Catch-all like Shopify)
+ * Cabo — TestShop Verify API (Catch-all)
  *
  * Routes:
  * - GET  /api/testshop_verify?ping=1         -> { ok:true, ping:"pong" }
  * - POST /api/testshop_verify                -> verify (fallback)
  * - POST /api/testshop_verify/verify         -> verify (recommended)
  *
- * Contract for TestShop middleware:
- * - Valid => 200 { ok:true, linkId, productId, slug }
+ * Contract:
+ * - Valid   => 200 { ok:true, linkId, productId, slug }
  * - Invalid => 4xx { ok:false, error:"..." }
  *
  * Security:
- * - Origin allowlist via TESTSHOP_ORIGIN
- * - Best-effort click write controlled by TESTSHOP_VERIFY_WRITES_CLICK=1/0
+ * - Origin allowlist via TESTSHOP_ORIGIN (supports comma-separated list)
+ * - Writes click controlled by TESTSHOP_VERIFY_WRITES_CLICK=1/0
+ *
+ * Debug headers (always):
+ * - x-cabo-origin, x-cabo-claimed, x-cabo-allowed, x-cabo-allowed-origin
  */
 
 import { NextResponse } from "next/server";
@@ -23,20 +26,42 @@ import prisma from "@/lib/prisma";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 
-const ALLOWED_ORIGIN = (process.env.TESTSHOP_ORIGIN || "").trim(); // https://testshopwebsite-production.up.railway.app
+const ORIGIN_RAW = String(process.env.TESTSHOP_ORIGIN || "").trim(); // e.g. https://testshop... (or comma-separated)
 const WRITES_CLICK = String(process.env.TESTSHOP_VERIFY_WRITES_CLICK || "1") === "1";
 const CLICK_DEDUP_WINDOW_MS = 5 * 60 * 1000;
 
-function j(data, init = {}) {
+function splitOrigins(raw) {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.replace(/\/+$/, "")); // normalize remove trailing slashes
+}
+
+const ALLOWED_ORIGINS = splitOrigins(ORIGIN_RAW);
+
+function j(data, init = {}, dbg = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
 
-  if (ALLOWED_ORIGIN) {
-    res.headers.set("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  // CORS (best-effort) — choose first allowed origin for browser tools
+  const firstAllowed = ALLOWED_ORIGINS[0] || "";
+  if (firstAllowed) {
+    res.headers.set("Access-Control-Allow-Origin", firstAllowed);
     res.headers.set("Vary", "Origin");
     res.headers.set("Access-Control-Allow-Credentials", "true");
     res.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.headers.set("Access-Control-Allow-Headers", "content-type,x-testshop-origin,x-testshop-ua,x-testshop-referer");
+    res.headers.set(
+      "Access-Control-Allow-Headers",
+      "content-type,x-testshop-origin,x-testshop-ua,x-testshop-referer"
+    );
+  }
+
+  // Debug headers (so TestShop middleware can forward to browser)
+  if (dbg && typeof dbg === "object") {
+    for (const [k, v] of Object.entries(dbg)) {
+      if (v != null && v !== "") res.headers.set(k, String(v).slice(0, 300));
+    }
   }
 
   return applyApiSecurityHeaders ? applyApiSecurityHeaders(res) : res;
@@ -52,6 +77,49 @@ function getClientIp(req) {
 
 function safeHeader(h, max = 512) {
   return (h || "").toString().slice(0, max);
+}
+
+function normalizeOrigin(s) {
+  return String(s || "").trim().replace(/\/+$/, "");
+}
+
+function isAllowedCaller(req) {
+  const origin = normalizeOrigin(req.headers.get("origin"));
+  const claimed = normalizeOrigin(req.headers.get("x-testshop-origin"));
+
+  if (!ALLOWED_ORIGINS.length) {
+    return {
+      ok: false,
+      reason: "missing_TESTSHOP_ORIGIN",
+      dbg: { "x-cabo-origin": origin, "x-cabo-claimed": claimed, "x-cabo-allowed": "missing" },
+    };
+  }
+
+  // Accept if either Origin OR claimed matches any allowed origin
+  const ok =
+    (origin && ALLOWED_ORIGINS.includes(origin)) ||
+    (claimed && ALLOWED_ORIGINS.includes(claimed));
+
+  return ok
+    ? {
+        ok: true,
+        dbg: {
+          "x-cabo-origin": origin,
+          "x-cabo-claimed": claimed,
+          "x-cabo-allowed": "true",
+          "x-cabo-allowed-origin": ALLOWED_ORIGINS.join(","),
+        },
+      }
+    : {
+        ok: false,
+        reason: "forbidden_origin",
+        dbg: {
+          "x-cabo-origin": origin || "(none)",
+          "x-cabo-claimed": claimed || "(none)",
+          "x-cabo-allowed": "false",
+          "x-cabo-allowed-origin": ALLOWED_ORIGINS.join(","),
+        },
+      };
 }
 
 async function findLinkByTokenAndLid({ token, lid }) {
@@ -116,26 +184,11 @@ async function writeClickBestEffort({ req, linkId }) {
   }
 }
 
-function isAllowedCaller(req) {
-  if (!ALLOWED_ORIGIN) return { ok: false, reason: "missing_TESTSHOP_ORIGIN" };
-
-  const origin = (req.headers.get("origin") || "").trim();
-  const claimed = (req.headers.get("x-testshop-origin") || "").trim();
-
-  // middleware fetch bazen origin koymayabiliyor, claimed ile destekliyoruz
-  const ok =
-    origin === ALLOWED_ORIGIN ||
-    claimed === ALLOWED_ORIGIN ||
-    (!!claimed && claimed.startsWith(ALLOWED_ORIGIN));
-
-  return ok ? { ok: true } : { ok: false, reason: "forbidden_origin" };
-}
-
 async function handleVerify(req) {
   const allow = isAllowedCaller(req);
   if (!allow.ok) {
     const status = allow.reason === "missing_TESTSHOP_ORIGIN" ? 500 : 403;
-    return j({ ok: false, error: allow.reason }, { status });
+    return j({ ok: false, error: allow.reason }, { status }, allow.dbg);
   }
 
   const body = await req.json().catch(() => null);
@@ -143,45 +196,58 @@ async function handleVerify(req) {
   const lid = body?.lid != null ? Number(body.lid) : NaN;
   const slug = body?.slug ? String(body.slug).trim() : null;
 
-  if (!token || token.length < 16) return j({ ok: false, error: "bad_token" }, { status: 400 });
-  if (!Number.isFinite(lid) || lid <= 0) return j({ ok: false, error: "lid_required" }, { status: 400 });
+  if (!token || token.length < 16) return j({ ok: false, error: "bad_token" }, { status: 400 }, allow.dbg);
+  if (!Number.isFinite(lid) || lid <= 0) return j({ ok: false, error: "lid_required" }, { status: 400 }, allow.dbg);
 
   const link = await findLinkByTokenAndLid({ token, lid });
-  if (!link || !link.product?.isActive) return j({ ok: false, error: "not_found_or_expired" }, { status: 404 });
+  if (!link || !link.product?.isActive) {
+    return j({ ok: false, error: "not_found_or_expired" }, { status: 404 }, allow.dbg);
+  }
 
   if (slug && link.product?.slug && slug !== link.product.slug) {
-    return j({ ok: false, error: "slug_mismatch" }, { status: 403 });
+    return j({ ok: false, error: "slug_mismatch" }, { status: 403 }, allow.dbg);
   }
 
   await writeClickBestEffort({ req, linkId: link.linkId });
 
   return j(
     { ok: true, linkId: link.linkId, productId: link.productId, slug: link.product?.slug || null },
-    { status: 200 }
+    { status: 200 },
+    allow.dbg
   );
 }
 
 export async function OPTIONS() {
-  return j({ ok: true }, { status: 204 });
+  const dbg = {
+    "x-cabo-allowed-origin": ALLOWED_ORIGINS.join(","),
+    "x-cabo-allowed": ALLOWED_ORIGINS.length ? "configured" : "missing",
+  };
+  return j({ ok: true }, { status: 204 }, dbg);
 }
 
 export async function GET(req) {
   const u = new URL(req.url);
-  if (u.searchParams.get("ping") === "1") return j({ ok: true, ping: "pong" }, { status: 200 });
-  return j({ ok: true, route: "testshop_verify_root" }, { status: 200 });
+  if (u.searchParams.get("ping") === "1") {
+    return j(
+      { ok: true, ping: "pong" },
+      { status: 200 },
+      { "x-cabo-allowed-origin": ALLOWED_ORIGINS.join(","), "x-cabo-allowed": "ping" }
+    );
+  }
+  return j(
+    { ok: true, route: "testshop_verify_root" },
+    { status: 200 },
+    { "x-cabo-allowed-origin": ALLOWED_ORIGINS.join(","), "x-cabo-allowed": "root" }
+  );
 }
 
 export async function POST(req) {
   try {
     const u = new URL(req.url);
-
-    // /api/testshop_verify/verify => verify
     if (u.pathname.endsWith("/verify")) return await handleVerify(req);
-
-    // /api/testshop_verify => verify (fallback)
     return await handleVerify(req);
   } catch (e) {
     audit?.({ evt: "testshop_verify.crash", err: String(e?.message || e).slice(0, 300) });
-    return j({ ok: false, error: "server_error" }, { status: 500 });
+    return j({ ok: false, error: "server_error" }, { status: 500 }, { "x-cabo-allowed": "crash" });
   }
 }
