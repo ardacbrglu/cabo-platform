@@ -9,6 +9,9 @@
  * - ✅ Removes extra right-side info card (only 1 register card).
  * - ✅ Keeps your existing logic (captcha fallback/reset, validation, apiFetch flow).
  * - ✅ Keeps the “Timeout” unhandled rejection suppression, but implemented safely (always registered).
+ * - ✅ MOBILE FIX: reCAPTCHA iframe causes horizontal overflow -> hamburger shifts off-screen.
+ *   - We clip/disable horizontal overflow on <html> only while this page is mounted.
+ *   - We scale the captcha on small screens so it never forces page width > viewport.
  *
  * Security/Perf notes:
  * - No secrets rendered, no user-specific fetch on mount.
@@ -123,6 +126,25 @@ export default function RegisterPage() {
 
   const pwdRef = useRef(null);
 
+  /**
+   * ✅ MOBILE FIX (root overflow-x)
+   * reCAPTCHA iframe width can exceed viewport => horizontal scroll => header looks shifted.
+   * Only apply while this page is mounted.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    const prevOverflowX = root.style.overflowX;
+    const prevMaxWidth = root.style.maxWidth;
+
+    root.style.overflowX = "hidden";
+    root.style.maxWidth = "100%";
+
+    return () => {
+      root.style.overflowX = prevOverflowX || "";
+      root.style.maxWidth = prevMaxWidth || "";
+    };
+  }, []);
+
   // Keep your existing “readonly until interaction” behavior
   useEffect(() => {
     const el = pwdRef.current;
@@ -152,7 +174,6 @@ export default function RegisterPage() {
 
       if (msg && msg.toLowerCase().includes("timeout")) {
         event.preventDefault?.();
-        // Keep a lightweight debug hint:
         console.warn("[register] Suppressed unhandled rejection (Timeout):", reason);
       }
     };
@@ -183,6 +204,8 @@ export default function RegisterPage() {
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (loading) return;
+
     setSubmitted(true);
     setServerError("");
     setSuccess("");
@@ -257,9 +280,8 @@ export default function RegisterPage() {
 
   return (
     <PublicLayout>
-      {/* IMPORTANT: no early return before hooks; we gate UI rendering here */}
       {!ready ? null : (
-        <main className="relative w-full">
+        <main className="relative w-full overflow-x-hidden">
           <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-10 px-4">
             {/* soft glow backdrop */}
             <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -277,7 +299,6 @@ export default function RegisterPage() {
                 <Kicker>{t("kicker")}</Kicker>
 
                 <h1 className="mt-4 text-3xl font-extrabold text-[#d1ffd0]">
-                  {/* keep the premium “Cabo” highlight if it exists in title */}
                   {t("title").includes("Cabo") ? (
                     <>
                       {t("title").split("Cabo")[0]}
@@ -350,7 +371,10 @@ export default function RegisterPage() {
 
               {/* Password */}
               <div className="mb-5">
-                <label htmlFor="password" className="block text-sm font-semibold mb-1.5 text-gray-200">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-semibold mb-1.5 text-gray-200"
+                >
                   {t("password")}
                 </label>
                 <input
@@ -409,26 +433,38 @@ export default function RegisterPage() {
               </div>
 
               {submitted && errors.terms && (
-                <p className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5" role="alert">
+                <p
+                  className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5"
+                  role="alert"
+                >
                   <AlertTriangle size={16} /> {errors.terms}
                 </p>
               )}
 
-              {/* CAPTCHA */}
+              {/* CAPTCHA (mobile responsive wrapper) */}
               <div
                 className={cx(
-                  "mb-5 rounded-2xl border border-[#232323] bg-[#0b0b0b] p-4",
+                  "mb-5 rounded-2xl border border-[#232323] bg-[#0b0b0b] p-4 overflow-hidden",
                   submitted && errors.captcha ? "ring-2 ring-red-400" : ""
                 )}
                 aria-invalid={submitted && errors.captcha ? "true" : "false"}
               >
-                <Captcha
-                  key={captchaResetKey}
-                  onChange={(v) => setCaptcha(v || "")}
-                  lang={(locale || "tr").toLowerCase()}
-                  theme="light"
-                  className="mb-2"
-                />
+                {/* 
+                  reCAPTCHA v2 iframe is ~304px wide. On small screens, it can force overflow.
+                  We scale it down on mobile so the whole layout stays inside viewport.
+                */}
+                <div className="w-full flex justify-center">
+                  <div className="origin-top-left scale-[0.84] [@media(min-width:360px)]:scale-[0.9] sm:scale-100">
+                    <Captcha
+                      key={captchaResetKey}
+                      onChange={(v) => setCaptcha(v || "")}
+                      lang={(locale || "tr").toLowerCase()}
+                      theme="light"
+                      className="mb-2"
+                    />
+                  </div>
+                </div>
+
                 {submitted && errors.captcha && (
                   <p className="mt-2 text-sm text-red-400" role="alert">
                     {errors.captcha}
