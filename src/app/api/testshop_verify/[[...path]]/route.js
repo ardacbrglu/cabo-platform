@@ -2,22 +2,26 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Cabo — TestShop Verify API (Catch-all)
+ * Cabo — TestShop Verify API (Catch-all) — FIXED for current Prisma schema (route.js)
  *
  * Routes:
- * - GET  /api/testshop_verify?ping=1         -> { ok:true, ping:"pong" }
- * - POST /api/testshop_verify                -> verify (fallback)
- * - POST /api/testshop_verify/verify         -> verify (recommended)
+ * - GET  /api/testshop_verify?ping=1          -> { ok:true, ping:"pong" }
+ * - POST /api/testshop_verify                 -> verify (fallback)
+ * - POST /api/testshop_verify/verify          -> verify (recommended)
  *
  * Contract:
- * - Valid   => 200 { ok:true, linkId, productId, slug }
+ * - Valid   => 200 { ok:true, linkId, productId, slug?: string|null }
  * - Invalid => 4xx { ok:false, error:"..." }
  *
  * Security:
- * - Origin allowlist via TESTSHOP_ORIGIN (supports comma-separated list)
+ * - Origin allowlist via TESTSHOP_ORIGIN (comma-separated supported)
  * - Writes click controlled by TESTSHOP_VERIFY_WRITES_CLICK=1/0
  *
- * Debug headers (always):
+ * Optional slug validation (NO schema change needed):
+ * - If CABO_MAP_JSON or TESTSHOP_PRODUCT_MAP_JSON env exists and contains slug->code,
+ *   it validates incoming slug against MerchantProduct.productCode.
+ *
+ * Debug headers:
  * - x-cabo-origin, x-cabo-claimed, x-cabo-allowed, x-cabo-allowed-origin
  */
 
@@ -26,16 +30,21 @@ import prisma from "@/lib/prisma";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 
-const ORIGIN_RAW = String(process.env.TESTSHOP_ORIGIN || "").trim(); // e.g. https://testshop... (or comma-separated)
+const ORIGIN_RAW = String(process.env.TESTSHOP_ORIGIN || "").trim(); // comma-separated
 const WRITES_CLICK = String(process.env.TESTSHOP_VERIFY_WRITES_CLICK || "1") === "1";
 const CLICK_DEDUP_WINDOW_MS = 5 * 60 * 1000;
 
+// Optional slug->code map (same JSON format as your TestShop side)
+const MAP_RAW =
+  String(process.env.CABO_MAP_JSON || "").trim() ||
+  String(process.env.TESTSHOP_PRODUCT_MAP_JSON || "").trim();
+
 function splitOrigins(raw) {
-  return raw
+  return String(raw || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((s) => s.replace(/\/+$/, "")); // normalize remove trailing slashes
+    .map((s) => s.replace(/\/+$/, ""));
 }
 
 const ALLOWED_ORIGINS = splitOrigins(ORIGIN_RAW);
@@ -44,7 +53,7 @@ function j(data, init = {}, dbg = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
 
-  // CORS (best-effort) — choose first allowed origin for browser tools
+  // Best-effort CORS for debugging tools (not required for server-to-server)
   const firstAllowed = ALLOWED_ORIGINS[0] || "";
   if (firstAllowed) {
     res.headers.set("Access-Control-Allow-Origin", firstAllowed);
@@ -95,7 +104,6 @@ function isAllowedCaller(req) {
     };
   }
 
-  // Accept if either Origin OR claimed matches any allowed origin
   const ok =
     (origin && ALLOWED_ORIGINS.includes(origin)) ||
     (claimed && ALLOWED_ORIGINS.includes(claimed));
@@ -122,6 +130,19 @@ function isAllowedCaller(req) {
       };
 }
 
+function parseSlugCodeMap(raw) {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== "object") return null;
+    return obj; // expected: { "product-a": { "code": "...", ... }, ... }
+  } catch {
+    return null;
+  }
+}
+
+const SLUG_CODE_MAP = parseSlugCodeMap(MAP_RAW);
+
 async function findLinkByTokenAndLid({ token, lid }) {
   const now = new Date();
   return prisma.affiliateLink.findFirst({
@@ -135,7 +156,7 @@ async function findLinkByTokenAndLid({ token, lid }) {
     select: {
       linkId: true,
       productId: true,
-      product: { select: { slug: true, isActive: true } },
+      product: { select: { isActive: true, productCode: true } },
     },
   });
 }
@@ -144,7 +165,8 @@ async function writeClickBestEffort({ req, linkId }) {
   if (!WRITES_CLICK) return;
 
   const ip = getClientIp(req);
-  const ua = safeHeader(req.headers.get("x-testshop-ua") || req.headers.get("user-agent"), 512) || "unknown";
+  const ua =
+    safeHeader(req.headers.get("x-testshop-ua") || req.headers.get("user-agent"), 512) || "unknown";
   const ref = safeHeader(req.headers.get("x-testshop-referer") || req.headers.get("referer"), 2048);
 
   try {
@@ -180,8 +202,25 @@ async function writeClickBestEffort({ req, linkId }) {
       }
     } catch {}
   } catch (e) {
-    audit?.({ evt: "testshop_verify.click_write_error", linkId, err: String(e?.message || e).slice(0, 250) });
+    audit?.({
+      evt: "testshop_verify.click_write_error",
+      linkId,
+      err: String(e?.message || e).slice(0, 250),
+    });
   }
+}
+
+function validateSlugAgainstProductCode(slug, productCode) {
+  if (!slug) return { ok: true, mode: "no_slug" };
+  if (!SLUG_CODE_MAP) return { ok: true, mode: "no_map" };
+
+  const entry = SLUG_CODE_MAP[slug];
+  const expected = String(entry?.code || "").trim();
+  if (!expected) return { ok: false, mode: "map_missing_slug" };
+
+  return expected === productCode
+    ? { ok: true, mode: "map_match" }
+    : { ok: false, mode: "map_mismatch" };
 }
 
 async function handleVerify(req) {
@@ -192,9 +231,10 @@ async function handleVerify(req) {
   }
 
   const body = await req.json().catch(() => null);
+
   const token = String(body?.token || "").trim();
   const lid = body?.lid != null ? Number(body.lid) : NaN;
-  const slug = body?.slug ? String(body.slug).trim() : null;
+  const slug = body?.slug ? String(body.slug).trim() : "";
 
   if (!token || token.length < 16) return j({ ok: false, error: "bad_token" }, { status: 400 }, allow.dbg);
   if (!Number.isFinite(lid) || lid <= 0) return j({ ok: false, error: "lid_required" }, { status: 400 }, allow.dbg);
@@ -204,16 +244,30 @@ async function handleVerify(req) {
     return j({ ok: false, error: "not_found_or_expired" }, { status: 404 }, allow.dbg);
   }
 
-  if (slug && link.product?.slug && slug !== link.product.slug) {
-    return j({ ok: false, error: "slug_mismatch" }, { status: 403 }, allow.dbg);
+  // Optional slug validation using slug->code map (no schema change)
+  const productCode = String(link.product?.productCode || "").trim();
+  if (slug) {
+    const v = validateSlugAgainstProductCode(slug, productCode);
+    if (!v.ok) {
+      return j(
+        { ok: false, error: "slug_mismatch" },
+        { status: 403 },
+        { ...allow.dbg, "x-cabo-slug-check": v.mode }
+      );
+    }
   }
 
   await writeClickBestEffort({ req, linkId: link.linkId });
 
   return j(
-    { ok: true, linkId: link.linkId, productId: link.productId, slug: link.product?.slug || null },
+    {
+      ok: true,
+      linkId: link.linkId,
+      productId: link.productId,
+      slug: slug || null,
+    },
     { status: 200 },
-    allow.dbg
+    { ...allow.dbg, "x-cabo-slug-map": SLUG_CODE_MAP ? "on" : "off" }
   );
 }
 
@@ -244,6 +298,7 @@ export async function GET(req) {
 export async function POST(req) {
   try {
     const u = new URL(req.url);
+    // both /api/testshop_verify and /api/testshop_verify/verify go here (catch-all)
     if (u.pathname.endsWith("/verify")) return await handleVerify(req);
     return await handleVerify(req);
   } catch (e) {
