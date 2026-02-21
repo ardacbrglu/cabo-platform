@@ -1,22 +1,17 @@
-// app/register/page.js
 "use client";
 
 /**
- * Register — Homepage style (single centered card) ✅
+ * Register — Homepage style (single centered card) ✅ (MOBILE NO-SHIFT)
  *
  * Fixes:
- * - ✅ Hook order bug: NO hooks are called after an early return.
- * - ✅ Removes extra right-side info card (only 1 register card).
- * - ✅ Keeps your existing logic (captcha fallback/reset, validation, apiFetch flow).
- * - ✅ Keeps the “Timeout” unhandled rejection suppression, but implemented safely (always registered).
- * - ✅ MOBILE FIX: reCAPTCHA iframe causes horizontal overflow -> hamburger shifts off-screen.
- *   - We clip/disable horizontal overflow on <html> only while this page is mounted.
- *   - We scale the captcha on small screens so it never forces page width > viewport.
+ * - reCAPTCHA iframe mobile overflow (navbar/page shift) -> scale via global CSS + clip on page root
+ * - Glow/backdrop is drawn as fixed inset-0 (like Merchant Register) -> no layout overflow
+ * - No extra right-side content
+ * - Hook order safe (no hooks after early return)
  *
- * Security/Perf notes:
- * - No secrets rendered, no user-specific fetch on mount.
- * - No dangerouslySetInnerHTML.
- * - Minimal DOM, responsive container, accessible labels.
+ * Notes:
+ * - If you accidentally pasted PublicLayout code into this file before, REMOVE IT.
+ *   This file must contain ONLY this component.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -86,7 +81,6 @@ const dicts = {
   },
 };
 
-/* ---------- style helpers (homepage vibe) ---------- */
 const cx = (...a) => a.filter(Boolean).join(" ");
 
 const GradientWord = ({ children }) => (
@@ -106,7 +100,7 @@ export default function RegisterPage() {
   const router = useRouter();
   const { locale, ready } = useLocale();
 
-  const isTR = String(locale).toLowerCase().startsWith("tr");
+  const isTR = String(locale || "en").toLowerCase().startsWith("tr");
   const dict = isTR ? dicts.tr : dicts.en;
   const t = (k) => dict[k] ?? k;
 
@@ -123,29 +117,29 @@ export default function RegisterPage() {
 
   const [submitted, setSubmitted] = useState(false);
   const firstInvalidRef = useRef(null);
-
   const pwdRef = useRef(null);
 
   /**
-   * ✅ MOBILE FIX (root overflow-x)
-   * reCAPTCHA iframe width can exceed viewport => horizontal scroll => header looks shifted.
-   * Only apply while this page is mounted.
+   * ✅ Hard guard: prevent ANY horizontal scroll on this page while mounted.
+   * (We do both html and body because some mobile browsers scroll body instead of html.)
    */
   useEffect(() => {
     const root = document.documentElement;
-    const prevOverflowX = root.style.overflowX;
-    const prevMaxWidth = root.style.maxWidth;
+    const body = document.body;
 
-    root.style.overflowX = "hidden";
-    root.style.maxWidth = "100%";
+    const prevRootOX = root.style.overflowX;
+    const prevBodyOX = body.style.overflowX;
+
+    root.style.overflowX = "clip";
+    body.style.overflowX = "clip";
 
     return () => {
-      root.style.overflowX = prevOverflowX || "";
-      root.style.maxWidth = prevMaxWidth || "";
+      root.style.overflowX = prevRootOX || "";
+      body.style.overflowX = prevBodyOX || "";
     };
   }, []);
 
-  // Keep your existing “readonly until interaction” behavior
+  // Keep “readonly until interaction” behavior
   useEffect(() => {
     const el = pwdRef.current;
     if (!el) return;
@@ -161,7 +155,7 @@ export default function RegisterPage() {
     };
   }, []);
 
-  // Prevent dev overlay crash from third-party “Timeout” unhandled rejections (e.g., captcha scripts)
+  // Suppress unhandled "Timeout" from 3p scripts (captcha)
   useEffect(() => {
     const onUnhandled = (event) => {
       const reason = event?.reason;
@@ -171,13 +165,10 @@ export default function RegisterPage() {
           : reason?.message
           ? String(reason.message)
           : "";
-
       if (msg && msg.toLowerCase().includes("timeout")) {
         event.preventDefault?.();
-        console.warn("[register] Suppressed unhandled rejection (Timeout):", reason);
       }
     };
-
     window.addEventListener("unhandledrejection", onUnhandled);
     return () => window.removeEventListener("unhandledrejection", onUnhandled);
   }, []);
@@ -211,19 +202,17 @@ export default function RegisterPage() {
     setSuccess("");
     firstInvalidRef.current = null;
 
-    // --- CAPTCHA FALLBACK ---
+    // CAPTCHA FALLBACK
     if (!captcha) {
       try {
         const gre = window.grecaptcha;
         const fromGre = gre?.getResponse ? gre.getResponse() : "";
         const fromGlobal = window.__caboCaptchaToken || "";
-        const fromDom =
-          document.querySelector(".cabo-recaptcha-wrap")?.getAttribute("data-token") || "";
+        const fromDom = document.querySelector(".cabo-captcha-scale")?.getAttribute("data-token") || "";
         const tok = fromGre || fromGlobal || fromDom || "";
         if (tok) setCaptcha(tok);
       } catch {}
     }
-    // ------------------------
 
     const errs = validate();
     if (Object.keys(errs).length) {
@@ -281,13 +270,13 @@ export default function RegisterPage() {
   return (
     <PublicLayout>
       {!ready ? null : (
-        <main className="relative w-full overflow-x-hidden">
-          <div className="relative z-0 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-10 px-4">
-            {/* soft glow backdrop */}
-            <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="absolute -inset-24 blur-3xl opacity-25 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
-            </div>
+        <main className="relative w-full overflow-x-clip">
+          {/* ✅ Glow like Merchant Register: fixed inset-0 (no overflow) */}
+          <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 flex items-center justify-center">
+            <div className="absolute w-[900px] h-[900px] sm:w-[1100px] sm:h-[1100px] lg:w-[1400px] lg:h-[1400px] rounded-full blur-3xl opacity-20 bg-gradient-to-br from-[#81d742] via-[#ff8a6b] to-[#6be0ff]" />
+          </div>
 
+          <div className="relative z-10 w-full flex items-center justify-center min-h-[calc(100svh-var(--public-header-h)-var(--public-footer-h))] md:min-h-[calc(100dvb-var(--public-header-h)-var(--public-footer-h))] py-10 px-4">
             <form
               onSubmit={onSubmit}
               noValidate
@@ -371,10 +360,7 @@ export default function RegisterPage() {
 
               {/* Password */}
               <div className="mb-5">
-                <label
-                  htmlFor="password"
-                  className="block text-sm font-semibold mb-1.5 text-gray-200"
-                >
+                <label htmlFor="password" className="block text-sm font-semibold mb-1.5 text-gray-200">
                   {t("password")}
                 </label>
                 <input
@@ -433,15 +419,12 @@ export default function RegisterPage() {
               </div>
 
               {submitted && errors.terms && (
-                <p
-                  className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5"
-                  role="alert"
-                >
+                <p className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5" role="alert">
                   <AlertTriangle size={16} /> {errors.terms}
                 </p>
               )}
 
-              {/* CAPTCHA (mobile responsive wrapper) */}
+              {/* CAPTCHA — same style as merchant (scale via CSS, no layout overflow) */}
               <div
                 className={cx(
                   "mb-5 rounded-2xl border border-[#232323] bg-[#0b0b0b] p-4 overflow-hidden",
@@ -449,12 +432,8 @@ export default function RegisterPage() {
                 )}
                 aria-invalid={submitted && errors.captcha ? "true" : "false"}
               >
-                {/* 
-                  reCAPTCHA v2 iframe is ~304px wide. On small screens, it can force overflow.
-                  We scale it down on mobile so the whole layout stays inside viewport.
-                */}
                 <div className="w-full flex justify-center">
-                  <div className="origin-top-left scale-[0.84] [@media(min-width:360px)]:scale-[0.9] sm:scale-100">
+                  <div className="cabo-captcha-scale">
                     <Captcha
                       key={captchaResetKey}
                       onChange={(v) => setCaptcha(v || "")}
@@ -515,6 +494,23 @@ export default function RegisterPage() {
               </div>
             </form>
           </div>
+
+          {/* ✅ Captcha scale identical approach as merchant register */}
+          <style jsx global>{`
+            .cabo-captcha-scale {
+              transform-origin: center top;
+            }
+            @media (max-width: 420px) {
+              .cabo-captcha-scale {
+                transform: scale(0.92);
+              }
+            }
+            @media (min-width: 421px) {
+              .cabo-captcha-scale {
+                transform: scale(1);
+              }
+            }
+          `}</style>
         </main>
       )}
     </PublicLayout>
