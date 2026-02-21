@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Cabo — TestShop Verify API (Catch-all like Shopify)
+ * Cabo — TestShop Verify API (Catch-all)
  *
  * Routes:
  * - GET  /api/testshop_verify?ping=1         -> { ok:true, ping:"pong" }
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * - Invalid => 4xx { ok:false, error:"..." }
  *
  * Security:
- * - Origin allowlist via TESTSHOP_ORIGIN
+ * - Origin allowlist via TESTSHOP_ORIGIN (normalized)
  * - Best-effort click write controlled by TESTSHOP_VERIFY_WRITES_CLICK=1/0
  */
 
@@ -23,22 +23,37 @@ import prisma from "@/lib/prisma";
 import { applyApiSecurityHeaders } from "@/lib/headers";
 import { audit } from "@/lib/logger";
 
-const ALLOWED_ORIGIN = (process.env.TESTSHOP_ORIGIN || "").trim(); // https://testshopwebsite-production.up.railway.app
+const ALLOWED_ORIGIN_RAW = String(process.env.TESTSHOP_ORIGIN || "").trim(); // e.g. https://testshopwebsite-production.up.railway.app
 const WRITES_CLICK = String(process.env.TESTSHOP_VERIFY_WRITES_CLICK || "1") === "1";
 const CLICK_DEDUP_WINDOW_MS = 5 * 60 * 1000;
+
+function normalizeOrigin(o) {
+  const s = String(o || "").trim();
+  if (!s) return "";
+  // remove trailing slash
+  return s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
+const ALLOWED_ORIGIN = normalizeOrigin(ALLOWED_ORIGIN_RAW);
 
 function j(data, init = {}) {
   const res = NextResponse.json(data, init);
   res.headers.set("Cache-Control", "no-store");
 
+  // CORS (optional; middleware fetch doesn't need browser CORS, but good for debugging)
   if (ALLOWED_ORIGIN) {
     res.headers.set("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
     res.headers.set("Vary", "Origin");
     res.headers.set("Access-Control-Allow-Credentials", "true");
     res.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.headers.set("Access-Control-Allow-Headers", "content-type,x-testshop-origin,x-testshop-ua,x-testshop-referer");
+    res.headers.set(
+      "Access-Control-Allow-Headers",
+      "content-type,x-testshop-origin,x-testshop-ua,x-testshop-referer"
+    );
   }
 
+  // Helpful debug headers (safe; no secrets)
+  res.headers.set("x-cabo-allowed-origin", ALLOWED_ORIGIN || "missing");
   return applyApiSecurityHeaders ? applyApiSecurityHeaders(res) : res;
 }
 
@@ -119,23 +134,34 @@ async function writeClickBestEffort({ req, linkId }) {
 function isAllowedCaller(req) {
   if (!ALLOWED_ORIGIN) return { ok: false, reason: "missing_TESTSHOP_ORIGIN" };
 
-  const origin = (req.headers.get("origin") || "").trim();
-  const claimed = (req.headers.get("x-testshop-origin") || "").trim();
+  const origin = normalizeOrigin(req.headers.get("origin"));
+  const claimed = normalizeOrigin(req.headers.get("x-testshop-origin"));
 
-  // middleware fetch bazen origin koymayabiliyor, claimed ile destekliyoruz
+  // allow:
+  // - exact match
+  // - claimed begins with allowed (rare but safe if allowed is full origin)
+  // - origin begins with allowed
   const ok =
     origin === ALLOWED_ORIGIN ||
     claimed === ALLOWED_ORIGIN ||
-    (!!claimed && claimed.startsWith(ALLOWED_ORIGIN));
+    (claimed && claimed.startsWith(ALLOWED_ORIGIN)) ||
+    (origin && origin.startsWith(ALLOWED_ORIGIN));
 
-  return ok ? { ok: true } : { ok: false, reason: "forbidden_origin" };
+  return ok
+    ? { ok: true, origin, claimed, allowed: ALLOWED_ORIGIN }
+    : { ok: false, reason: "forbidden_origin", origin, claimed, allowed: ALLOWED_ORIGIN };
 }
 
 async function handleVerify(req) {
   const allow = isAllowedCaller(req);
   if (!allow.ok) {
     const status = allow.reason === "missing_TESTSHOP_ORIGIN" ? 500 : 403;
-    return j({ ok: false, error: allow.reason }, { status });
+    const res = j({ ok: false, error: allow.reason }, { status });
+    // Debug headers so we can see what Cabo received
+    res.headers.set("x-cabo-origin", allow.origin || "none");
+    res.headers.set("x-cabo-claimed", allow.claimed || "none");
+    res.headers.set("x-cabo-allowed", allow.allowed || "none");
+    return res;
   }
 
   const body = await req.json().catch(() => null);
