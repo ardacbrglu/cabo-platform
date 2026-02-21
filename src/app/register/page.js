@@ -360,7 +360,10 @@ export default function RegisterPage() {
 
               {/* Password */}
               <div className="mb-5">
-                <label htmlFor="password" className="block text-sm font-semibold mb-1.5 text-gray-200">
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-semibold mb-1.5 text-gray-200"
+                >
                   {t("password")}
                 </label>
                 <input
@@ -419,7 +422,10 @@ export default function RegisterPage() {
               </div>
 
               {submitted && errors.terms && (
-                <p className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5" role="alert">
+                <p
+                  className="mt-[-6px] mb-3 text-sm text-red-400 flex items-center gap-1.5"
+                  role="alert"
+                >
                   <AlertTriangle size={16} /> {errors.terms}
                 </p>
               )}
